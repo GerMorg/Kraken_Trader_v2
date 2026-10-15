@@ -62,3 +62,26 @@ def test_risk_snapshot_is_incomplete_when_position_value_is_missing():
     assert not snapshot.reconciliation_ok
     audit.close()
     db.close()
+
+
+def test_zero_equity_is_not_replaced_by_unrealized_excluded_balance():
+    runtime, db, audit = make_runtime()
+    raw = account_snapshot({})
+    raw["trade_balance"]["e"] = "0"
+    raw["trade_balance"]["eb"] = "1000"
+    snapshot = runtime._account_risk_snapshot(raw)
+    assert snapshot.equity_usd == D("0")
+    assert snapshot.complete
+    audit.close()
+    db.close()
+
+
+def test_non_finite_trade_balance_makes_snapshot_incomplete():
+    runtime, db, audit = make_runtime()
+    raw = account_snapshot({})
+    raw["trade_balance"]["e"] = "NaN"
+    snapshot = runtime._account_risk_snapshot(raw)
+    assert not snapshot.complete
+    assert snapshot.equity_usd == D("0")
+    audit.close()
+    db.close()
