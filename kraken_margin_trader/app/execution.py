@@ -47,8 +47,10 @@ def build_add_order_params(intent: OrderIntent, instrument: Instrument, *,
                            validate_only: bool) -> dict[str, Any]:
     if intent.pair not in {instrument.pair_id, instrument.altname, instrument.wsname}:
         raise ValueError("ORDER_PAIR_INSTRUMENT_MISMATCH")
-    if intent.volume <= 0:
-        raise ValueError("ORDER_VOLUME_MUST_BE_POSITIVE")
+    if not intent.volume.is_finite() or intent.volume <= 0:
+        raise ValueError("ORDER_VOLUME_MUST_BE_POSITIVE_AND_FINITE")
+    if intent.side not in {"LONG", "SHORT"}:
+        raise ValueError("ORDER_DIRECTION_INVALID")
     if intent.action in {Action.NO_TRADE, Action.RISK_REDUCTION_REQUIRED}:
         raise ValueError("ACTION_DOES_NOT_MAP_TO_AN_ORDER")
     opens = {Action.OPEN_MARGIN_LONG, Action.OPEN_MARGIN_SHORT, Action.INCREASE_LONG, Action.INCREASE_SHORT}
