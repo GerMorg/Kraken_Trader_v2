@@ -49,3 +49,27 @@ def test_volume_rounding_never_exceeds_requested_notional():
 def test_volume_sizing_fails_closed_on_invalid_values():
     assert volume_for_notional_usd(Decimal("NaN"), Decimal("3"), 2) == Decimal("0")
     assert volume_for_notional_usd(Decimal("10"), Decimal("0"), 2) == Decimal("0")
+
+
+def test_ticker_parser_ignores_malformed_empty_api_arrays():
+    instrument = usd_crypto_universe({
+        "XBTUSD": {"altname": "XBTUSD", "wsname": "XBT/USD", "aclass_base": "currency",
+                   "status": "online", "ordermin": "0.001", "lot_decimals": 3,
+                   "pair_decimals": 1},
+    })[0]
+    assert parse_tickers({"XBTUSD": {"c": [], "a": None, "b": [], "v": [], "p": []}},
+                         [instrument]) == {}
+
+
+def test_ohlc_parser_rejects_impossible_high_low_bars():
+    raw = {
+        "XBTUSD": [
+            [1, "100", "99", "90", "105", "102", "10", 100],
+            [2, "105", "112", "104", "110", "108", "12", 110],
+            [3, "110", "115", "108", "113", "111", "8", 90],
+        ],
+        "last": "3",
+    }
+    rows = parse_ohlc_rows(raw, "XBTUSD")
+    assert len(rows) == 1
+    assert rows[0]["ts"] == 2
