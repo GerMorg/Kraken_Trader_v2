@@ -7,7 +7,7 @@ from typing import Any
 
 from app.audit import AuditLogger
 from app.config import Settings
-from app.costs import estimate_round_trip_cost, taker_fee_from_trade_volume
+from app.costs import estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
 from app.kraken import KrakenAPIError, KrakenClient
 from app.market import parse_ohlc_rows, parse_tickers, usd_crypto_universe
 from app.models import Action, RiskSnapshot
@@ -116,45 +116,35 @@ class TraderRuntime:
                     abs(signal.momentum_fast_bps),
                     abs(signal.momentum_slow_bps)/D(3),
                 )*D("0.25")
-                cost=estimate_round_trip_cost(is_margin=is_margin,taker_fee_bps=fee,spread_bps=ticker.spread_bps,
-                    slippage_bps_per_side=D(5),holding_hours=self.settings.expected_holding_hours,
-                    leverage=int(leverage or 1),margin_open_bps=None,margin_rollover_bps=None)
-                edge=(gross_edge_proxy-cost.total_round_trip_bps
-                      if cost.complete and cost.total_round_trip_bps is not None else None)
-
-                # Margin is preferred when its fully costed net proxy remains positive. For LONG
-                # only, a cost-complete spot plan is evaluated as a real alternative; unknown
-                # margin rates must never be silently replaced by invented rates.
-                if signal.direction=="LONG" and is_margin and (
-                    not cost.complete or edge is None or edge<=0
-                ):
-                    spot_cost=estimate_round_trip_cost(is_margin=False,taker_fee_bps=fee,
-                        spread_bps=ticker.spread_bps,slippage_bps_per_side=D(5),
-                        holding_hours=self.settings.expected_holding_hours,leverage=1)
-                    spot_edge=(gross_edge_proxy-spot_cost.total_round_trip_bps
-                               if spot_cost.complete and spot_cost.total_round_trip_bps is not None else None)
-                    if spot_cost.complete:
-                        self.audit.emit("MARGIN_PLAN_NOT_SELECTED",cycle_id=cycle_id,pair=instrument.wsname,
-                            reason="MARGIN_COSTS_UNVERIFIED_OR_MARGIN_NET_EDGE_NOT_POSITIVE",
-                            margin_cost_reasons=list(cost.reasons),spot_cost_bps=spot_cost.total_round_trip_bps,
-                            spot_edge_proxy_bps=spot_edge,edge_is_calibrated=False)
-                        is_margin=False
-                        leverage=1
-                        cost=spot_cost
-                        edge=spot_edge
-
-                if not cost.complete or cost.total_round_trip_bps is None:
+                margin_cost=estimate_round_trip_cost(is_margin=True,taker_fee_bps=fee,
+                    spread_bps=ticker.spread_bps,slippage_bps_per_side=D(5),
+                    holding_hours=self.settings.expected_holding_hours,
+                    leverage=int(margin_leverage or 1),margin_open_bps=None,margin_rollover_bps=None)
+                spot_cost=estimate_round_trip_cost(is_margin=False,taker_fee_bps=fee,
+                    spread_bps=ticker.spread_bps,slippage_bps_per_side=D(5),
+                    holding_hours=self.settings.expected_holding_hours,leverage=1) if signal.direction=="LONG" else None
+                plan=select_costed_plan(direction=signal.direction,margin_leverage=margin_leverage,
+                    gross_edge_proxy_bps=gross_edge_proxy,margin_cost=margin_cost,spot_cost=spot_cost)
+                if plan is None:
+                    candidates=[margin_cost]+([spot_cost] if spot_cost is not None else [])
+                    any_complete=any(c.complete and c.total_round_trip_bps is not None for c in candidates)
                     counts["blocked"]+=1
                     self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,
-                        reason="COST_INPUTS_INCOMPLETE",cost_reasons=list(cost.reasons),
-                        margin_fee_rates_confirmed=False,selected_product="SPOT_MARGIN" if is_margin else "CASH_SPOT")
+                        reason="NON_POSITIVE_UNCALIBRATED_EDGE_PROXY" if any_complete else "COST_INPUTS_INCOMPLETE",
+                        margin_cost_reasons=list(margin_cost.reasons),
+                        spot_cost_reasons=list(spot_cost.reasons) if spot_cost is not None else [],
+                        gross_edge_proxy_bps=gross_edge_proxy,edge_is_calibrated=False,
+                        margin_fee_rates_confirmed=False)
                     continue
-                if edge is None or edge<=0:
-                    counts["blocked"]+=1
-                    self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,
-                        reason="NON_POSITIVE_UNCALIBRATED_EDGE_PROXY",edge_bps=edge,
-                        cost_bps=cost.total_round_trip_bps,selected_product="SPOT_MARGIN" if is_margin else "CASH_SPOT")
-                    continue
+                is_margin=plan.product_type=="SPOT_MARGIN"
+                leverage=plan.leverage
+                cost=plan.cost
+                edge=plan.net_edge_proxy_bps
+                if not is_margin and margin_leverage is not None:
+                    self.audit.emit("MARGIN_PLAN_NOT_SELECTED",cycle_id=cycle_id,pair=instrument.wsname,
+                        reason=plan.reason,margin_cost_reasons=list(margin_cost.reasons),
+                        spot_cost_bps=cost.total_round_trip_bps,spot_edge_proxy_bps=edge,
+                        edge_is_calibrated=False)
                 if account is None or snapshot is None:
                     counts["blocked"]+=1
                     self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,reason="ACCOUNT_SNAPSHOT_REQUIRED")
