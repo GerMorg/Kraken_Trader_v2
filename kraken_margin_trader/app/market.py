@@ -14,6 +14,13 @@ def _d(value: Any, default: str = "0") -> Decimal:
     except (InvalidOperation, ValueError, TypeError):
         return D(default)
 
+def _array_item(row: dict[str, Any], key: str, index: int = 0) -> Any:
+    values = row.get(key)
+    if not isinstance(values, (list, tuple)) or not values:
+        return "0"
+    return values[index] if index < len(values) else values[0]
+
+
 def _leverage(raw: Any) -> tuple[int, ...]:
     if not isinstance(raw, (list, tuple)):
         return ()
@@ -66,10 +73,11 @@ def parse_tickers(raw: dict[str, Any], instruments: Iterable[Instrument]) -> dic
     for key, row in raw.items():
         if not isinstance(row, dict) or key not in aliases:
             continue
-        last, ask, bid = _d(row.get("c",["0"])[0]), _d(row.get("a",["0"])[0]), _d(row.get("b",["0"])[0])
-        volume, vwap = row.get("v",["0","0"]), row.get("p",["0","0"])
-        base_vol = _d(volume[1] if len(volume)>1 else volume[0])
-        mean_price = _d(vwap[1] if len(vwap)>1 else vwap[0])
+        last = _d(_array_item(row, "c"))
+        ask = _d(_array_item(row, "a"))
+        bid = _d(_array_item(row, "b"))
+        base_vol = _d(_array_item(row, "v", 1))
+        mean_price = _d(_array_item(row, "p", 1))
         ticker = Ticker(aliases[key], last, bid, ask, base_vol*mean_price)
         if ticker.last > 0 and ticker.bid > 0 and ticker.ask >= ticker.bid:
             result[ticker.pair_id] = ticker
@@ -91,7 +99,13 @@ def parse_ohlc_rows(raw_result: dict[str, Any], pair_id: str) -> list[dict[str, 
             op,high,low,close,volume = (_d(row[i]) for i in (1,2,3,4,6))
         except (ValueError,TypeError):
             continue
-        if min(op,high,low,close)<=0 or high<low or volume<0:
+        if (
+            min(op, high, low, close) <= 0
+            or high < low
+            or high < max(op, close)
+            or low > min(op, close)
+            or volume < 0
+        ):
             continue
         parsed.append({"ts":ts,"open":op,"high":high,"low":low,"close":close,"volume":volume})
     return parsed
