@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from app.market import margin_leverage_for,parse_ohlc_rows,usd_crypto_universe,volume_for_notional_usd
+from app.market import margin_leverage_for,parse_ohlc_rows,parse_tickers,usd_crypto_universe,volume_for_notional_usd
 
 def test_market_universe_allows_only_online_usd_crypto_pair():
     raw={
