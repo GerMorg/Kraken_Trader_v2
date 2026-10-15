@@ -10,6 +10,7 @@ from app.audit import AuditLogger
 from app.config import Settings
 from app.costs import estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
 from app.kraken import KrakenAPIError, KrakenClient
+from app.history_sync import sync_history_source
 from app.market import parse_ohlc_rows, parse_tickers, usd_crypto_universe, volume_for_notional_usd
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
@@ -110,7 +111,37 @@ class TraderRuntime:
             candidates=ranked[:self.settings.max_market_candidates]; counts["candidates"]=len(candidates)
             account=None; snapshot=None; trade_volume={}
             if self.settings.credentials_present:
-                account=self.client.account_snapshot(); rows=_open_position_rows(account["open_positions"])
+                account=self.client.account_snapshot()
+                history_summaries=[]
+                for history_source in ("TRADES", "LEDGERS"):
+                    history_summary=sync_history_source(
+                        client=self.client,
+                        persistence=self.persistence,
+                        source=history_source,
+                    )
+                    history_summaries.append(history_summary)
+                    self.audit.emit(
+                        "KRAKEN_HISTORY_SYNC",
+                        cycle_id=cycle_id,
+                        **history_summary,
+                    )
+                if not all(item["initial_backfill_complete"] for item in history_summaries):
+                    self.audit.emit(
+                        "KRAKEN_HISTORY_BACKFILL_INCOMPLETE",
+                        cycle_id=cycle_id,
+                        sources=[
+                            {
+                                "source": item["source"],
+                                "next_offset": item["next_offset"],
+                                "expected_count": item["expected_count"],
+                                "last_error": item["last_error"],
+                            }
+                            for item in history_summaries
+                        ],
+                        reconciliation_complete=False,
+                    )
+                self._refresh_tax_report()
+                rows=_open_position_rows(account["open_positions"])
                 self.persistence.record_event("ACCOUNT_SNAPSHOT_CAPTURED",{
                     "open_positions":len(rows),"open_orders":len(account["open_orders"].get("open",{})),
                     "captured_at":account["captured_at"],"complete_for_entries":False})
