@@ -16,7 +16,7 @@ Für jedes Jahr unter `/data/reports/tax/AT/<Jahr>/` erzeugt die Implementierung
 - `tax-events.csv`
 - `income-tax-information.md`
 
-Die aktuelle Implementation exportiert vorhandene steuerliche Events und nennt IDs mit fehlender EUR-Bewertung, unbestätigten Daten oder erforderlicher manueller Prüfung. Sie erfindet keine FX-Kurse, Anschaffungskosten, Kreditbeträge oder Gebühren.
+Der Runtimezyklus aktualisiert den Jahresbericht aus den bereits in SQLite gespeicherten Steuerereignissen. Er nennt IDs mit fehlender EUR-Bewertung, unbestätigten Daten oder erforderlicher manueller Prüfung. Die Quellabdeckung wird ausdrücklich als unvollständig zurückgegeben, weil das App-Runtime aktuell keine vollständige Trade-/Ledger-/Transfer-Synchronisation aus Kraken durchführt. Es werden keine FX-Kurse, Anschaffungskosten, Kreditbeträge oder Gebühren erfunden.
 
 ## Ereignisse mitzuverfolgen
 
