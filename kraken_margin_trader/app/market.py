@@ -101,7 +101,7 @@ def volume_for_notional_usd(notional_usd: Decimal, last_price: Decimal, lot_deci
     if (
         not notional_usd.is_finite()
         or not last_price.is_finite()
-        or notional_usd > 0
+        or notional_usd <= 0
         or last_price <= 0
         or lot_decimals < 0
     ):
