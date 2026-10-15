@@ -75,3 +75,52 @@ def taker_fee_from_trade_volume(result: dict[str,Any], instrument_keys: tuple[st
             if rate is not None:
                 return rate
     return None
+
+
+@dataclass(frozen=True)
+class CostedPlan:
+    product_type: str
+    leverage: int
+    cost: CostEstimate
+    net_edge_proxy_bps: Decimal
+    reason: str
+
+
+def select_costed_plan(
+    *,
+    direction: str,
+    margin_leverage: int | None,
+    gross_edge_proxy_bps: Decimal,
+    margin_cost: CostEstimate,
+    spot_cost: CostEstimate | None,
+) -> CostedPlan | None:
+    """Prefer cost-complete margin when justified; only LONG may fall back to cash spot."""
+    normalized_direction = direction.upper()
+    if normalized_direction not in {"LONG", "SHORT"}:
+        return None
+    if not gross_edge_proxy_bps.is_finite() or gross_edge_proxy_bps <= 0:
+        return None
+
+    if margin_leverage is not None and margin_leverage >= 2:
+        if margin_cost.complete and margin_cost.total_round_trip_bps is not None:
+            margin_edge = gross_edge_proxy_bps - margin_cost.total_round_trip_bps
+            if margin_edge > 0:
+                return CostedPlan(
+                    "SPOT_MARGIN", margin_leverage, margin_cost, margin_edge,
+                    "MARGIN_NET_EDGE_POSITIVE",
+                )
+
+    # A sell signal is a short thesis. Never downgrade it to an ordinary spot sell.
+    if normalized_direction != "LONG" or spot_cost is None:
+        return None
+    if not spot_cost.complete or spot_cost.total_round_trip_bps is None:
+        return None
+    spot_edge = gross_edge_proxy_bps - spot_cost.total_round_trip_bps
+    if spot_edge <= 0:
+        return None
+    reason = (
+        "SPOT_FALLBACK_MARGIN_COST_OR_EDGE_UNSUITABLE"
+        if margin_leverage is not None
+        else "SPOT_ONLY_MARGIN_UNAVAILABLE"
+    )
+    return CostedPlan("CASH_SPOT", 1, spot_cost, spot_edge, reason)
