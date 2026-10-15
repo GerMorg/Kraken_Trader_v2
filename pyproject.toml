@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kraken-margin-trader"
+version = "0.1.0"
+description = "Auditable Kraken Spot and Spot Margin Home Assistant add-on"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "ruff==0.14.0", "mypy==1.18.2", "bandit==1.8.6", "pip-audit==2.9.0", "PyYAML==6.0.3"]
+
+[tool.setuptools]
+package-dir = {"" = "kraken_margin_trader"}
+
+[tool.setuptools.packages.find]
+where = ["kraken_margin_trader"]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501", "E701", "E702"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["kraken_margin_trader"]
+addopts = "-ra"
+
+[tool.bandit]
+exclude_dirs = ["tests"]
