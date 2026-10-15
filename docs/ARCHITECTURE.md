@@ -23,7 +23,7 @@
 3. USD-Märkte über 24h-Quotevolumen begrenzt auswählen; Ticker-Spread prüfen.
 4. Geschlossene H1-OHLC-Kerzen speichern; Trendhypothese protokollieren.
 5. Aktuelle Konto-, TradeBalance-, OpenOrders- und OpenPositions-Daten abfragen, falls Schlüssel konfiguriert sind.
-6. Kosten- und Risikoprüfung. Es fehlen noch vollständig verifizierte Drawdown-/Tages-PnL-Baselines, vollständige Reconciliation und dynamisch bestätigte Margin-Kosten; deshalb darf ein positives Signal keinen Live-Entry auslösen.
+6. Kostenplaner bevorzugt Margin nur bei vollständigen Kosteninputs und positivem Edge-Proxy; ein LONG darf nur mit eigenständig vollständigem Kostenplan auf Cash-Spot zurückfallen. SHORT wird nie auf einen Spot-Sell degradiert. Fehlende Margin-Raten, Reconciliation sowie verifizierte Drawdown-/Tages-PnL-Baselines blockieren jede Risikoerhöhung.
 7. Shadow-Intent persistent speichern. Die zentrale Order Authority kann zwar API-Parameter validieren, aber `LIVE_EXECUTION_RELEASED=False` blockiert reale Submit-Requests.
 
 ## Sicherheitsinvarianten
