@@ -22,7 +22,7 @@ Keine Auszahlungsrechte. Für das Lesen benötigt der Schlüssel die in der aktu
 
 ## Logs und Datenspeicher
 
-Home Assistant App Log ist die primäre Bedienoberfläche. Strukturierte UTC-JSON-Zeilen werden nach `/data/logs/events.jsonl` rotiert. App- und Strategieversion werden zentral aus Paketmetadaten übernommen. SQLite liegt unter `/data/kraken_trader.sqlite3`. Der Runtimezyklus aktualisiert die österreichischen Steuer-Belegdateien unter `/data/reports/tax/AT/<Jahr>/` aus bereits gespeicherten Events; dies synchronisiert Kraken-Historien nicht automatisch und meldet deshalb weiterhin unvollständige Quellabdeckung.
+Home Assistant App Log ist die primäre Bedienoberfläche. Strukturierte UTC-JSON-Zeilen werden nach `/data/logs/events.jsonl` rotiert. App- und Strategieversion werden zentral aus Paketmetadaten übernommen. SQLite liegt unter `/data/kraken_trader.sqlite3`. Mit konfigurierten API-Zugangsdaten importiert der Runtimezyklus Trades History und Ledgers schrittweise mit persistenten Offsets und aktualisiert danach die Steuer-Belegdateien unter `/data/reports/tax/AT/<Jahr>/`. Der importierte Verlauf wird nicht automatisch vollständig mit Orders, offenen Positionen, Kreditwährung und externen Transfers reconciliert; daher bleibt die Steuer-Quellabdeckung als unvollständig markiert.
 
 Achte besonders auf `CYCLE_BLOCKED`, `NO_TRADE`, `RISK_GATE_REJECTED`, `CYCLE_FAILED_CIRCUIT_BREAKER`, `ORDER_OUTCOME_UNKNOWN_RECONCILING` und `LIVE_ORDER_BLOCKED_BY_RELEASE_GATE`. API-Key, Secret, Signatur oder Auth-Header gehören nicht in die Logs.
 
