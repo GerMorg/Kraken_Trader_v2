@@ -22,7 +22,8 @@ Die Anwendung verwendet keine HA-Sensoren und kein Dashboard. Alle Zeitpunkte im
 - Einfache, reproduzierbare H1-Time-Series-Momentum-/Trendfolge-Hypothese mit getrennten Long-/Short-Signalen.
 - Risikoprüfung und Positionsgrößenberechnung auf `Decimal`.
 - Kraken REST-Authentifizierung, eindeutige Client-Order-IDs, persistente Order-Intents, SQLite-Ereignisse und JSONL-Protokollierung.
-- Separate Datenmodelle für Margin-Positionen/USDC-Finanzierung sowie eigene Tax-Datenexporte.
+- Persistenter, paginierter und idempotenter Import von Kraken Trades History und Ledgers mit Fail-Closed-Verhalten bei unvollständigen Seiten.
+- Separate Datenmodelle für Margin-Positionen/USDC-Finanzierung sowie jährlich aktualisierte Tax-Belegexporte, die fehlende FX-/Quellabdeckung markieren.
 
 ## Wichtige Einschränkungen
 
