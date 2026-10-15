@@ -65,6 +65,8 @@ def build_add_order_params(intent: OrderIntent, instrument: Instrument, *,
         expected = "LONG" if intent.action in {Action.REDUCE_LONG, Action.CLOSE_LONG} else "SHORT"
         if intent.side != expected or intent.product_type not in {"CASH_SPOT", "SPOT_MARGIN"}:
             raise ValueError("CLOSE_DIRECTION_OR_PRODUCT_MISMATCH")
+        if intent.action in {Action.REDUCE_SHORT, Action.CLOSE_SHORT} and intent.product_type != "SPOT_MARGIN":
+            raise ValueError("SHORT_CLOSE_REQUIRES_SPOT_MARGIN")
 
     if is_settle:
         if intent.product_type != "SPOT_MARGIN":
