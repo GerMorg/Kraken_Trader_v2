@@ -136,7 +136,12 @@ class OrderAuthority:
             if not self.settings.live_requested:
                 self.persistence.transition_intent(intent.intent_id,"BLOCKED",{"reason":"LIVE_SWITCH_OR_KILL_SWITCH"})
                 raise LiveExecutionBlocked("LIVE_SWITCH_OR_KILL_SWITCH")
-        params = build_add_order_params(intent,instrument,validate_only=validate_only)
+        try:
+            params = build_add_order_params(intent,instrument,validate_only=validate_only)
+        except ValueError as exc:
+            self.persistence.transition_intent(intent.intent_id,"REJECTED",{"reason":str(exc)})
+            self.audit.emit("ORDER_INTENT_REJECTED_PRE_SUBMIT",intent_id=intent.intent_id,reason=str(exc))
+            raise
         self.persistence.transition_intent(intent.intent_id,"VALIDATING" if validate_only else "SUBMITTING")
         try:
             result = self.client.private("AddOrder",params)

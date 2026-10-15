@@ -129,9 +129,8 @@ class Persistence:
 
     def unresolved_intents(self) -> list[dict[str, Any]]:
         states = ("INTENT_CREATED","PRECHECK_PASSED","VALIDATING","SUBMITTING","ACKNOWLEDGED","OPEN","PARTIALLY_FILLED","UNKNOWN_RECONCILING")
-        marks = ",".join("?" for _ in states)
         with self.lock:
-            rows = self.connection.execute("SELECT * FROM intents WHERE state IN (" + marks + ") ORDER BY created_at", states).fetchall()
+            rows = self.connection.execute("SELECT * FROM intents WHERE state IN (?,?,?,?,?,?,?,?) ORDER BY created_at", states).fetchall()
         return [dict(row) for row in rows]
 
     def record_fill(self, trade: dict[str, Any]) -> bool:

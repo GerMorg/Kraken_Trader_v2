@@ -1,3 +1,4 @@
+from decimal import Decimal
 from app.config import HARD_LIMITS, Settings
 
 def test_defaults_are_shadow_and_live_locked():
@@ -18,4 +19,7 @@ def test_unknown_mode_falls_back_to_shadow():
 def test_secret_values_are_not_in_safe_summary():
     config=Settings.from_mapping({"kraken_api_key":"key-do-not-log","kraken_api_secret":"secret-do-not-log"})
     assert "key-do-not-log" not in str(config.safe_summary())
-    assert "secret-do-not-log" not in str(config.safe_summary())
+    assert "secret-do-not-log" not in str(config.safe_summary())(s) => s + `\n\ndef test_cash_reserve_can_be_increased_but_not_lowered():
+    assert Settings.from_mapping({"risk_cash_reserve_pct": 50}).risk_cash_reserve_pct == Decimal("50")
+    assert Settings.from_mapping({"risk_cash_reserve_pct": 5}).risk_cash_reserve_pct == Decimal("20")
+`

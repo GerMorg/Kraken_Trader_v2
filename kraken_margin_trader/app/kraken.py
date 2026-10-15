@@ -38,9 +38,9 @@ def _decode_response(raw: bytes) -> dict[str, Any]:
     return value
 
 class KrakenClient:
-    def __init__(self, api_key: str = "", api_secret: str = "",
+    def __init__(self, api_key: str | None = None, api_secret: str | None = None,
                  nonce_provider: Callable[[], int] | None = None, timeout_seconds: float = 15.0) -> None:
-        self.api_key, self.api_secret = api_key, api_secret
+        self.api_key, self.api_secret = api_key or "", api_secret or ""
         self.nonce_provider = nonce_provider or (lambda: time.time_ns() // 1000)
         self.timeout_seconds = timeout_seconds
 
@@ -49,7 +49,7 @@ class KrakenClient:
         url = f"{SPOT_BASE}/0/public/{method}" + (("?" + encoded) if encoded else "")
         request = Request(url, headers={"User-Agent":"KrakenTraderV2/0.1.0"})
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
+            with urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310 -- fixed Kraken HTTPS origin; in-code endpoint names only
                 value = _decode_response(response.read())
         except (TimeoutError, URLError, OSError) as exc:
             raise KrakenAPIError("KRAKEN_PUBLIC_NETWORK_ERROR") from exc
