@@ -9,6 +9,8 @@ import re
 import sys
 from typing import Any, TextIO
 
+from app import STRATEGY_VERSION, __version__
+
 _SECRET_KEYS = {
     "api_key", "kraken_api_key", "api_secret", "kraken_api_secret", "secret",
     "token", "api_sign", "signature", "authorization", "headers",
@@ -50,7 +52,7 @@ class AuditLogger:
     def emit(self, event: str, **payload: Any) -> dict[str, Any]:
         record = {
             "ts": datetime.now(timezone.utc).isoformat(),
-            "app_version": "0.1.0", "strategy_version": "tsm-0.1.0",
+            "app_version": __version__, "strategy_version": STRATEGY_VERSION,
             "event": event, "payload": redact(payload),
         }
         line = json.dumps(record, separators=(",", ":"), sort_keys=True, default=_json_default)
