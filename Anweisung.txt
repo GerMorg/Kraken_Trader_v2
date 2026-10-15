@@ -1,0 +1,794 @@
+# MASTERPROMPT – Kraken Margin Trader für Home Assistant
+## Schlanke Architektur, aggressives risikobasiertes Trading, belastbare Validierung und österreichische Steuerdokumentation
+
+## 1. Auftrag und Ziel
+
+Du bist mein verantwortlicher Softwarearchitekt, Python-Entwickler, quantitativer Trading-Researcher, API-Integrationsexperte und Qualitätssicherungsingenieur.
+
+**Zielrepository:** `ZIELREPOSITORY`
+
+**Altes Repository ausschließlich als Referenz:** https://github.com/GerMorg/Kraken-Trade-Real
+
+Entwickle eine neue, eigenständige, vollautonome Home-Assistant-App für den Handel mit Kryptowährungen über Kraken Spot und Kraken Spot Margin.
+
+Ich möchte bewusst ein höheres Handelsrisiko eingehen, um höhere Gewinnchancen zu ermöglichen. Gehebelte Long- und Short-Positionen über Spot Margin sind deshalb Kernfunktionen der ersten Version und keine optionale spätere Erweiterung.
+
+Das Ziel ist eine möglichst hohe robuste, kostenbereinigte Nettorendite innerhalb eines ausdrücklich aggressiven, aber begrenzten Risikoprofils. Die Strategie soll Margin bevorzugt einsetzen, wenn die erwartete Nettorendite, die Risikoprüfung und die verfügbare Finanzierung dies rechtfertigen.
+
+Futures und Perpetuals bleiben vorerst ausgeschlossen. Sie dürfen später als eigene Erweiterung untersucht werden.
+
+Die App soll dauerhaft auf Home Assistant OS laufen, ohne grafische Oberfläche und ohne HA-Sensoren. Der operative Zustand muss allein anhand strukturierter, verständlicher Logs im Home-Assistant-App-Log und einer persistenten Ereignishistorie nachvollziehbar sein.
+
+**Wichtige Grundregeln:**
+
+- Arbeite ausschließlich im neuen Repository. Verändere das alte Repository nicht.
+- Ignoriere KTKI vollständig, einschließlich seiner Referenztexte, alten Codepfade und etwaiger Legacy-Kompatibilität.
+- Übernimm aus dem alten Projekt nur fachlich notwendige, verstandene und unabhängig geprüfte Komponenten.
+- Implementiere echte Funktionalität und überprüfbare Tests, keine bloßen Platzhalter oder als fertig deklarierte Zukunftskonzepte.
+- Stelle keine unnötigen Rückfragen. Untersuche den Zustand selbstständig und arbeite anschließend strukturiert.
+- Behaupte niemals, dass ein Test, CI-Lauf, Merge, Trade, Backtest oder eine Profitabilität nachgewiesen wurde, wenn dafür kein tatsächlicher Nachweis vorliegt.
+
+## 2. Verbindliche Analyse des alten Repositories
+
+Untersuche zuerst den aktuellen GitHub-Zustand von `GerMorg/Kraken-Trade-Real`.
+
+Prüfe den aktuellen `main`-Commit, Versionsnummer, Releases, Tags, offene PRs, Branch-Basen, CI-Runs, Verzeichnisstruktur, Abhängigkeiten, Runtime, Konfiguration, Dockerfile, HA-App-Manifest, Datenbankschema, Migrationen, Tests, Dokumentation und verfügbare Logs.
+
+Gehe insbesondere diese Module und ihre Beziehungen durch:
+
+- `app/kraken/`: Kraken-API, Signaturen, Instrument Discovery und WebSockets.
+- `app/market/`: Marktdaten, Features, Regime und Marktfilter.
+- `app/trading/`: Signale, Handelsentscheidungen, Tactical-Logik, Profit Protection und Order Authority.
+- `app/risk/`: Risikoprüfungen, Hebel und Margin.
+- `app/execution/`: Orderausführung und Reconciliation.
+- `app/portfolio/`: Positionsmengen, Kontostände, Portfolioabgleich und Positionsgrößen.
+- `app/persistence/`: Datenbank und Schema.
+- `app/runtime/`: Zyklen, Startup, Recovery und Watchdog.
+- `app/tax/`: österreichische Steuerbuchhaltung.
+- `tests/`: existierende Unit-, Integrations-, Recovery-, Margin-, Order-, Risiko- und Steuertests.
+- `.github/workflows/`: tatsächliche Qualitäts- und Sicherheitsprüfungen.
+
+Ausgangspunkt für die Fehleranalyse ist insbesondere:
+
+https://github.com/GerMorg/Kraken-Trade-Real/blob/main/kraken_trade_real/docs/AUDIT_2026-10-14.md
+
+Das Audit ist historisch gebunden und muss gegen den aktuellen Code verifiziert werden.
+
+Erstelle vor größeren Implementierungsarbeiten `docs/LEGACY_LEARNINGS.md`.
+
+Dokumentiere darin:
+1. Was aus der alten App fachlich weiterverwendet werden sollte.
+2. Was ersatzlos entfällt.
+3. Was neu entwickelt werden muss.
+4. Welche kritischen Fehler und Architekturprobleme nicht wieder auftreten dürfen.
+5. Welche Findings bereits durch nachweisbare aktuelle Änderungen abgedeckt sind.
+6. Welche Risiken und Fehler noch offen sind.
+
+Besondere Altprojekt-Learnings:
+
+- Ein Spot-Exit verwendete im untersuchten Ausgangsstand die freie Wallet-Menge anstelle der korrekt zugeordneten Positionsmenge. Ein solcher Überverkauf darf nicht erneut möglich sein.
+- Es gab Ledger-Anomalien und nicht vollständig zuordenbare Fills.
+- Im untersuchten Primärlog existierten keine verifizierten Netto-Handelsergebnisse.
+- Die bestehende Lern- und Prognoselogik durfte geschätzte Ergebnisse nicht als echte Trade-Erfolge interpretieren.
+- Das alte Research-Modul war kein vollständiger realistischer Ausführungssimulator.
+- News- und Gemini-Signale hatten keinen belegten inkrementellen Netto-Vorhersagewert.
+- Wiederkehrende Dust- und Minimum-Blocker überfluteten die Logs.
+- Historische Gebühren-, Hebel-, Finanzierungs- und API-Annahmen waren teilweise nicht verifiziert.
+- Ein interner Stop-Watcher ist nicht mit einer dauerhaft aktiven, bestätigten Börsen-Schutzorder gleichzusetzen.
+
+Übernimm diese Erfahrungen, aber nicht die alte, übermäßig große Architektur. Jede übernommene Funktion muss in der neuen Anwendung begründet und getestet sein.
+
+## 3. Funktionsumfang Version 1
+
+Die erste Version handelt ausschließlich Kryptowährungen auf Kraken Spot und Kraken Spot Margin.
+
+### 3.1 USD-Handelsuniversum
+
+- Alle regulär ausgewählten Märkte müssen ein echtes USD-Quote-Paar sein, zum Beispiel `BTC/USD`.
+- Das Instrumentuniversum wird dynamisch aus den aktuellen Kraken-Metadaten ermittelt.
+- Keine EUR-Quote-Paare und keine beliebigen anderen Quote-Währungen im produktiven Handelsuniversum.
+- Keine XStocks, tokenisierten Aktien, Futures oder Perpetuals.
+- Kein HFT, kein erzwungener Umsatz und keine zweite, unabhängig handelnde Tactical-Strategie.
+- Keine manuell zu pflegende Coin-Whitelist als Voraussetzung für die Teilnahme eines neuen, geeigneten Marktes.
+
+Das interne Finanz- und Risikomodell verwendet USD als zentrale Handels- und Vergleichswährung.
+
+**Wichtige EWR-Ausnahme für die Finanzierung:** Die Beschränkung auf USD-Paare bedeutet nicht, dass jede Margin-Verbindlichkeit in USD geführt wird. Kraken dokumentiert für EWR-Kunden eine Finanzierung von USD-notierten Cash-Paaren in USDC. Verifiziere die Regel zum Implementierungszeitpunkt für das konkrete Konto und die aktuellen Bedingungen. Die App muss USD-Quote-Handel, USD-Bargeld, USDC-Bestand, USDC-Margin-Verbindlichkeiten und tatsächliche automatische Umwandlungen getrennt abbilden. Ein USDC-Kredit darf nicht fälschlich als USD-Bargeld oder als bereits gezahlte USD-Gebühr erscheinen.
+
+USDC darf im Rahmen dieser Finanzierung berücksichtigt werden, ist aber keine automatische Berechtigung, zusätzliche direkte USDC-Quote-Paare zu handeln. Direkte USDC-Quote-Märkte bleiben ausgeschlossen, solange das Handelsuniversum nicht ausdrücklich geändert wird.
+
+EUR-Einzahlungen, Auszahlungen sowie Umtausch zwischen EUR und USD erfolgen manuell außerhalb der Handelsstrategie. Die Steuerbuchhaltung muss trotzdem alle benötigten EUR-Bewertungen rekonstruieren.
+
+### 3.2 Spot und Spot Margin
+
+Die App unterstützt von Beginn an:
+
+- Normale ungehebelte Spot-Long-Positionen.
+- Gehebelte Spot-Margin-Long-Positionen.
+- Gehebelte Spot-Margin-Short-Positionen.
+- Eröffnen, Halten, Aufstocken, Reduzieren, Teilgewinnmitnahme und Schließen.
+- Tatsächlichen Positionsabgleich nach jeder Order und Teilfüllung.
+- Dynamische Instrument- und Kontoberechtigungen.
+- Wechsel zwischen normalem Spot, Margin und Nicht-Handeln entsprechend der konkreten Strategieentscheidung.
+- Automatische Erkennung von veränderter Margin-Berechtigung und nicht mehr verfügbaren Instrumenten.
+
+Für Short-Positionen muss eine tatsächlich von Kraken unterstützte Margin-Ausführung verwendet werden. Eine normale Spot-Verkaufsorder darf niemals irrtümlich als Margin-Short interpretiert werden.
+
+Verfügbarkeit, Richtung, Leverage-Stufen und Orderparameter sind für jedes Instrument anhand der tatsächlichen Kraken-Antworten zu validieren. Es dürfen keine vermeintlich allgemein verfügbaren Produkte oder Hebelstufen vorausgesetzt werden.
+
+## 4. Strategie und gewünschtes Risikoprofil
+
+### 4.1 Aggressives, aber begrenztes Risikoprofil
+
+Implementiere ein ausdrückliches Risikoprofil `AGGRESSIVE_BUT_CAPPED`.
+
+Ich akzeptiere ein höheres Risiko und möchte Margin bevorzugt einsetzen. Die App soll daher nicht automatisch in einem übermäßig konservativen ungehebelten Zustand verharren, sofern eine valide gehebelte Strategieentscheidung möglich ist.
+
+Die Strategie muss aber zwischen Risikobereitschaft, Handelsvorteil und tatsächlicher Verlusttragfähigkeit unterscheiden.
+
+- Eine hohe Signalqualität kann eine größere Position und einen höheren Hebel rechtfertigen.
+- Mehr Hebel ist kein eigener Prognosevorteil.
+- Der maximale verfügbare Kraken-Hebel darf nicht automatisch auf jeden Trade angewandt werden.
+- Ein ungeeigneter, illiquider oder zu volatiler Markt kann trotz eines positiven Signals blockiert werden.
+- Verfügbare Margin muss vor und nach jeder potenziellen Order vollständig in den Risikoplan einbezogen werden.
+- Kein Martingale, kein unbegrenztes Nachkaufen und kein automatisches Erhöhen einer verlierenden Position ohne eigenständige, vorher validierte Handelsentscheidung.
+- Bei fehlendem positiven Netto-Vorteil muss die App auf einen Nicht-Trade zurückfallen.
+- Bei drohender Liquidation oder Überschreitung einer Sicherheitsgrenze muss Risikoreduktion Vorrang vor neuen Trades haben.
+
+Lege dokumentierte, konkrete numerische Standardwerte für dieses Profil fest. Berücksichtige dabei Risikobudget pro Position, maximales Portfolio-Exposure, Margin-Auslastung, maximale Zahl offener Positionen, Tagesverlustlimit und Drawdown-Grenze.
+
+Begründe die Werte quantitativ anhand von Stressszenarien, Drawdown- und Liquidationsrisiko. Werte dürfen nicht aus der maximal erlaubten Kraken-Hebelstufe abgeleitet werden.
+
+Die Limits werden von der Anwendung selbst als unveränderliche Höchstgrenzen durchgesetzt. Reguläre HA-Konfigurationswerte dürfen die Sicherheitshöchstgrenzen nicht überschreiben. Erhöhungen dieser Grenzen erfordern eine bewusste Codeänderung mit neuen Tests.
+
+### 4.2 Wissenschaftlicher Ausgangspunkt
+
+Recherchiere moderne wissenschaftliche Untersuchungen zu Time-Series Momentum, Trendfolge, Krypto-Handelskosten, asymmetrischen Verlusten, Position Sizing, Leverage, Liquidationsrisiko und Backtest-Überanpassung.
+
+Untersuche insbesondere:
+
+- Deprez und Frömmel (2024), *Are simple technical trading rules profitable in bitcoin markets?*  
+  https://www.sciencedirect.com/science/article/pii/S1059056024003010
+- *Momentum in the Cryptocurrency Market: A Comprehensive Analysis under Realistic Assumptions* (2026).  
+  https://academic.oup.com/raps/advance-article-abstract/doi/10.1093/rapstu/raag011/8914819
+- Bailey et al., *The Probability of Backtest Overfitting*.  
+  https://escholarship.org/uc/item/4w1110bb
+- Hurst, Ooi und Pedersen, *A Century of Evidence on Trend-Following Investing*.  
+  https://www.aqr.com/Insights/Research/Journal-Article/A-Century-of-Evidence-on-Trend-Following-Investing
+
+Prüfe die tatsächlich gemessenen Strategien, Datensätze, Marktbedingungen und Gebührenannahmen. Suche ergänzend nach aktuellen Arbeiten, die für gehebelten Krypto-Spot-Handel mit Long und Short relevant sind.
+
+Verwende als primären Strategie-Kandidaten eine einfache, reproduzierbare Time-Series-Momentum-/Trendfolge-Strategie. Vergleiche nur eine kleine, vorab festgelegte Zahl von Varianten.
+
+Die Strategie soll:
+- Langfristige und mittlere Trendrichtung aus historischen Preisdaten nachvollziehbar bestimmen.
+- Long- und Short-Scores getrennt berechnen.
+- Volatilität, Marktregime, Spread, Liquidität und erwartete Kosten berücksichtigen.
+- Positionsgröße und Hebel aus einer Kombination aus Signal, Stop-Abstand, Risikobudget und tatsächlichen Margin-Bedingungen ableiten.
+- Teilgewinnmitnahme, Stop-/Trailing-Logik und vollständige Schließung unterstützen.
+- Bei fehlendem Edge oder ungünstigen Bedingungen kein neues Risiko eingehen.
+
+Die Strategie darf nicht aufgrund vermeintlicher wissenschaftlicher Ergebnisse als profitabel deklariert werden. Wissenschaftliche Arbeiten begründen Hypothesen, nicht die Rendite dieses konkreten Kontos.
+
+Kein News-Engine, kein Gemini, kein autonomes Lernen und keine automatische Parameterpromotion in Version 1.
+
+## 5. Realistisches Research, Backtesting und Shadow-Betrieb
+
+Baue einen reproduzierbaren Forschungsprozess. Der bisherige einfache Vergleich von Einstiegspreis und späterem Kurs ist kein vollständiger Handels-Backtest.
+
+Der Simulator muss mindestens folgende Bestandteile abbilden:
+
+- Chronologisch korrekte historische Markt- und Instrumentdaten.
+- Keine zukünftigen Informationen bei der Berechnung einer Entscheidung.
+- Tatsächliche oder nachvollziehbar geschätzte Maker-/Taker-Gebühren.
+- Spread, Slippage und realistische Limit-/Market-Ausführung.
+- Teilfüllungen, nicht ausgeführte Orders und Kraken-Mindestgrößen.
+- Hebel, risikobasierte Positionsgrößen und verfügbare Sicherheiten.
+- Margin-Eröffnungsgebühren, Rollover und Margin-Rückzahlung.
+- Liquidationsnahe Stressszenarien und abrupte Marktbewegungen.
+- Asset-, Quote- und Kreditzuteilung bei gehebelten Positionen.
+- Konservative Schätzungen, wo reale historische Daten nicht vorhanden sind.
+
+Verwende eine chronologische Trennung zwischen Entwicklung, Validierung, unangetastetem Out-of-Sample-Test und späterem Forward-/Shadow-Test.
+
+Bewerte mindestens:
+
+- Kostenbereinigte Nettorendite und Nettogewinn pro Trade.
+- Sharpe, Sortino und maximalen Drawdown.
+- Erholungszeit und Verlustserien.
+- Tail-Risiko beziehungsweise Expected Shortfall.
+- Turnover, Anteil der Kosten an der Rendite und Slippage.
+- Performance von Long und Short getrennt.
+- Ergebnisse je Instrument, Marktregime, Hebelstufe und Haltedauer.
+- Auslastung der Margin, Liquidationsnähe und Stressverlust des Gesamtportfolios.
+- Ergebnisse gegenüber USD-Cash und geeigneten Buy-and-Hold-Benchmarks.
+- Robustheit über verschiedene Zeiträume und Parameter.
+
+Berücksichtige Backtest-Überanpassung und Mehrfachtestproblematik. Verwende Walk-Forward-Validierung und gegebenenfalls PBO oder Deflated Sharpe Ratio.
+
+Ein Forward-/Shadow-Test muss echte aktuelle Marktbedingungen und dieselbe produktive Entscheidungslogik verwenden, aber vorerst keine echten Orders senden. Alle Entscheidungen, einschließlich Nicht-Trades, müssen protokolliert werden.
+
+Vor Live-Freigabe müssen die vorab dokumentierten Validierungskriterien tatsächlich erfüllt sein. Fehlen notwendige Daten oder unabhängige Ergebnisse, bleibt Live-Trading gesperrt.
+
+## 6. Kostenmodell für Spot und Margin
+
+Das Kostenmodell ist Teil der Strategie und keine nachträgliche Berichtsberechnung.
+
+Trenne folgende Komponenten:
+
+1. Tatsächliche Eröffnungs-Handelsgebühr.
+2. Tatsächliche Schließungs-Handelsgebühr.
+3. Margin-Eröffnungsgebühr.
+4. Tatsächliche und zu erwartende Rollover-Gebühren.
+5. Spread und Slippage.
+6. Gegebenenfalls Market Impact.
+7. Währungsumwandlungen und relevante Umrechnungskosten.
+8. Konservativer Kosten- und Ausführungspuffer.
+
+Margin-Gebühren können von Asset, Marktbedingungen, Kreditsumme und Zeit abhängen. Verwende keine alten festen Gebührenwerte oder einen pauschalen Zuschlag wie eine universelle Finanzierungsrate.
+
+Verwende, soweit verfügbar, die zum konkreten Zeitpunkt gültigen Bedingungen aus Kraken-Metadaten, Kontoinformationen, Orderantworten, offenen Positionen und tatsächlichem Ledger. Wo Live-Daten nicht verfügbar sind, unterscheide geschätzte und bestätigte Werte.
+
+Speichere jede Schätzung zusammen mit Quelle, Zeitpunkt, Währung, Einheit und Haltedauerannahme. Bestätigte Kosten aus Fills und Ledger haben Vorrang vor Schätzwerten.
+
+Die Gebührenbasis und die wirtschaftliche Größe jeder Komponente müssen mathematisch konsistent sein. Verwechsle insbesondere:
+- Gesamten Positionswert und geliehenen Betrag.
+- Eigenkapital und eingesetzte Sicherheit.
+- USD-Quote-Volumen und USDC-Margin-Verbindlichkeit.
+- Brutto-PnL und realisierten Netto-PnL.
+- Marktbewegung und tatsächliche ausführbare Rendite.
+
+Berücksichtige beim erwarteten Edge die gesamte geplante Haltedauer und die Zahl der zu erwartenden Rollover-Ereignisse. Wenn die Strategie nur durch Weglassen notwendiger Gebühren profitabel erscheint, ist sie abzulehnen.
+
+## 7. Kraken-Margin-Funktionalität – vollständige Anforderungen
+
+Margin ist eine zentrale Produktfunktion. Sie darf nicht nur als zusätzlicher Parameter `leverage` an die bisherige Spot-Logik angehängt werden.
+
+### 7.1 Aktuelle API-Dokumentation als verbindliche Referenz
+
+Prüfe vor Implementierung die aktuellen offiziellen API-Dokumentationen und die Regeln für EWR-Kunden:
+
+- Add Order: https://docs.kraken.com/api-reference/trading/add-order
+- Open Positions: https://docs.kraken.com/api-reference/account-data/get-open-positions
+- Trade Balance: https://docs.kraken.com/api-reference/account-data/get-trade-balance
+- Open Orders: https://docs.kraken.com/api-reference/account-data/get-open-orders
+- Closed Orders: https://docs.kraken.com/api-reference/account-data/get-closed-orders
+- Query Trades / Trade History: https://docs.kraken.com/api-reference/account-data/get-trades-history
+- Query Ledgers: https://docs.kraken.com/api-reference/account-data/query-ledgers
+- Kraken Margin-Berechtigung: https://support.kraken.com/at/articles/4402532394260-client-eligibility-for-margin-trading-services-
+- EWR-Margin-Umwandlungen: https://support.kraken.com/articles/margin-conversion-eea
+- Margin-Gebühren: https://support.kraken.com/at/articles/206161568-what-are-the-fees-opening-and-rollover-for-margin-trading-
+- Margin-Settlement: https://support.kraken.com/at/articles/218741078-settling-a-spot-position-on-margin
+
+Wenn sich die API-Struktur oder eine URL geändert hat, suche die korrekte aktuelle Dokumentation und dokumentiere die tatsächlich verwendeten Endpunkte, Parameter und Rechte.
+
+### 7.2 Dynamische Instrument- und Konto-Berechtigungen
+
+Prüfe bei Startup und regelmäßig während des Betriebs:
+
+- Kraken-Systemstatus.
+- Kontoberechtigungen für Margin.
+- Verfügbare Instrumente und USD-Quote-Paare.
+- Verfügbare Margin-Richtungen und Hebelstufen.
+- Präzision, Mindestmengen, Mindestauftragswert und Status.
+- Ob der Account aktuell neue Margin-Positionen eröffnen darf.
+- Ob bereits offene Margin-Positionen weiter verwaltet beziehungsweise geschlossen werden können.
+- Aktuelle Konto-, Sicherheiten- und Margin-Daten.
+
+API-Antworten sind die maßgebliche Grundlage. Keine intern festgelegten oder aus einem alten Log übernommenen Hebelstufen als verfügbare Börsenparameter behandeln.
+
+Bei einer fehlenden Berechtigung darf die App keinen ungehebelten oder andersartigen Auftrag senden, der nicht der beabsichtigten Position entspricht.
+
+### 7.3 Eröffnen von Long- und Short-Positionen
+
+Die Handelsentscheidung muss ausdrücklich zwischen folgenden Aktionen unterscheiden:
+
+- `OPEN_SPOT_LONG`
+- `OPEN_MARGIN_LONG`
+- `OPEN_MARGIN_SHORT`
+- `INCREASE_LONG`
+- `INCREASE_SHORT`
+- `REDUCE_LONG`
+- `REDUCE_SHORT`
+- `CLOSE_LONG`
+- `CLOSE_SHORT`
+- `SETTLE_MARGIN_POSITION`
+- `NO_TRADE`
+- `RISK_REDUCTION_REQUIRED`
+
+Verwende die korrekten Kraken-Orderparameter für die jeweilige Aktion. Prüfe anhand der aktuellen API-Dokumentation, wann `leverage`, `reduce_only`, `settle-position`, die Ordermenge und weitere Parameter zulässig und erforderlich sind.
+
+Die Bedeutung der Richtung, der Position und des Auftrags muss durch Integrationstests nachgewiesen werden. Verlasse dich nicht auf die bloße Ähnlichkeit von API-Bezeichnungen.
+
+Jeder Order-Intent enthält vor der Übermittlung:
+- Instrument und Produktart.
+- Gewünschte Richtung und Aktion.
+- Aktuelle Positionsidentität.
+- Ordermenge und Preisgrenzen.
+- Hebel und Berechnung der Positionsgröße.
+- Erwartetes Margin-Kollateral.
+- Geschätzte Gesamtkosten.
+- Erlaubtes Risiko und Stop-Abstand.
+- Entscheidungshistorie und eindeutige IDs.
+
+Nutze eine validierende Kraken-Orderanfrage, sofern diese im entsprechenden Pfad verfügbar ist, zur Prüfung der Parameter, bevor die reale Ausführung aktiviert wird. Eine erfolgreiche Validierung ist kein Nachweis eines späteren Fills.
+
+### 7.4 Margin- und Kreditzustand
+
+Ermittle die bestmögliche, tatsächlich verfügbare Übersicht über:
+
+- Gesamt-Eigenkapital.
+- Freie und belegte Sicherheiten.
+- Verfügbares Margin-Kollateral.
+- Initial Margin und Maintenance Margin, soweit vom Produkt/API bereitgestellt.
+- Notional aller offenen Positionen.
+- Brutto- und Nettoexposure.
+- Verwendete beziehungsweise geliehene Beträge.
+- Margin-Verbindlichkeiten und Kreditzwährung.
+- Freie Margin und Margin-Level.
+- Offene Orders, die zusätzliche Mittel oder Sicherheiten beanspruchen können.
+- Offene Positionen einschließlich Richtung, Menge, Einstieg, Wert, Kosten, Gebühren und verbleibender Menge.
+- Nächsten Rollover-Zeitpunkt und bekannte Finanzierungsbedingungen.
+- Aktuelle Bewertungs- und Referenzpreise, darunter den relevanten Kraken-Indexpreis für Margin-Risiko, soweit er verfügbar ist.
+
+Nutze die korrekten Kraken-Endpunkte und Felder, insbesondere Trade Balance, Open Positions, Balances, Open Orders, Trades History und Ledger. Stelle fest, welche Werte für das aktuelle EWR-Produkt tatsächlich verfügbar sind.
+
+Erfinde keine Maintenance-Margin-Werte, Liquidationspreise oder Kreditinformationen, wenn Kraken sie nicht zuverlässig bereitstellt. Fehlt eine erforderliche Größe, leite nur dann einen konservativen Wert ab, wenn die Formel, Datenquelle und Gültigkeitsgrenzen eindeutig dokumentiert und getestet sind.
+
+Bei unvollständigem Margin-Zustand darf die App keine zusätzliche Risikoerhöhung eröffnen.
+
+### 7.5 Positionsgröße und tatsächlicher Hebel
+
+Die Positionsgröße muss vom zulässigen Verlustrisiko abgeleitet werden.
+
+Berücksichtige:
+- Kontoeigenkapital und tatsächliche Sicherheiten.
+- Einstiegskurs und geplanten Stop.
+- Volatilität und plausible Kurslücken.
+- Kosten des Ein- und Ausstiegs.
+- Margin-Gebühren und Haltedauer.
+- Korrelierte Positionen und Gesamtportfolio.
+- Verfügbares Kollateral und mögliche Liquidationsnähe.
+- Tatsächliche erlaubte Kraken-Hebelstufen.
+- Einen dokumentierten Puffer für Slippage und unerwartete Ausführungsbedingungen.
+
+Der theoretisch gewünschte Hebel, der tatsächlich gewählte Hebel und der von Kraken bestätigte Hebel müssen getrennt protokolliert werden.
+
+Erhöhe nicht automatisch den Hebel, um Mindestgrößen zu erreichen. Ein nicht ausführbarer kleiner Trade ist zu überspringen, nicht künstlich zu vergrößern.
+
+### 7.6 EWR-spezifische USDC-Finanzierung
+
+Die App muss explizit berücksichtigen, dass für EWR-Kunden USD-notierte Cash-Paare laut aktueller Kraken-Dokumentation mit USDC-Margin finanziert werden können.
+
+Deshalb:
+- Führe USD-Bargeld und USDC-Bestände als unterschiedliche Assets.
+- Dokumentiere die tatsächliche Kreditzwährung und den Betrag jeder Margin-Position.
+- Berücksichtige automatische Umwandlungen und deren belegte Bedingungen.
+- Übernimm keine allgemeine Annahme, dass 1 USD und 1 USDC wirtschaftlich jederzeit exakt gleichwertig sind.
+- Prüfe Stabilitäts- beziehungsweise Depeg-Risiken und deren mögliche Auswirkungen auf Sicherheiten und Verbindlichkeiten.
+- Verknüpfe Umwandlungs- und Ledger-Ereignisse mit der konkreten Position.
+- Erfinde keine zusätzliche Conversion-Gebühr, wenn sie laut aktuellem Kraken-Vertrag nicht anfällt.
+- Stelle trotzdem sicher, dass alle realen Buchungen und Währungsbewertungen vollständig dokumentiert werden.
+
+Die tatsächlichen Regeln müssen zum Zeitpunkt der Implementierung und später regelmäßig verifiziert werden.
+
+### 7.7 Schließen, Reduzieren und Settlement
+
+Dies ist ein besonders kritischer Bereich.
+
+Unterscheide sauber zwischen:
+1. Einer normalen gegengerichteten Handelsorder, die eine Marktposition reduziert oder schließen kann.
+2. Einer Margin-Schließorder, für die Kraken spezielle Orderparameter anbietet.
+3. Einem `settle-position`-Auftrag, der eine bestehende Margin-Verpflichtung ganz oder teilweise ausgleicht.
+
+Diese Mechanismen sind nicht austauschbar.
+
+Für jeden Mechanismus muss dokumentiert werden, welche Position oder Verpflichtung dadurch verändert wird, welche Menge tatsächlich geschlossen oder ausgeglichen wird, welche Gebühren anfallen und wie sich der Status in Kraken und im lokalen Ledger ändert.
+
+Beim Margin-Settlement:
+- Verwende nur die von der aktuellen API unterstützte `settle-position`-Semantik.
+- Ermittle die tatsächliche benötigte Rückzahlungswährung und den Betrag.
+- Berücksichtige die von Kraken dokumentierte FIFO-Reihenfolge für mehrere offene Positionen desselben Paars.
+- Stelle die Zuordnung einer Teilabwicklung zu den tatsächlich betroffenen Positionslots sicher.
+- Verbuche den Vorgang nicht als normalen Markttrade.
+- Erfasse ihn separat in Portfolio, Kostenrechnung und Steuerhistorie.
+
+Bei einem normalen Margin-Close:
+- Prüfe vor der Order die tatsächlich verbleibende offene Menge und alle konkurrierenden Close-Orders.
+- Nutze `reduce_only` oder andere Schutzparameter nur, wenn ihre tatsächliche Unterstützung und Semantik im verwendeten Spot-Margin-Pfad nachgewiesen ist.
+- Verhindere ein unbeabsichtigtes Aufstocken oder Umkehren einer Position.
+- Beachte, dass Kraken Conditional-Close-Orders nach Auslösung eigenständige Aufträge werden können. Ihre Menge und Wirkung darf nicht ungeprüft als dauerhaft positionsbegrenzend angenommen werden.
+
+Ein vollständiger Exit ist erst dann bestätigt, wenn Börsenposition, Orderstatus, Fills und lokale Zuordnung konsistent sind.
+
+### 7.8 Margin-Finanzierung und Rollovers
+
+Erfasse für jede Margin-Position:
+- Eröffnungszeitpunkt und Eröffnungsgebühr.
+- Tatsächlichen erweiterten beziehungsweise finanzierten Betrag.
+- Kreditzwährung.
+- Tatsächlichen Gebühren- beziehungsweise Rollover-Satz, soweit verfügbar.
+- Nächsten fälligen Rollover.
+- Tatsächliche Belastungen aus Ledger oder Trade-/Position-Details.
+- Erwartete weitere Kosten unter einer dokumentierten Haltedauerannahme.
+- Tatsächlichen kumulierten Netto-Kostenstand.
+
+Berücksichtige die tatsächlichen von Kraken geltenden Rollover-Zeitpunkte und Gebührenbedingungen. Ein veralteter fester Schätzwert darf nie als bestätigte Kostenquelle ausgegeben werden.
+
+Wenn tatsächliche Finanzierungskosten oder Positionen nicht eindeutig verifiziert werden können, markiere den Fall als unvollständig und blockiere gegebenenfalls weitere Risikoerhöhungen. Korrigiere nicht durch willkürliche Schätzungen die lokale Gewinnrechnung.
+
+### 7.9 Liquidationsschutz und Stressüberwachung
+
+Ein gewöhnlicher Stop-Loss garantiert weder einen bestimmten Ausführungskurs noch eine Ausführung vor der Zwangsliquidation.
+
+Implementiere:
+- Überwachung des aktuellen Margin-Levels und der verfügbaren Sicherheiten.
+- Interne Frühwarn- und Eingriffsschwellen mit ausreichendem Sicherheitsabstand zur Börsenliquidation.
+- Stressszenarien bei adversen Kursbewegungen.
+- Einbezug von Kurslücken, Spread-Ausweitungen und Slippage.
+- Bewertung über relevante Indexpreise, wenn diese von Kraken für Margin-Risikoberechnungen genutzt werden.
+- Keine neuen Risikoerhöhungen bei kritischem Margin-Zustand.
+- Kontrollierte Priorisierung von Risikoreduktionen.
+- Verifikation, ob Schutzorders an der Börse tatsächlich vorhanden, aktiv und korrekt mengenbegrenzt sind.
+- Reconciliation von Schutzorder, Fills und verbleibender Position.
+- Verhalten bei Prozessabsturz, HA-Neustart, Netzwerkunterbrechung, API-Timeout und Datenstillstand.
+
+Lege keine exakten Liquidationspreise oder Schwellenwerte als Börsenfakten fest, wenn sie nicht durch aktuelle API-Daten oder offizielle Dokumentation bestätigt sind.
+
+Dokumentiere immer, welche Schutzfunktion tatsächlich an Kraken liegt und welche nur vom laufenden HA-Prozess abhängt.
+
+Keine reine interne Watcher-Lösung als ausreichenden Schutz vor unbeaufsichtigtem Margin-Handel deklarieren.
+
+## 8. Order-, Positions- und Ledger-Reconciliation
+
+Alle tatsächlich ausgeführten Orders, Teilfüllungen, Positionen, Kredite, Kosten und Settlement-Ereignisse müssen dauerhaft rekonstruierbar sein.
+
+Verwende eine zentrale Order Authority als einzige Instanz, die Orders sendet. Strategie und Risikomodul erzeugen nur begründete Vorschläge beziehungsweise Freigaben.
+
+Vor jeder Order:
+1. Aktuellen Konto-, Order- und Positionszustand ermitteln.
+2. Offene Orders und noch ungeklärte Intents abgleichen.
+3. Bereits belegte Mittel und erwarteten Margin-Bedarf berücksichtigen.
+4. Menge, Hebel, Mindestorder, Präzision und Ausführbarkeit prüfen.
+5. Kosten und Risiko abschließend validieren.
+6. Order-Intent und eindeutige Client-Order-ID persistieren.
+7. Erst dann über die zentrale Order Authority übermitteln.
+
+Verwende eine explizite Order-State-Machine mit mindestens:
+
+`INTENT_CREATED` → `PRECHECK_PASSED` → `SUBMITTING` → `ACKNOWLEDGED` → `OPEN` → `PARTIALLY_FILLED` → `FILLED`
+
+Weitere Zustände: `CANCELED`, `REJECTED`, `EXPIRED`, `UNKNOWN_RECONCILING`.
+
+Trenne Orderzustand und Positionszustand. Eine gefüllte Order bedeutet nicht automatisch, dass eine gesamte Strategieposition vollständig geschlossen oder ausgeglichen ist.
+
+Nach Timeouts niemals blind eine Order erneut senden. Erst Kraken-Orderstatus, Client-Order-ID, Trades History, Open Positions und Ledger abgleichen.
+
+Die Datenbank muss nach einem Neustart die offenen Orders, Intents, Positionen, Finanzierung und Schutzmaßnahmen rekonstruieren können. Bei einer nicht erklärbaren Abweichung darf keine neue Risikoerhöhung erfolgen.
+
+Tests müssen insbesondere abdecken:
+- Mehrere Margin-Positionen eines Paares.
+- Cross-Quote-/Asset-Konflikte, auch als Regressionstest aus dem Altprojekt.
+- Teilfüllungen und Teil-Schließungen.
+- Settlement mit FIFO-Reihenfolge.
+- Unbekannte Orders und verspätete API-Antworten.
+- Wiederholte Requests und Duplicate-Order-Rennen.
+- Unbekannte externe oder manuelle Bestände.
+- Reboot nach Submit, Ack, Partial Fill oder Settlement.
+- Inkonsistente Positionen, Ledgerdaten und Gebühren.
+- Währungsumwandlungen in Zusammenhang mit Margin-Verbindlichkeiten.
+- Fehlende Schutzorders und unzureichende Liquidität.
+
+Es darf keine automatische Mengenvergrößerung geben, um unbekannte Bestände oder vermeintlich falsche Zuordnungen auszugleichen.
+
+## 9. Risikomanagement und Circuit Breaker
+
+Das Risikomanagement ist unabhängig von der Strategie und bleibt auch ohne Marktanalyse funktionsfähig.
+
+Implementiere mindestens:
+- Risiko pro Trade.
+- Maximalvolumen pro Instrument.
+- Maximaler Brutto- und Nettoexposure des Portfolios.
+- Maximale Anzahl gleichzeitiger Positionen.
+- Begrenzung der Margin-Auslastung.
+- Tägliches Verlustlimit.
+- Drawdown-Grenze.
+- Begrenzung von korrelierten Positionen.
+- Maximal zulässige Ausführungskosten.
+- Schutz vor mehrfacher Ausführung derselben Entscheidung.
+- Kontrolle von offenen Orders und reservierten Sicherheiten.
+- Circuit Breaker bei kritischem Margin-Level, Datenfehler, Authentifizierungsproblem, unbekanntem Orderstatus, Ledger-/Portfolioabweichung oder außergewöhnlichen Verlusten.
+
+Die Risikoentscheidung muss für jede Aktion einzeln dokumentieren, welche Prüfung bestanden und welche blockiert wurde. Verwende konkrete numerische Werte und verständliche Fehlercodes statt pauschaler Aussagen wie `risk rejected`.
+
+Bei einem Circuit Breaker werden neue Risikoerhöhungen gestoppt. Die App muss weiterhin in der Lage sein, den Zustand zu prüfen und – soweit sicher und über Kraken ausführbar – Risiken zu reduzieren oder Positionen zu schließen.
+
+Eine Schutzsperre darf nicht nur im Arbeitsspeicher existieren, sondern muss auch über Neustarts hinweg nachvollziehbar sein.
+
+## 10. Portfolio und PnL
+
+Führe folgende Größen getrennt und konsistent:
+- USD-Kontostand.
+- Andere tatsächlich gehaltene Assets.
+- USDC-Finanzierungsbestände und Margin-Verbindlichkeiten.
+- Freie und belegte Sicherheiten.
+- Brutto- und Nettoexposure.
+- Offene Positionswerte.
+- Offene Orders und reservierte Mittel.
+- Realisierte und unrealisierte PnL.
+- Tatsächliche Handels-, Margin-, Rollover- und relevante Umwandlungskosten.
+- Steuerlich relevante Transaktionen.
+- Nicht zuordenbare Bestände beziehungsweise Ledger-Ereignisse.
+
+Berechne Netto-PnL aus verifizierten Fills und Kosten. Schätzwerte werden getrennt von bestätigten Werten ausgewiesen.
+
+Verwende keine Kursveränderung als Ersatz für den tatsächlichen Nettogewinn einer real ausgeführten Position.
+
+Ein Auszahlungs- oder Einzahlungsvorgang darf nicht als Trading-Gewinn oder Trading-Verlust behandelt werden. Externe Transfers, manuelle Trades und nicht zuordenbare Bestände müssen erkennbar bleiben.
+
+## 11. Austrian Income Tax – Steuerbuchhaltung Österreich
+
+Die österreichische Steueraufbereitung ist verpflichtend.
+
+Recherchiere bei der Implementierung die aktuellen offiziellen Rechtsgrundlagen und Dokumente, insbesondere:
+
+- BMF: https://www.bmf.gv.at/themen/steuern/sparen-veranlagen/steuerliche-behandlung-von-kryptowaehrungen.html
+- BMF: https://www.bmf.gv.at/themen/steuern/sparen-veranlagen/steuerreporting.html
+- BMF: https://www.bmf.gv.at/themen/steuern/fuer-unternehmen/einkommensteuer/einkommensteuererklaerungspflicht.html
+
+Die App erzeugt jährlich mindestens unter `/data/reports/tax/AT/<Jahr>/`:
+- `income-tax-report.json`
+- `tax-events.csv`
+- `income-tax-information.md`
+
+Dokumentiere tatsächliche Börsen-Trades, Fills, Gebühren, Gebührenwährung, Ledger-Ereignisse, relevante Margin-Eröffnungen und -Schließungen, Settlement, Kreditwährung, Rollover-Kosten sowie Ein- und Auszahlungen.
+
+Steuerlich relevante Werte müssen nachvollziehbar zum zutreffenden Zeitpunkt in Euro bewertet werden. Verwende eine dokumentierte FX-Quelle und klare Fallback-Regeln. Keine fehlenden Kurse oder Anschaffungskosten erfinden.
+
+Trenne insbesondere:
+- Normale Spot-Käufe und -Verkäufe.
+- Gewinne und Verluste aus Margin-Positionen.
+- Margin-Eröffnung und Position-Settlement.
+- Kredite, Rückzahlungen und Umwandlungen.
+- Tatsächliche Gebühren und Finanzierungskosten.
+- Krypto-Transaktionen und manuelle Kontoüberträge.
+- Unklare oder nicht eindeutig steuerlich klassifizierbare Ereignisse.
+
+Übernimm keine rechtliche Behandlung aus dem alten Projekt ungeprüft. Klassifiziere keine Margin- oder Derivatevorgänge pauschal als identisch mit ungehebelten Spot-Ergebnissen.
+
+Wenn die Rechtslage anhand offizieller Quellen nicht eindeutig ist, markiere den Fall als manuell steuerlich zu prüfen und dokumentiere die offene Frage.
+
+Der Steuerreport muss Datenvollständigkeit, Berechnungsgrundlagen, verwendete Wechselkurse und sämtliche Einschränkungen ausweisen. Er ist eine Hilfe zur österreichischen Einkommensteuererklärung, keine Steuerberatung und keine Garantie der steuerlichen Vollständigkeit.
+
+## 12. Logging und Betrieb auf Home Assistant OS
+
+Keine Sensoren, kein Dashboard und keine Web-GUI.
+
+Der Home-Assistant-App-Log ist die primäre Bedien- und Fehlerdiagnoseoberfläche. Eine persistente, rotierende JSONL-Ereignishistorie unter `/data/logs/` soll die wesentlichen Ereignisse dauerhaft nachvollziehbar machen.
+
+Jedes Ereignis soll enthalten, soweit sinnvoll:
+- Zeitstempel.
+- App-Version und Strategieversion.
+- Zyklus-ID.
+- Entscheidung und Intent-ID.
+- Client-Order-ID und Kraken-Order-ID.
+- Symbol, Richtung, Aktion und Produktart.
+- Hebel, Position und relevante Mengen.
+- Relevante Werte und Schwellen für Kosten, Margin und Risiko.
+- Ergebnis und konkreten Ablehnungsgrund.
+- Kennzeichnung, ob ein Wert geschätzt, berechnet oder durch Kraken bestätigt ist.
+
+Beim Start muss die App einen vollständigen Status ausgeben:
+- Konfiguration und wirksame Sicherheitslimits.
+- Authentifizierung und API-Berechtigungen.
+- Kraken-Systemstatus.
+- Instrument- und USD-Quote-Universum.
+- Margin-Verfügbarkeit.
+- Margin-Daten, Finanzierung, offene Positionen und Orders.
+- Portfolio-Reconciliation.
+- Datenbankzustand und Wiederherstellung.
+- Live-/Shadow-Modus und eventuelle Sperren.
+
+Jeder Handelszyklus muss mit einer kompakten Zusammenfassung enden. Relevante Trades, Teilfüllungen, Margin-Kosten, Positionsänderungen, Nicht-Trades und Blocker müssen verständlich protokolliert werden.
+
+Wiederkehrende, unveränderte Dust- oder Mindestgrößenmeldungen sind zu deduplizieren. Zustand und Warnung müssen dennoch nach einer relevanten Änderung erneut protokolliert werden.
+
+Keine Secrets, API-Keys, API-Signaturen, Tokens oder vertraulichen Header protokollieren. Exception-Ausgaben müssen auf Secret-Leaks geprüft sein.
+
+## 13. Home-Assistant-Konfiguration und Freigabe
+
+Die Konfiguration soll klein und verständlich bleiben.
+
+Mindestens:
+- Kraken API-Key und Secret.
+- Live-Trading-Kill-Switch.
+- Shadow-/Forward-Modus.
+- Strategieparameter in begrenztem Umfang.
+- Risikoprofil `AGGRESSIVE_BUT_CAPPED`.
+- Interne Hebelobergrenze, Margin-Limit und weitere unveränderliche Risikogrenzen.
+- Logrotation und Datenpfade.
+- Steuerreport-Optionen, soweit notwendig.
+
+API-Zugangsdaten sollen nur die notwendigen Rechte besitzen. Auszahlungsberechtigungen sind nicht nötig und dürfen nicht aktiviert werden.
+
+Die App muss standardmäßig ohne echte Orderübermittlung starten. Live-Trading darf erst freigegeben werden, nachdem die tatsächlichen API- und Kontoanforderungen geprüft und alle verbindlichen Freigabekriterien erfüllt wurden.
+
+Unabhängig vom normalen Live-Switch bleiben interne Sicherheitsprüfungen aktiv. Kein Konfigurationswert darf den zentralen Circuit Breaker oder die unveränderlichen Risikohöchstgrenzen umgehen.
+
+## 14. Teststrategie und Qualitätsgates
+
+Jede wichtige Berechnung und Entscheidung muss isoliert testbar sein. Ergänze Unit-Tests, Integrationstests und End-to-End-Simulationen.
+
+Erforderliche Testgruppen:
+
+**API und Instrumente**
+- Authentifizierung, Signatur und Nonce.
+- Aktuelle Kraken-Parameter und ihre Validierung.
+- USD-Quote-Paare.
+- Margin-Berechtigung und Hebelstufen.
+- Gebühreninformationen und Margin-Konvertierungen für EWR-Konten.
+- Fehlende beziehungsweise fehlerhafte API-Daten.
+
+**Strategie und Kosten**
+- Long-/Short-Signale.
+- Erwarteter Nettoedge.
+- Handels-, Eröffnungs- und Rollover-Gebühren.
+- Positionsgrößen bei unterschiedlichen Stop-Abständen und Hebeln.
+- Kosten bei veränderter Haltedauer.
+- Regimefilter und Nicht-Handeln.
+
+**Margin und Positionsverwaltung**
+- Gehebelter Long und Short.
+- Falsche beziehungsweise nicht unterstützte Hebelstufen.
+- Ungenügendes Kollateral.
+- Kritisches Margin-Level.
+- USDC-finanzierte USD-Paare und korrekte Kreditzuordnung.
+- Teilgewinnmitnahme und vollständige Schließung.
+- Settlement und FIFO.
+- Reconciliation nach Neustart.
+- Fehlerhafte oder nicht vorhandene Schutzorders.
+- Stop-/Exit-Rennen und widersprüchliche Bestände.
+
+**Orders und Persistenz**
+- Duplicate-Order-Vermeidung.
+- Teilfüllungen, Stornos, Ablehnungen und Timeouts.
+- Unbekannte Orderzustände.
+- Verlorene oder verspätete API-Antworten.
+- Neustart nach Orderübermittlung.
+- Wiederholte Reconciliation ohne doppelte Verbuchung.
+- Walletbestand größer oder kleiner als die tatsächlich zugeordnete Positionsmenge.
+- Unvollständiges Ledger und nicht zuordenbare Fills.
+
+**Risiko und Recovery**
+- Überschrittenes Tagesverlustlimit und Drawdown.
+- Margin-Stress und drohende Liquidation.
+- Ungewöhnliche Spread- und Slippage-Situationen.
+- Datenstillstand und veraltete Account-Snapshots.
+- Circuit Breaker und kontrollierte Wiederherstellung.
+- Prozessabsturz und Datenbankfehler.
+
+**Steuer und Audit**
+- Steuerreport für ein vollständig dokumentiertes Jahr.
+- USD-/USDC-/EUR-Konvertierungen.
+- Gebühren und Margin-Finanzierung.
+- Settlement ohne Verwechslung mit einem normalen Trade.
+- Datenlücken und manuelle Prüfhinweise.
+- Keine Secrets in den Logs.
+
+CI darf niemals echte Trades ausführen. Verwende simulierte Adapter und deterministische Testdaten. Wo ein echter API-Vertrag nicht vollständig simuliert werden kann, dokumentiere den verbleibenden Integrationstestbedarf und nutze nach Möglichkeit Kraken-Validierungsfunktionen ohne echte Ausführung.
+
+Die CI enthält mindestens:
+1. Ruff, Mypy und vollständige Pytest-Suite.
+2. Sicherheits- und Dependency-Audit.
+3. HA-App-Strukturprüfung.
+4. Compile-Prüfung.
+5. Docker-Container-Build.
+
+Alle verpflichtenden Jobs müssen auf dem tatsächlichen finalen PR-Head erfolgreich laufen.
+
+## 15. Zielarchitektur und Abhängigkeiten
+
+Verwende eine kompakte, überschaubare Python-Architektur. Bevorzuge wenige klar abgegrenzte Module:
+
+- `config`: Validierung und wirksame Grenzen.
+- `kraken`: API, Authentifizierung, Instrumente und Kontoabfragen.
+- `market`: Marktdaten, historische Kerzen und Datenqualität.
+- `strategy`: Trend-/Momentum-Signale und Handelsentscheidungen.
+- `risk`: Positionsgröße, Hebel, Portfolio- und Margin-Risiko.
+- `execution`: zentrale Order Authority und Order-State-Machine.
+- `portfolio`: Bestände, Positionen, Reconciliation, PnL und Settlement.
+- `persistence`: SQLite, Migrationen und Wiederherstellung.
+- `tax`: österreichische Steuerbuchhaltung.
+- `audit`: strukturierte Logs.
+- `main`: Startup, Laufzeitzyklen, Circuit Breaker und kontrollierter Neustart.
+
+Die tatsächliche Aufteilung darf simpler sein, wenn dadurch keine Verantwortlichkeiten vermischt werden. Erzeuge keine unnötigen Frameworks und baue kein monolithisches Runtime-Modul mit sämtlicher Logik.
+
+Verwende `Decimal` für Geldbeträge, Mengen, Preise, Hebelberechnungen und Gebühren, soweit diese Werte finanzielle Präzision benötigen. Definiere klare numerische Schnittstellen und Einheiten. Jede finanzielle Berechnung muss eindeutig zwischen Basisasset, Quoteasset, Kreditwährung und USD-/EUR-Bewertung unterscheiden.
+
+Die Persistenz dient der Historie, Order-Reconciliation, Recovery, Steuerbuchhaltung und Auditierbarkeit. Sie ist kein Lernsystem und bleibt bestehen.
+
+## 16. GitHub-Entwicklung und Versionspflege
+
+Arbeite schrittweise in kleinen, überprüfbaren Änderungen.
+
+- Erstelle einen eigenen Entwicklungsbranch.
+- Dokumentiere die geplante Änderung und ihre Tests.
+- Implementiere jeweils einen klar abgegrenzten Teil.
+- Führe Tests und CI aus.
+- Behebe Fehler vor dem Merge.
+- Bumpe Versionsnummer, HA-Manifest, Paketmetadaten und Containerkonfiguration konsistent.
+- Aktualisiere Changelog und Dokumentation.
+- Merge nur, wenn die Branch-Basis aktuell und alle erforderlichen CI-Prüfungen grün sind.
+- Wenn Rechte, Checks oder API-Funktionen fehlen, benenne den konkreten Blocker und behaupte keinen Abschluss.
+
+Ändere das alte Repository nicht.
+
+## 17. Pflichtdokumentation
+
+Erstelle und pflege:
+
+- `README.md`: Installation, Konfiguration und Bedienung.
+- `docs/ARCHITECTURE.md`: tatsächliche Architektur und Datenfluss.
+- `docs/LEGACY_LEARNINGS.md`: Altprojekt-Learnings und übernommene Fixes.
+- `docs/STRATEGY_RESEARCH.md`: aktuelle Forschung und Strategiebegründung.
+- `docs/RISK_MANAGEMENT.md`: Risikoprofil, Hebel, Drawdown und Liquidationsschutz.
+- `docs/MARGIN_OPERATIONS.md`: Kraken-Margin-API, USD-/USDC-Finanzierung, Settlement, Kosten und Reconciliation.
+- `docs/EXECUTION_AND_RECOVERY.md`: Orderzustände und Wiederherstellung.
+- `docs/AUSTRIA_INCOME_TAX.md`: österreichische Steuergrundlagen, Reports und offene Fragen.
+- `docs/OPERATIONS.md`: HA-Installation, Logs und Freigabe.
+- `CHANGELOG.md`: nachprüfbare Versionsänderungen.
+
+Jede Dokumentation muss dem tatsächlich implementierten Code entsprechen. Zukunftsplanung darf nicht als fertige Funktion beschrieben werden.
+
+## 18. Abnahmekriterien
+
+Die App darf erst als fertig bezeichnet werden, wenn alle folgenden Kriterien nachweisbar erfüllt sind:
+
+1. Sie läuft zuverlässig als Home-Assistant-App auf Home Assistant OS.
+2. Sie erkennt dynamisch die tatsächlich zulässigen USD-Quote-Krypto-Märkte.
+3. Sie unterstützt normale Spot-Longs sowie gehebelte Margin-Longs und Margin-Shorts.
+4. Sie prüft die reale Konto- und Instrumentberechtigung vor jeder Margin-Order.
+5. Sie bewertet Hebel, Positionsgröße, Gesamtkosten und Margin-Risiko nachvollziehbar.
+6. Sie berücksichtigt für EWR-Konten die tatsächliche USDC-Finanzierung der entsprechenden Margin-Trades.
+7. Sie überwacht verfügbare Sicherheiten, Margin-Level, Rollover und Positionen.
+8. Sie reduziert und schließt Positionen korrekt und kann sie separat über den geeigneten Settlement-Mechanismus ausgleichen.
+9. Sie verhindert unbeabsichtigtes Aufstocken, Überverkauf und unbeabsichtigte Richtungsumkehr.
+10. Sie erkennt unbekannte oder widersprüchliche Orders und sendet keine blinden Wiederholungsorders.
+11. Sie rekonstruiert Portfolio, Orders, Kredite und Margin-Verbindlichkeiten nach Neustarts korrekt.
+12. Sie kennzeichnet geschätzte und verifizierte PnL getrennt.
+13. Sie hat einen realistischen Backtest, chronologische Out-of-Sample-Validierung und einen nachvollziehbaren Shadow-/Forward-Test.
+14. Sie kann im Falle einer kritischen Margin-Situation neue Risikoerhöhungen stoppen und die erforderliche Risikoreduktion priorisieren.
+15. Sie besitzt eine vollständige österreichische Steuerbuchhaltung mit nachvollziehbarer EUR-Bewertung und ausdrücklich markierten Datenlücken.
+16. Ihr Betrieb ist ohne Sensoren und GUI aus den Logs nachvollziehbar.
+17. Alle verpflichtenden Tests und CI-Jobs sind auf dem exakten finalen Code erfolgreich.
+18. Die Dokumentation, Version und tatsächliche Implementierung stimmen überein.
+19. Ungeklärte Sicherheits- und Validierungsprobleme verhindern die Freigabe von unbeaufsichtigtem Live-Margin-Handel.
+20. Keine unbelegte Aussage über Profitabilität oder absolute Sicherheit wird getroffen.
+
+## 19. Arbeitsablauf und Abschlussbericht
+
+Beginne mit einer Bestandsaufnahme des neuen Repositories und der Altprojekt-Learnings. Prüfe dann die aktuellen Kraken-API- und EWR-Margin-Regeln. Dokumentiere Zielarchitektur, Strategiehypothese, Risiken und die geplante Umsetzungsreihenfolge.
+
+Implementiere anschließend die Lösung selbstständig in logisch getrennten Schritten. Arbeite nicht bloß einen Dokumentationsplan ab: Erstelle und ändere den Code, ergänze die Tests, führe sie aus, behebe die Fehler und kontrolliere den tatsächlichen GitHub- und CI-Zustand.
+
+Gib Zwischenstände aus, sobald verwertbare Teilergebnisse existieren. Insbesondere bei längeren Aufgaben müssen die bereits abgeschlossenen Teile, offene Risiken und nächsten konkreten Arbeitsschritte nachvollziehbar bleiben.
+
+Der Abschlussbericht muss enthalten:
+
+- Geänderte Dateien und Architektur.
+- Implementierte Long-/Short- und Margin-Funktionen.
+- Verwendete Kraken-Endpunkte und bestätigte Parameter.
+- Behandlung von USDC-Finanzierung und Margin-Settlement.
+- Strategie und Forschungsgrundlage.
+- Kostenmodell und Risikogrenzen.
+- Test- und CI-Ergebnisse.
+- Branch, PR, Commit und tatsächlich nachgewiesener Status.
+- Installations- und Konfigurationsanleitung.
+- Steuerreport und seine Grenzen.
+- Offene Risiken und noch notwendige Prüfungen.
+- Eindeutige Freigabeentscheidung: Shadow-Test, begrenzter Live-Betrieb oder noch keine Live-Freigabe.
+
+**Endziel:** Ein eigenständiger, wartbarer und nachvollziehbar funktionierender Kraken-Trader für Home Assistant, der gehebeltes Spot-Margin-Trading von Anfang an beherrscht, ein bewusst aggressiveres Risikoprofil ermöglicht und dennoch Orders, Finanzierung, Kosten, Positionen und Steuerhistorie vollständig und korrekt verwaltet.
+
+Beginne jetzt mit der Analyse des tatsächlichen Repository-Zustands und setze anschließend die Arbeit strukturiert um.
