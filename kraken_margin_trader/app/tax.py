@@ -15,7 +15,13 @@ class AustrianTaxReports:
     def __init__(self, root: str = "/data/reports/tax/AT") -> None:
         self.root = Path(root)
 
-    def generate_year(self, year: int, events: Iterable[dict[str,Any]]) -> dict[str,Any]:
+    def generate_year(
+        self,
+        year: int,
+        events: Iterable[dict[str,Any]],
+        *,
+        source_coverage_complete: bool = False,
+    ) -> dict[str,Any]:
         target = self.root / str(year)
         target.mkdir(parents=True,exist_ok=True)
         items=[dict(event) for event in events]
@@ -29,11 +35,15 @@ class AustrianTaxReports:
         manual=[str(e.get("event_id","unknown")) for e in items if bool(e.get("manual_review",True))]
         report={"report_type":"AUSTRIA_CRYPTO_INCOME_TAX_SUPPORT","year":year,
                 "generated_at":datetime.now(timezone.utc).isoformat(),
-                "status":"INCOMPLETE_REQUIRES_MANUAL_REVIEW" if missing_fx or unverified or manual else "EVIDENCE_COMPLETE_REVIEW_REQUIRED",
+                "status":"INCOMPLETE_REQUIRES_MANUAL_REVIEW"
+                    if not source_coverage_complete or missing_fx or unverified or manual
+                    else "EVIDENCE_COMPLETE_REVIEW_REQUIRED",
+                "source_coverage_complete": source_coverage_complete,
                 "tax_advice":False,"event_count":len(items),
                 "missing_eur_valuation_event_ids":missing_fx,"unverified_event_ids":unverified,
                 "manual_review_event_ids":manual,"events":items,
                 "limitations":["Not official BMF Steuerreporting and not tax advice.",
+                 "Trade/ledger source coverage has not been independently verified unless explicitly marked complete.",
                  "Missing FX rates, acquisition costs and funding details are never invented.",
                  "Margin open/close/settlement events require product-specific Austrian tax review."]}
         (target/"income-tax-report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2,default=str)+"\n",encoding="utf-8")
@@ -44,6 +54,7 @@ class AustrianTaxReports:
                 writer.writerow({field:event.get(field,"") for field in REPORT_FIELDS})
         notes=[f"# Österreichische Einkommensteuer-Unterlagen {year}","",
                f"Status: {report['status']}",f"Erfasste Ereignisse: {len(items)}",
+               f"Quellabdeckung vollständig verifiziert: {source_coverage_complete}",
                f"Fehlende EUR-Bewertungen: {len(missing_fx)}",f"Nicht verifiziert: {len(unverified)}",
                f"Manuell zu prüfen: {len(manual)}","",
                "Diese Unterlagen helfen bei der Nachvollziehbarkeit, sind keine Steuerberatung und kein amtliches BMF-Steuerreporting. Unklare Margin-, Settlement-, Finanzierungs- und FX-Ereignisse bleiben manuell zu prüfen.",
