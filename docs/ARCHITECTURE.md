@@ -9,7 +9,7 @@
 - `app/costs.py`: Gesamtkostenmodell; wenn tatsächliche Handels-/Margin-Kosten unbekannt sind, Status `INCOMPLETE`.
 - `app/risk.py`: risikobasierte Notionalgröße und unabhängiges Entry-Gate.
 - `app/execution.py`: Order-Intent, Parametermapping, zentrale Order Authority und intern verriegelte Live-Freigabe.
-- `app/portfolio.py`: Open-Position-Parsing, paarbezogene Mengensicherheit und Kennzeichnung erwarteter EWR-Finanzierungswährung.
+- `app/portfolio.py`: richtungsgetrennte Brutto-/Nettoexposure-Aggregation, streng geprüfte Margin-Lots, paarbezogene Mengensicherheit und Kennzeichnung erwarteter (nicht kontobestätigter) EWR-Finanzierungswährung.
 - `app/persistence.py`: SQLite/WAL, Bar-/Ereignis-/Intent-/Fill-/Ledger-/Steuerhistorie und persistente Circuit Breaker.
 - `app/audit.py`: JSONL in stdout und rotierender Datei mit Secret-Redaktion.
 - `app/backtest.py`: eingeschränkter OHLCV-Szenario-Simulator.
