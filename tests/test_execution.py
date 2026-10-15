@@ -54,3 +54,29 @@ def test_validation_flag_is_not_an_execution_permission():
     intent=OrderIntent.create(decision_id="validate-d",pair="XBTUSD",action=Action.OPEN_SPOT_LONG,
       side="LONG",volume=D("0.1"),product_type="CASH_SPOT")
     assert build_add_order_params(intent,instrument(),validate_only=True)["validate"] is True
+
+
+def test_short_close_cannot_be_sent_as_cash_spot_buy():
+    intent = OrderIntent.create(
+        decision_id="short-close-spot",
+        pair="XBTUSD",
+        action=Action.CLOSE_SHORT,
+        side="SHORT",
+        volume=D("0.1"),
+        product_type="CASH_SPOT",
+    )
+    with pytest.raises(ValueError, match="SHORT_CLOSE_REQUIRES_SPOT_MARGIN"):
+        build_add_order_params(intent, instrument(), validate_only=True)
+
+
+def test_short_reduction_cannot_be_sent_as_cash_spot_buy():
+    intent = OrderIntent.create(
+        decision_id="short-reduce-spot",
+        pair="XBTUSD",
+        action=Action.REDUCE_SHORT,
+        side="SHORT",
+        volume=D("0.1"),
+        product_type="CASH_SPOT",
+    )
+    with pytest.raises(ValueError, match="SHORT_CLOSE_REQUIRES_SPOT_MARGIN"):
+        build_add_order_params(intent, instrument(), validate_only=True)
