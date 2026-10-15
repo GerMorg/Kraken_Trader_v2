@@ -53,6 +53,17 @@ class Persistence:
                 CREATE TABLE IF NOT EXISTS ledger_events(ledger_id TEXT PRIMARY KEY,asset TEXT,amount TEXT,fee TEXT,event_type TEXT,ts TEXT,verified INTEGER NOT NULL,raw_json TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS tax_events(event_id TEXT PRIMARY KEY,ts TEXT NOT NULL,year INTEGER NOT NULL,event_type TEXT NOT NULL,asset TEXT,quote_asset TEXT,quantity TEXT,value_eur TEXT,fee_amount TEXT,fee_asset TEXT,source_ref TEXT,verified INTEGER NOT NULL,manual_review INTEGER NOT NULL,payload_json TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS tax_year_idx ON tax_events(year);
+                CREATE TABLE IF NOT EXISTS history_sync_state(
+                    source TEXT PRIMARY KEY,
+                    start_epoch INTEGER NOT NULL,
+                    end_epoch INTEGER NOT NULL,
+                    next_offset INTEGER NOT NULL,
+                    expected_count INTEGER,
+                    initial_backfill_complete INTEGER NOT NULL,
+                    generation_complete INTEGER NOT NULL,
+                    last_error TEXT,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS circuit_breakers(name TEXT PRIMARY KEY,active INTEGER NOT NULL,reason TEXT NOT NULL,ts TEXT NOT NULL,detail_json TEXT NOT NULL);
             """)
             self.connection.execute("INSERT OR IGNORE INTO schema_meta(key,value) VALUES('schema_version','1')")
@@ -178,6 +189,53 @@ class Persistence:
             item["payload"] = json.loads(item.pop("payload_json"))
             result.append(item)
         return result
+
+    def history_sync_state(self, source: str) -> dict[str, Any] | None:
+        normalized = source.upper()
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT source,start_epoch,end_epoch,next_offset,expected_count,"
+                "initial_backfill_complete,generation_complete,last_error,updated_at "
+                "FROM history_sync_state WHERE source=?",
+                (normalized,),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["initial_backfill_complete"] = bool(result["initial_backfill_complete"])
+        result["generation_complete"] = bool(result["generation_complete"])
+        return result
+
+    def save_history_sync_state(self, state: dict[str, Any]) -> None:
+        source = str(state["source"]).upper()
+        if source not in {"TRADES", "LEDGERS"}:
+            raise ValueError("HISTORY_SOURCE_INVALID")
+        start_epoch = int(state["start_epoch"])
+        end_epoch = int(state["end_epoch"])
+        next_offset = int(state["next_offset"])
+        expected = state.get("expected_count")
+        if start_epoch < 0 or end_epoch < start_epoch or next_offset < 0:
+            raise ValueError("HISTORY_SYNC_STATE_INVALID")
+        if expected is not None and int(expected) < 0:
+            raise ValueError("HISTORY_SYNC_EXPECTED_COUNT_INVALID")
+        with self.lock:
+            self.connection.execute(
+                "INSERT INTO history_sync_state(source,start_epoch,end_epoch,next_offset,expected_count,"
+                "initial_backfill_complete,generation_complete,last_error,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(source) DO UPDATE SET "
+                "start_epoch=excluded.start_epoch,end_epoch=excluded.end_epoch,"
+                "next_offset=excluded.next_offset,expected_count=excluded.expected_count,"
+                "initial_backfill_complete=excluded.initial_backfill_complete,"
+                "generation_complete=excluded.generation_complete,last_error=excluded.last_error,"
+                "updated_at=excluded.updated_at",
+                (
+                    source, start_epoch, end_epoch, next_offset,
+                    int(expected) if expected is not None else None,
+                    int(bool(state.get("initial_backfill_complete", False))),
+                    int(bool(state.get("generation_complete", False))),
+                    state.get("last_error"), _now(),
+                ),
+            )
 
     def trip_circuit_breaker(self, name: str, reason: str, detail: dict[str, Any] | None = None) -> None:
         with self.lock:
