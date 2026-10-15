@@ -20,7 +20,7 @@ Diese Dokumentation muss bei jeder zukünftigen Freigabe erneut geprüft werden;
 
 Die App verwendet den aktuellen AssetPairs-Bestand, nicht fest programmierte Hebelstufen. Es werden nur online Krypto-Spot-Märkte mit USD-Quote aufgenommen. Tokenisierte Aktien und nicht USD-notierte Märkte sind ausgeschlossen. `leverage_buy` und `leverage_sell` werden separat betrachtet; die gewählte Stufe muss tatsächlich für Instrument und Orderrichtung vorliegen und unter der Source-Cap von 3x liegen.
 
-Verwendete private Endpunkte im initialen Client: `Balance`, `TradeBalance`, `OpenOrders`, `OpenPositions`, `TradeVolume` sowie im geschützten Ordermodul `AddOrder`. `TradesHistory`, `ClosedOrders` und `Ledgers` müssen in der vollständigen Reconciliation als nächste Integration ergänzt werden; die bloße Schema-Ablage ersetzt keinen tatsächlichen Abgleich.
+Im Runtimepfad verwendete private Abfragen: `Balance`, `TradeBalance`, `OpenOrders`, `OpenPositions`, `TradeVolume`; das geschützte Ordermodul enthält `AddOrder`, wobei der Live-Gate eine echte Submit-Order blockiert. Client-Wrapper für `TradesHistory` und `Ledgers` sind verfügbar, werden aber noch nicht paginiert regelmäßig abgerufen, idempotent persistiert und mit Positionen/Transfers abgestimmt. Ein `ClosedOrders`-Wrapper und die vollständige Reconciliation fehlen. Ein erfolgreicher API-Abruf ist kein Beweis einer vollständigen Kontenabstimmung.
 
 ## EWR-Finanzierung USD/USDC
 
