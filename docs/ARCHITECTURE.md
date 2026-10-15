@@ -38,4 +38,4 @@
 
 ## Bekannte Lücken
 
-Noch nicht implementiert/nachgewiesen sind eine durchgängige Order-/Fill-/OpenPosition-/Ledger-Abstimmung einschließlich externer Trades, Reservierung über alle Quote-Paare und Crashfenster, exchange-seitige Schutzorder-Recovery, echtes FX-/USDC-Ledger-Mapping, sowie ein realistischer orderbuchbasierter Backtest und Forward-Shadow-Test. Diese Lücken verhindern die Live-Freigabe.
+Die Trade-/Ledger-Erstbefüllung läuft schrittweise über gespeicherte Seiten-Cursor und wiederholt bei Folgeläufen ein überlappendes Zeitfenster. Sie ist noch keine durchgängige Order-/Fill-/OpenPosition-/Ledger-Abstimmung: externe/manuelle Trades, offene/geschlossene Orders, Reservierungen, Kredite, USDC-Konversionen und Crashfenster sind noch nicht verifiziert. Exchange-seitige Schutzorder-Recovery, tatsächliche FX-/USDC-Zuordnung sowie ein realistischer Orderbuch-Backtest und Forward-Shadow-Test fehlen ebenfalls. Ein vollständig importierter Verlauf ist nicht gleichbedeutend mit vollständig reconciliertem Portfolio. Diese Lücken verhindern die Live-Freigabe.
