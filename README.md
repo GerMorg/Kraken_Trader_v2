@@ -2,7 +2,7 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.1
+## Aktueller Status — 0.1.2
 
 **Nur Shadow-/Research-Grundlage. Kein unbeaufsichtigter Live-Handel.** Die Ausführungsfreigabe ist zusätzlich zu den UI-Konfigurationsschaltern in Python fest auf `False` gesetzt. Das ist beabsichtigt: Kontenabgleich, tatsächliche Margin-Gebühren-/Fundingzuordnung, robuste Recovery, historischer Out-of-Sample-Backtest und Forward-Shadow-Test sind noch nicht vollständig nachgewiesen.
 
