@@ -17,3 +17,12 @@ def test_report_refuses_mixed_tax_year(tmp_path):
     import pytest
     with pytest.raises(ValueError,match="YEAR_MISMATCH"):
         AustrianTaxReports(str(tmp_path)).generate_year(2026,[{"event_id":"E2","year":2025}])
+
+
+def test_empty_or_unreconciled_source_cannot_be_reported_as_complete(tmp_path):
+    report = AustrianTaxReports(str(tmp_path)).generate_year(2026, [])
+    assert report["status"] == "INCOMPLETE_REQUIRES_MANUAL_REVIEW"
+    assert report["source_coverage_complete"] is False
+    assert (tmp_path / "2026" / "income-tax-report.json").exists()
+    assert (tmp_path / "2026" / "tax-events.csv").exists()
+    assert (tmp_path / "2026" / "income-tax-information.md").exists()
