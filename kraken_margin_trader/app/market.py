@@ -32,8 +32,10 @@ def usd_crypto_universe(raw_pairs: dict[str, Any]) -> list[Instrument]:
     for pair_id, raw in raw_pairs.items():
         if not isinstance(raw, dict) or str(raw.get("status","")).lower() != "online":
             continue
-        asset_class = str(raw.get("aclass_base", raw.get("asset_class",""))).lower()
-        if "token" in asset_class or "stock" in asset_class:
+        asset_class = str(raw.get("aclass_base", raw.get("asset_class", ""))).strip().lower()
+        # Only accept the exchange's explicit regular-currency base class. Unknown classes
+        # fail closed so tokenized equities or newly introduced products cannot leak in.
+        if asset_class != "currency":
             continue
         wsname = str(raw.get("wsname",""))
         if "/" not in wsname:
