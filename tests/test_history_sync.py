@@ -85,7 +85,7 @@ def test_ledger_history_persists_actual_asset_and_keeps_tax_value_unverified():
 def test_history_invalid_page_never_advances_cursor_or_marks_complete():
     db = Persistence(":memory:")
     client = FakeHistoryClient(trade_pages={
-        0: {"trades": {"T1": {"time": "NaN", **trade()}}, "count": 1},
+        0: {"trades": {"T1": {**trade(), "time": "NaN"}}, "count": 1},
     })
     result = sync_history_source(client=client, persistence=db, source="TRADES",
                                  page_budget=1, now_epoch=1769000000)
