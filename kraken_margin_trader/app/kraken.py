@@ -97,8 +97,42 @@ class KrakenClient:
         trade = self.private("TradeBalance", {"aclass":"currency","asset":"ZUSD"})
         orders = self.private("OpenOrders", {"trades":True})
         positions = self.private("OpenPositions", {"docalcs":True,"consolidation":"market"})
-        return {"balance":balance, "trade_balance":trade, "open_orders":orders,
-                "open_positions":positions, "captured_at":time.time(), "verified":True}
+        return {
+            "balance": balance,
+            "trade_balance": trade,
+            "open_orders": orders,
+            "open_positions": positions,
+            "captured_at": time.time(),
+            # Successful API replies are not proof that fills, ledgers, loans and wallet assets reconcile.
+            "api_queries_succeeded": True,
+            "reconciliation_complete": False,
+        }
+
+    def trades_history(self, *, offset: int = 0, start: int | str | None = None,
+                       end: int | str | None = None) -> dict[str, Any]:
+        if offset < 0:
+            raise ValueError("TRADES_HISTORY_OFFSET_MUST_BE_NON_NEGATIVE")
+        params: dict[str, Any] = {"ofs": offset, "trades": True, "ledgers": True}
+        if start is not None:
+            params["start"] = start
+        if end is not None:
+            params["end"] = end
+        return self.private("TradesHistory", params)
+
+    def ledgers(self, *, offset: int = 0, start: int | None = None,
+                end: int | None = None, ledger_type: str = "all",
+                asset: str = "all") -> dict[str, Any]:
+        if offset < 0:
+            raise ValueError("LEDGERS_OFFSET_MUST_BE_NON_NEGATIVE")
+        if ledger_type not in {"all", "deposit", "withdrawal", "trade", "margin",
+                               "rollover", "credit", "transfer", "settled", "staking", "sale"}:
+            raise ValueError("LEDGER_TYPE_INVALID")
+        params: dict[str, Any] = {"aclass": "currency", "type": ledger_type, "asset": asset, "ofs": offset}
+        if start is not None:
+            params["start"] = start
+        if end is not None:
+            params["end"] = end
+        return self.private("Ledgers", params)
 
     def trade_volume(self, pairs: list[str]) -> dict[str, Any]:
         if not pairs:
