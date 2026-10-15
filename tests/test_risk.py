@@ -16,8 +16,15 @@ def snapshot(**overrides):
 def instrument():
     return Instrument("XBTUSD","XBTUSD","XBT/USD","XBT","USD","online",D("0.0001"),8,1,(2,3),(2,3))
 
-def signal():
-    return TrendSignal("XBTUSD","LONG",D("200"),D("300"),D("0.7"),D("2"),"TREND_UP")
+def signal(direction="LONG"):
+    sign = D("1") if direction == "LONG" else D("-1")
+    return TrendSignal("XBTUSD",direction,D("200")*sign,D("300")*sign,D("0.7"),D("2"),
+        "TREND_UP" if direction=="LONG" else "TREND_DOWN")
+
+def evaluate(direction, account, notional=D("100")):
+    return evaluate_entry(instrument=instrument(),signal=signal(direction),snapshot=account,
+        settings=Settings(),cost_complete=True,estimated_net_edge_bps=D("10"),leverage=2,
+        proposed_notional_usd=notional)
 
 def test_position_size_respects_stop_risk_and_position_ceiling():
     size=size_position_usd(equity_usd=D("1000"),stop_distance_pct=D("2"),gap_buffer_pct=D("1"),
@@ -38,3 +45,26 @@ def test_daily_loss_and_margin_unknown_are_explicit_rejections():
        cost_complete=True,estimated_net_edge_bps=D("10"),leverage=2,proposed_notional_usd=D("100"))
     assert "DAILY_LOSS_LIMIT" in result.reasons
     assert "MARGIN_LEVEL_UNKNOWN_OR_BELOW_APP_ENTRY_FLOOR" in result.reasons
+
+def test_short_trade_reduces_existing_long_net_exposure():
+    account=snapshot(gross_exposure_usd=D("450"),net_exposure_usd=D("450"),open_positions=1)
+    result=evaluate("SHORT",account,D("100"))
+    assert result.allowed
+    assert "NET_EXPOSURE_LIMIT" not in result.reasons
+
+def test_same_side_trade_cannot_push_net_exposure_over_limit():
+    account=snapshot(gross_exposure_usd=D("450"),net_exposure_usd=D("450"),open_positions=1)
+    result=evaluate("LONG",account,D("100"))
+    assert not result.allowed
+    assert "NET_EXPOSURE_LIMIT" in result.reasons
+
+def test_non_finite_risk_inputs_fail_closed():
+    result=evaluate("LONG",snapshot(equity_usd=D("NaN")),D("100"))
+    assert not result.allowed
+    assert "RISK_INPUT_NON_FINITE" in result.reasons
+
+def test_position_size_rejects_non_finite_or_invalid_limits():
+    assert size_position_usd(equity_usd=D("NaN"),stop_distance_pct=D("2"),
+        gap_buffer_pct=D("1"),cost_bps=D("10"))==D(0)
+    assert size_position_usd(equity_usd=D("1000"),stop_distance_pct=D("2"),
+        gap_buffer_pct=D("1"),cost_bps=D("10"),leverage=0)==D(0)
