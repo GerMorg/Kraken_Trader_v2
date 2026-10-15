@@ -93,8 +93,8 @@ class TraderRuntime:
         cycle_id=str(uuid.uuid4()); started=time.time()
         counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0}
         self.audit.emit("CYCLE_START",cycle_id=cycle_id,mode=self.settings.mode)
-        self._refresh_tax_report()
         try:
+            self._refresh_tax_report()
             status=str(self.client.public("SystemStatus").get("status","unknown")).lower()
             if status!="online":
                 self.persistence.trip_circuit_breaker("KRAKEN_STATUS","KRAKEN_NOT_ONLINE",{"status":status})
