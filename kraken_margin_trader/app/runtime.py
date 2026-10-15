@@ -39,12 +39,16 @@ class TraderRuntime:
     def _account_risk_snapshot(self,snapshot: dict[str,Any]) -> RiskSnapshot:
         trade=snapshot["trade_balance"]; rows=_open_position_rows(snapshot["open_positions"])
         orders=snapshot["open_orders"].get("open",{}); balance=snapshot["balance"]
-        equity=_decimal(trade.get("e")) or _decimal(trade.get("eb")) or D(0)
-        free=_decimal(trade.get("mf")) or D(0); used=_decimal(trade.get("m")) or D(0)
+        equity_value=_decimal(trade.get("e"))
+        free_value=_decimal(trade.get("mf"))
+        used_value=_decimal(trade.get("m"))
+        equity=equity_value if equity_value is not None else D(0)
+        free=free_value if free_value is not None else D(0)
+        used=used_value if used_value is not None else D(0)
         margin_level=_decimal(trade.get("ml"))
         exposure=aggregate_position_exposure(rows)
         gross,net=exposure.gross_usd,exposure.net_usd
-        complete=bool(trade.get("e") is not None and trade.get("mf") is not None and
+        complete=bool(equity_value is not None and free_value is not None and used_value is not None and
                       isinstance(orders,dict) and isinstance(balance,dict) and exposure.complete and
                       all("vol" in row and "pair" in row and "posstatus" in row for row in rows.values()))
         # Verified drawdown/cashflow baseline and full portfolio reconciliation are not available yet.
