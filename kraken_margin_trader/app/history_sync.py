@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 import time
+from zoneinfo import ZoneInfo
 from typing import Any
 
 
 D = Decimal
-PAGE_BUDGET_PER_SOURCE = 5
+PAGE_BUDGET_PER_SOURCE = 2
 REFRESH_OVERLAP_SECONDS = 3600
 REFRESH_INTERVAL_SECONDS = 300
 
@@ -27,7 +28,7 @@ def _timestamp(value: Any) -> tuple[int, str, int] | None:
             return None
         epoch = int(numeric)
         stamp = datetime.fromtimestamp(float(numeric), tz=timezone.utc).isoformat()
-        year = datetime.fromtimestamp(float(numeric), tz=timezone.utc).year
+        year = datetime.fromtimestamp(float(numeric), tz=ZoneInfo("Europe/Vienna")).year
         return epoch, stamp, year
     except (ArithmeticError, TypeError, ValueError, OverflowError, OSError):
         return None
