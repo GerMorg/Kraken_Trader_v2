@@ -105,6 +105,11 @@ def evaluate_entry(
     )
     if any(not value.is_finite() for value in finite_values):
         reasons.append("RISK_INPUT_NON_FINITE")
+    if snapshot.margin_level_pct is not None and not snapshot.margin_level_pct.is_finite():
+        reasons.append("MARGIN_LEVEL_NON_FINITE")
+    if reasons:
+        # Do not perform Decimal comparisons/arithmetic with NaN or Infinity.
+        return RiskResult(False, tuple(reasons), D(0), leverage, D(0))
     if (
         snapshot.free_collateral_usd < 0
         or snapshot.used_margin_usd < 0
