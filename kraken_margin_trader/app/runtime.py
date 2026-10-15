@@ -162,8 +162,8 @@ class TraderRuntime:
                 plan=select_costed_plan(direction=signal.direction,margin_leverage=margin_leverage,
                     gross_edge_proxy_bps=gross_edge_proxy,margin_cost=margin_cost,spot_cost=spot_cost)
                 if plan is None:
-                    candidates=[margin_cost]+([spot_cost] if spot_cost is not None else [])
-                    any_complete=any(c.complete and c.total_round_trip_bps is not None for c in candidates)
+                    cost_candidates=[margin_cost]+([spot_cost] if spot_cost is not None else [])
+                    any_complete=any(c.complete and c.total_round_trip_bps is not None for c in cost_candidates)
                     counts["blocked"]+=1
                     self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,
                         reason="NON_POSITIVE_UNCALIBRATED_EDGE_PROXY" if any_complete else "COST_INPUTS_INCOMPLETE",
@@ -181,6 +181,11 @@ class TraderRuntime:
                         reason=plan.reason,margin_cost_reasons=list(margin_cost.reasons),
                         spot_cost_bps=cost.total_round_trip_bps,spot_edge_proxy_bps=edge,
                         edge_is_calibrated=False)
+                if not cost.complete or cost.total_round_trip_bps is None:
+                    counts["blocked"]+=1
+                    self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,
+                        reason="SELECTED_PLAN_COSTS_INCOMPLETE",selected_product=plan.product_type)
+                    continue
                 if account is None or snapshot is None:
                     counts["blocked"]+=1
                     self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,reason="ACCOUNT_SNAPSHOT_REQUIRED")
