@@ -1,7 +1,12 @@
 from decimal import Decimal
 import pytest
 
-from app.portfolio import expected_eea_funding_currency,parse_open_margin_positions,resolve_close_quantity
+from app.portfolio import (
+    aggregate_position_exposure,
+    expected_eea_funding_currency,
+    parse_open_margin_positions,
+    resolve_close_quantity,
+)
 
 D=Decimal
 
@@ -28,3 +33,20 @@ def test_unknown_product_type_is_rejected():
     with pytest.raises(ValueError,match="UNKNOWN_PRODUCT"):
         resolve_close_quantity(requested=D("1"),tracked_pair_quantity=D("1"),
            free_wallet_quantity=D("1"),product_type="FUTURES")
+
+
+def test_position_exposure_uses_direction_not_exchange_value_sign():
+    exposure = aggregate_position_exposure({
+        "LONG": {"type": "buy", "value": "100"},
+        "SHORT": {"type": "sell", "value": "-30"},
+    })
+    assert exposure.complete
+    assert exposure.gross_usd == D("130")
+    assert exposure.net_usd == D("70")
+
+
+def test_position_exposure_fails_closed_on_missing_or_invalid_value():
+    missing = aggregate_position_exposure({"LONG": {"type": "buy"}})
+    invalid = aggregate_position_exposure({"SHORT": {"type": "sell", "value": "NaN"}})
+    assert not missing.complete
+    assert not invalid.complete
