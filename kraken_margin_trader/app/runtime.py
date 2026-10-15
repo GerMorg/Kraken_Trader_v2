@@ -12,6 +12,7 @@ from app.kraken import KrakenAPIError, KrakenClient
 from app.market import parse_ohlc_rows, parse_tickers, usd_crypto_universe
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
+from app.portfolio import aggregate_position_exposure
 from app.risk import choose_trade_leverage, evaluate_entry, size_position_usd
 from app.strategy import generate_trend_signal
 
@@ -41,11 +42,10 @@ class TraderRuntime:
         equity=_decimal(trade.get("e")) or _decimal(trade.get("eb")) or D(0)
         free=_decimal(trade.get("mf")) or D(0); used=_decimal(trade.get("m")) or D(0)
         margin_level=_decimal(trade.get("ml"))
-        gross=sum((_decimal(row.get("value")) or D(0) for row in rows.values()),D(0))
-        net=sum(((_decimal(row.get("value")) or D(0))*(D(1) if str(row.get("type","")).lower()=="buy" else D(-1)
-                  ) for row in rows.values()),D(0))
+        exposure=aggregate_position_exposure(rows)
+        gross,net=exposure.gross_usd,exposure.net_usd
         complete=bool(trade.get("e") is not None and trade.get("mf") is not None and
-                      isinstance(orders,dict) and isinstance(balance,dict) and
+                      isinstance(orders,dict) and isinstance(balance,dict) and exposure.complete and
                       all("vol" in row and "pair" in row and "posstatus" in row for row in rows.values()))
         # Verified drawdown/cashflow baseline and full portfolio reconciliation are not available yet.
         return RiskSnapshot(equity,free,used,gross,net,len(rows),D(0),D(0),margin_level,D(0),complete,False)
