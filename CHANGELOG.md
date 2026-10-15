@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2 — Historienimport und HA-Versionkonsistenz
+
+- Kraken Trades History und Ledgers werden mit persistierten Seiten-Cursorn schrittweise importiert und idempotent gespeichert.
+- Festes Zeitfenster je Sync-Generation, Offset-Fortsetzung und überlappendes inkrementelles Aktualisierungsfenster.
+- Fehlerhafte Daten, fehlende Counts, unerwartete leere Seiten und veränderte Counts halten den Import explizit unvollständig.
+- Die Steuerbelegdateien werden nach dem Import aktualisiert; fehlende EUR-Bewertungen und vollständige Quellreconciliation bleiben als offene Punkte markiert.
+- HA-Manifest, Python-Paketversion und `pyproject.toml` werden im Validator dynamisch auf Übereinstimmung geprüft.
+
 ## 0.1.1 — Risikopfade und Datenqualität
 
 - Nettoexposure berücksichtigt die Positionsrichtung; Bruttoexposure verwendet den absoluten Positionswert.
