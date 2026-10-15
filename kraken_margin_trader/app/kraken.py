@@ -10,6 +10,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from app import __version__
+
 SPOT_BASE = "https://api.kraken.com"
 
 class KrakenAPIError(RuntimeError):
@@ -47,7 +49,7 @@ class KrakenClient:
     def public(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         encoded = urlencode(params or {}, doseq=True)
         url = f"{SPOT_BASE}/0/public/{method}" + (("?" + encoded) if encoded else "")
-        request = Request(url, headers={"User-Agent":"KrakenTraderV2/0.1.0"})
+        request = Request(url, headers={"User-Agent":f"KrakenTraderV2/{__version__}"})
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310 -- fixed Kraken HTTPS origin; in-code endpoint names only
                 value = _decode_response(response.read())
