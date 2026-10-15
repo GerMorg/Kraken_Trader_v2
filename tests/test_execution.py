@@ -80,3 +80,21 @@ def test_short_reduction_cannot_be_sent_as_cash_spot_buy():
     )
     with pytest.raises(ValueError, match="SHORT_CLOSE_REQUIRES_SPOT_MARGIN"):
         build_add_order_params(intent, instrument(), validate_only=True)
+
+
+def test_order_builder_rejects_non_finite_quantity():
+    intent = OrderIntent.create(
+        decision_id="nan-volume", pair="XBTUSD", action=Action.OPEN_MARGIN_LONG,
+        side="LONG", volume=D("NaN"), product_type="SPOT_MARGIN", leverage=2,
+    )
+    with pytest.raises(ValueError, match="POSITIVE_AND_FINITE"):
+        build_add_order_params(intent, instrument(), validate_only=True)
+
+
+def test_order_builder_rejects_invalid_direction_for_any_order_action():
+    intent = OrderIntent.create(
+        decision_id="invalid-direction", pair="XBTUSD", action=Action.OPEN_MARGIN_SHORT,
+        side="sideways", volume=D("0.1"), product_type="SPOT_MARGIN", leverage=2,
+    )
+    with pytest.raises(ValueError, match="ORDER_DIRECTION_INVALID"):
+        build_add_order_params(intent, instrument(), validate_only=True)
