@@ -62,4 +62,5 @@ class AustrianTaxReports:
                "Steuerreporting: https://www.bmf.gv.at/themen/steuern/sparen-veranlagen/steuerreporting.html"]
         (target/"income-tax-information.md").write_text("\n".join(notes)+"\n",encoding="utf-8")
         return {"year":year,"directory":str(target),"event_count":len(items),"status":report["status"],
+                "source_coverage_complete": source_coverage_complete,
                 "missing_fx":len(missing_fx),"unverified":len(unverified),"manual_review":len(manual)}
