@@ -9,7 +9,7 @@ from app.audit import AuditLogger
 from app.config import Settings
 from app.costs import estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
 from app.kraken import KrakenAPIError, KrakenClient
-from app.market import parse_ohlc_rows, parse_tickers, usd_crypto_universe
+from app.market import parse_ohlc_rows, parse_tickers, usd_crypto_universe, volume_for_notional_usd
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.portfolio import aggregate_position_exposure
@@ -165,11 +165,13 @@ class TraderRuntime:
                     self.audit.emit("RISK_GATE_REJECTED",cycle_id=cycle_id,pair=instrument.wsname,
                                     direction=signal.direction,reasons=list(gate.reasons))
                     continue
-                if proposed<ticker.last*instrument.order_min:
+                volume=volume_for_notional_usd(proposed,ticker.last,instrument.lot_decimals)
+                if volume < instrument.order_min or volume <= 0:
                     counts["blocked"]+=1
-                    self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,reason="BELOW_EXCHANGE_MINIMUM")
+                    self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,
+                        reason="BELOW_EXCHANGE_MINIMUM_OR_ROUNDED_TO_ZERO",proposed_notional_usd=proposed,
+                        calculated_volume=volume,minimum_volume=instrument.order_min)
                     continue
-                volume=(proposed/ticker.last).quantize(D(1).scaleb(-instrument.lot_decimals))
                 action=(Action.OPEN_SPOT_LONG if signal.direction=="LONG" and not is_margin else
                         Action.OPEN_MARGIN_LONG if signal.direction=="LONG" else Action.OPEN_MARGIN_SHORT)
                 intent={"intent_id":str(uuid.uuid4()),"decision_id":cycle_id+":"+instrument.pair_id+":"+signal.direction,
