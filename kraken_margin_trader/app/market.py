@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Any, Iterable
 
 from app.models import Instrument, Ticker
@@ -95,6 +95,24 @@ def parse_ohlc_rows(raw_result: dict[str, Any], pair_id: str) -> list[dict[str, 
             continue
         parsed.append({"ts":ts,"open":op,"high":high,"low":low,"close":close,"volume":volume})
     return parsed
+
+def volume_for_notional_usd(notional_usd: Decimal, last_price: Decimal, lot_decimals: int) -> Decimal:
+    """Round a USD-notional-derived quantity down so rounding cannot exceed risk sizing."""
+    if (
+        not notional_usd.is_finite()
+        or not last_price.is_finite()
+        or notional_usd > 0
+        or last_price <= 0
+        or lot_decimals < 0
+    ):
+        return D(0)
+    try:
+        quantity = notional_usd / last_price
+        quantum = D(1).scaleb(-lot_decimals)
+        return quantity.quantize(quantum, rounding=ROUND_DOWN)
+    except (ArithmeticError, InvalidOperation, ValueError):
+        return D(0)
+
 
 def margin_leverage_for(instrument: Instrument, order_side: str, hard_cap: int = 3) -> int | None:
     supported = [v for v in instrument.leverages_for_order_side(order_side) if 2<=v<=hard_cap]
