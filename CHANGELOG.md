@@ -8,7 +8,8 @@
 - Ordermengen werden auf Lot-Präzision abgerundet; Mindestmengen werden danach erneut geprüft.
 - Kostenmodell wählt Margin nur bei vollständigen Kostendaten und positivem Netto-Edge; nur Long-Signale dürfen auf Cash-Spot zurückfallen.
 - Margin-Short-Schließungen können nicht als normale Spot-Kauforders erzeugt werden.
-- TradesHistory- und Ledgers-API-Aufrufe, Steuerreport-Refresh und Regressionstests ergänzt.
+- Persistenter, paginierter, idempotenter TradesHistory-/Ledgers-Import mit festen Zeitfenstern und Fehler-/Count-Prüfung ergänzt.
+- Steuerreport wird aus importierten Events aktualisiert; EUR-Werte und Quellabdeckung bleiben ohne vollständige Reconciliation ausdrücklich unbestätigt.
 - Quellabdeckung der Steuerreports bleibt ausdrücklich unvollständig; keine Live-Freigabe.
 
 
