@@ -42,7 +42,7 @@ Die Exchange-Antwort für Open Positions enthält Positionsdaten wie Pair, Type,
 
 ## Settlement ist keine Market-Close-Order
 
-`settle-position` ist ein eigener Kraken-Ordertyp, mit dem eine Margin-Verpflichtung durch Rückgabe des geliehenen Vermögenswerts ausgeglichen wird. Das Beispiel in Kr akens offizieller Supportdokumentation verwendet `volume=0` zur automatische Bestimmung des Abwicklungsvolumens. Für ein robustes System darf diese Abkürzung nicht ungeprüft verwendet werden: vor Settlement die Paar-Positionsliste, Kreditwährung/-betrag und FIFO-Reihenfolge abgleichen; keine lokale Einzelposition als geschlossen markieren, bevor Positions- und Ledgeränderung bestätigt wurden. Settlement darf nicht als normaler Market-Fill und nicht mit gewöhnlicher Trade-Fee gleichgesetzt werden.
+`settle-position` ist ein eigener Kraken-Ordertyp, mit dem eine Margin-Verpflichtung durch Rückgabe des geliehenen Vermögenswerts ausgeglichen wird. Das Beispiel in Krakens offizieller Supportdokumentation verwendet `volume=0` zur automatische Bestimmung des Abwicklungsvolumens. Für ein robustes System darf diese Abkürzung nicht ungeprüft verwendet werden: vor Settlement die Paar-Positionsliste, Kreditwährung/-betrag und FIFO-Reihenfolge abgleichen; keine lokale Einzelposition als geschlossen markieren, bevor Positions- und Ledgeränderung bestätigt wurden. Settlement darf nicht als normaler Market-Fill und nicht mit gewöhnlicher Trade-Fee gleichgesetzt werden.
 
 ## Freigabestatus
 
