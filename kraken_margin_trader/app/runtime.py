@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 import time
 import uuid
@@ -15,6 +16,7 @@ from app.persistence import Persistence
 from app.portfolio import aggregate_position_exposure
 from app.risk import choose_trade_leverage, evaluate_entry, size_position_usd
 from app.strategy import generate_trend_signal
+from app.tax import AustrianTaxReports
 
 D=Decimal
 
@@ -35,6 +37,8 @@ class TraderRuntime:
     def __init__(self,settings: Settings,persistence: Persistence,audit: AuditLogger) -> None:
         self.settings,self.persistence,self.audit=settings,persistence,audit
         self.client=KrakenClient(settings.api_key,settings.api_secret,persistence.next_nonce)
+        self.tax_reports=AustrianTaxReports()
+        self._last_tax_report_signature: tuple[int, int] | None = None
 
     def _account_risk_snapshot(self,snapshot: dict[str,Any]) -> RiskSnapshot:
         trade=snapshot["trade_balance"]; rows=_open_position_rows(snapshot["open_positions"])
@@ -54,10 +58,42 @@ class TraderRuntime:
         # Verified drawdown/cashflow baseline and full portfolio reconciliation are not available yet.
         return RiskSnapshot(equity,free,used,gross,net,len(rows),D(0),D(0),margin_level,D(0),complete,False)
 
+    def _refresh_tax_report(self) -> None:
+        if not self.settings.tax_report_enabled:
+            return
+        year = datetime.now(timezone.utc).year
+        events = self.persistence.tax_events_for_year(year)
+        signature = (year, len(events))
+        if signature == self._last_tax_report_signature:
+            return
+        try:
+            result = self.tax_reports.generate_year(
+                year,
+                events,
+                source_coverage_complete=False,
+            )
+        except (OSError, ValueError) as exc:
+            self.audit.emit(
+                "TAX_REPORT_FAILED",
+                year=year,
+                exception_type=type(exc).__name__,
+                source_coverage_complete=False,
+            )
+            return
+        self._last_tax_report_signature = signature
+        self.audit.emit(
+            "TAX_REPORT_GENERATED",
+            year=year,
+            event_count=result["event_count"],
+            status=result["status"],
+            source_coverage_complete=False,
+        )
+
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
         counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0}
         self.audit.emit("CYCLE_START",cycle_id=cycle_id,mode=self.settings.mode)
+        self._refresh_tax_report()
         try:
             status=str(self.client.public("SystemStatus").get("status","unknown")).lower()
             if status!="online":
