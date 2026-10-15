@@ -76,14 +76,14 @@ class Settings:
         mode = str(raw.get("mode", "SHADOW")).strip().upper()
         if mode not in {"SHADOW", "PAPER", "LIVE"}:
             mode = "SHADOW"
-        decimals = {}
+        decimals: dict[str, Decimal] = {}
         for key, default in (
             ("risk_per_trade_pct", "0.5"), ("risk_max_position_pct", "20"),
             ("risk_max_gross_pct", "80"), ("risk_max_net_pct", "50"),
             ("risk_max_margin_pct", "25"), ("risk_daily_loss_pct", "3"),
             ("risk_max_drawdown_pct", "8"),
         ):
-            decimals[key] = max(D("0"), min(_decimal(raw, key, default), HARD_LIMITS[key]))
+            decimals[key] = max(D("0"), min(_decimal(raw, key, default), D(str(HARD_LIMITS[key]))))
         reserve = max(D("20"), min(D("80"), _decimal(raw, "risk_cash_reserve_pct", "20")))
         return cls(
             api_key=str(raw.get("kraken_api_key", "") or ""),
