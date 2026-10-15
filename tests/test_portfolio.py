@@ -50,3 +50,19 @@ def test_position_exposure_fails_closed_on_missing_or_invalid_value():
     invalid = aggregate_position_exposure({"SHORT": {"type": "sell", "value": "NaN"}})
     assert not missing.complete
     assert not invalid.complete
+
+
+def test_invalid_decimal_margin_position_is_ignored_without_sort_failure():
+    rows = parse_open_margin_positions({
+        "VALID": {"posstatus": "open", "pair": "XBTUSD", "type": "buy", "vol": "1",
+                  "vol_closed": "0", "cost": "100", "fee": "0", "margin": "50", "time": "1"},
+        "INVALID": {"posstatus": "open", "pair": "ETHUSD", "type": "sell", "vol": "1",
+                    "vol_closed": "0", "cost": "100", "fee": "0", "margin": "50", "time": "NaN"},
+    })
+    assert [row.txid for row in rows] == ["VALID"]
+
+
+def test_close_quantity_rejects_non_finite_amounts():
+    with pytest.raises(ValueError, match="INVALID_OR_UNPROVEN"):
+        resolve_close_quantity(requested=D("NaN"), tracked_pair_quantity=D("1"),
+                               free_wallet_quantity=D("1"), product_type="CASH_SPOT")
