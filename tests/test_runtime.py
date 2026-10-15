@@ -85,3 +85,29 @@ def test_non_finite_trade_balance_makes_snapshot_incomplete():
     assert snapshot.equity_usd == D("0")
     audit.close()
     db.close()
+
+
+def test_runtime_refreshes_yearly_tax_report_without_claiming_complete_source_coverage(tmp_path):
+    import json
+    from datetime import datetime, timezone
+    from app.tax import AustrianTaxReports
+
+    runtime, db, audit = make_runtime()
+    runtime.tax_reports = AustrianTaxReports(str(tmp_path))
+    runtime._refresh_tax_report()
+    year = datetime.now(timezone.utc).year
+    report_path = tmp_path / str(year) / "income-tax-report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["source_coverage_complete"] is False
+    assert report["status"] == "INCOMPLETE_REQUIRES_MANUAL_REVIEW"
+
+    db.record_tax_event({
+        "event_id": "TAX-1", "ts": f"{year}-01-01T00:00:00Z", "year": year,
+        "event_type": "MARGIN_EVENT", "verified": False, "manual_review": True,
+    })
+    runtime._refresh_tax_report()
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["event_count"] == 1
+    assert report["source_coverage_complete"] is False
+    audit.close()
+    db.close()
