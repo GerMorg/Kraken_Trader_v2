@@ -24,7 +24,7 @@ def aggregate_position_exposure(rows: dict[str, dict[str, Any]]) -> PositionExpo
             raw_value = D(str(row["value"]))
         except (KeyError, ArithmeticError, TypeError, ValueError):
             return PositionExposure(gross, net, False)
-        if not raw_value.is_finite() or raw_value < 0 or side not in {"buy", "sell"}:
+        if not raw_value.is_finite() or side not in {"buy", "sell"}:
             return PositionExposure(gross, net, False)
         # Exposure magnitude is absolute; direction is supplied by the position side.
         gross += abs(raw_value)
