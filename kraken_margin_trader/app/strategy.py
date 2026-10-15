@@ -32,15 +32,26 @@ def generate_trend_signal(pair_id: str, closes: Sequence[Decimal], *,
     return TrendSignal(pair_id,"NONE",fast,slow,D(0),stop,"NO_CONFIRMED_TREND")
 
 def take_profit_quantity(position_quantity: Decimal, fraction: Decimal = D("0.5")) -> Decimal:
-    if position_quantity<=0:
-        raise ValueError("POSITION_QUANTITY_MUST_BE_POSITIVE")
-    if not 0<fraction<1:
-        raise ValueError("PARTIAL_FRACTION_MUST_BE_BETWEEN_ZERO_AND_ONE")
-    return position_quantity*fraction
+    if not position_quantity.is_finite() or position_quantity <= 0:
+        raise ValueError("POSITION_QUANTITY_MUST_BE_POSITIVE_AND_FINITE")
+    if not fraction.is_finite() or not D(0) < fraction < D(1):
+        raise ValueError("PARTIAL_FRACTION_MUST_BE_FINITE_AND_BETWEEN_ZERO_AND_ONE")
+    return position_quantity * fraction
 
-def profit_trigger_reached(entry_price: Decimal, current_price: Decimal,
-                            side: str, trigger_pct: Decimal) -> bool:
-    if entry_price<=0 or current_price<=0 or trigger_pct<=0:
+
+def profit_trigger_reached(
+    entry_price: Decimal,
+    current_price: Decimal,
+    side: str,
+    trigger_pct: Decimal,
+) -> bool:
+    values = (entry_price, current_price, trigger_pct)
+    if any(not value.is_finite() for value in values):
         return False
-    direction=D(1) if side.upper()=="LONG" else D(-1)
-    return ((current_price/entry_price-D(1))*direction*D(100))>=trigger_pct
+    if entry_price <= 0 or current_price <= 0 or trigger_pct <= 0:
+        return False
+    normalized_side = side.upper()
+    if normalized_side not in {"LONG", "SHORT"}:
+        return False
+    direction = D(1) if normalized_side == "LONG" else D(-1)
+    return ((current_price / entry_price - D(1)) * direction * D(100)) >= trigger_pct
