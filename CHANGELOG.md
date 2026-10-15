@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1 — Risikopfade und Datenqualität
+
+- Nettoexposure berücksichtigt die Positionsrichtung; Bruttoexposure verwendet den absoluten Positionswert.
+- Ungültige numerische Konto-, Positions- und Orderdaten werden geschlossen abgewiesen.
+- USD-Krypto-Universum akzeptiert nur explizite reguläre Währungs-Assetklassen; unbekannte Klassen werden ausgeschlossen.
+- Ordermengen werden auf Lot-Präzision abgerundet; Mindestmengen werden danach erneut geprüft.
+- Kostenmodell wählt Margin nur bei vollständigen Kostendaten und positivem Netto-Edge; nur Long-Signale dürfen auf Cash-Spot zurückfallen.
+- Margin-Short-Schließungen können nicht als normale Spot-Kauforders erzeugt werden.
+- TradesHistory- und Ledgers-API-Aufrufe, Steuerreport-Refresh und Regressionstests ergänzt.
+- Quellabdeckung der Steuerreports bleibt ausdrücklich unvollständig; keine Live-Freigabe.
+
+
 ## 0.1.0 — initiale eigenständige Basis
 
 - Neues Home-Assistant-Add-on-Grundgerüst, getrennt von Kraken-Trade-Real.
