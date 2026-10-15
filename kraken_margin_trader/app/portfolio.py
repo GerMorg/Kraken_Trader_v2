@@ -59,16 +59,36 @@ def parse_open_margin_positions(raw: dict[str,Any]) -> list[MarginLot]:
             rollover=D(str(roll_raw)) if roll_raw not in (None,"") else None
         except (ArithmeticError,TypeError,ValueError):
             continue
-        remaining=volume-closed
-        if volume<=0 or closed<0 or remaining<=0 or not remaining.is_finite():
+        numeric_values = (volume, closed, cost, fee, margin, opened)
+        if any(not value.is_finite() for value in numeric_values):
             continue
-        positions.append(MarginLot(str(txid),str(row.get("pair","")),
-          "LONG" if str(row.get("type","")).lower()=="buy" else "SHORT",
+        if rollover is not None and (not rollover.is_finite() or rollover < 0):
+            continue
+        remaining = volume - closed
+        side = str(row.get("type", "")).lower()
+        pair = str(row.get("pair", "")).strip()
+        if (
+            not pair
+            or side not in {"buy", "sell"}
+            or volume <= 0
+            or closed < 0
+            or remaining <= 0
+            or cost < 0
+            or fee < 0
+            or margin < 0
+            or opened < 0
+        ):
+            continue
+        positions.append(MarginLot(str(txid), pair,
+          "LONG" if side == "buy" else "SHORT",
           volume,closed,remaining,opened,cost,fee,margin,rollover,str(row.get("terms","")),row))
     return sorted(positions,key=lambda lot:(lot.opened_at,lot.txid))
 
 def resolve_close_quantity(*,requested: Decimal,tracked_pair_quantity: Decimal,
                            free_wallet_quantity: Decimal,product_type: str) -> Decimal:
+    quantities = (requested, tracked_pair_quantity, free_wallet_quantity)
+    if any(not value.is_finite() for value in quantities):
+        raise ValueError("INVALID_OR_UNPROVEN_POSITION_QUANTITY")
     if requested<=0 or tracked_pair_quantity<=0 or free_wallet_quantity<0:
         raise ValueError("INVALID_OR_UNPROVEN_POSITION_QUANTITY")
     maximum=tracked_pair_quantity
