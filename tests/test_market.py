@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from app.market import margin_leverage_for,parse_ohlc_rows,usd_crypto_universe
+from app.market import margin_leverage_for,parse_ohlc_rows,usd_crypto_universe,volume_for_notional_usd
 
 def test_market_universe_allows_only_online_usd_crypto_pair():
     raw={
@@ -38,3 +38,14 @@ def test_market_universe_fails_closed_for_unknown_asset_class():
                       "ordermin": "1", "lot_decimals": 2, "pair_decimals": 2},
     }
     assert usd_crypto_universe(raw) == []
+
+
+def test_volume_rounding_never_exceeds_requested_notional():
+    volume = volume_for_notional_usd(Decimal("10"), Decimal("3"), 2)
+    assert volume == Decimal("3.33")
+    assert volume * Decimal("3") <= Decimal("10")
+
+
+def test_volume_sizing_fails_closed_on_invalid_values():
+    assert volume_for_notional_usd(Decimal("NaN"), Decimal("3"), 2) == Decimal("0")
+    assert volume_for_notional_usd(Decimal("10"), Decimal("0"), 2) == Decimal("0")
