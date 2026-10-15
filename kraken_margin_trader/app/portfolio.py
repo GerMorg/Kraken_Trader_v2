@@ -4,7 +4,33 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-D=Decimal
+D = Decimal
+
+
+@dataclass(frozen=True)
+class PositionExposure:
+    gross_usd: Decimal
+    net_usd: Decimal
+    complete: bool
+
+
+def aggregate_position_exposure(rows: dict[str, dict[str, Any]]) -> PositionExposure:
+    """Aggregate exchange-reported position values without trusting their sign convention."""
+    gross = D(0)
+    net = D(0)
+    for row in rows.values():
+        side = str(row.get("type", "")).strip().lower()
+        try:
+            raw_value = D(str(row["value"]))
+        except (KeyError, ArithmeticError, TypeError, ValueError):
+            return PositionExposure(gross, net, False)
+        if not raw_value.is_finite() or raw_value < 0 or side not in {"buy", "sell"}:
+            return PositionExposure(gross, net, False)
+        # Exposure magnitude is absolute; direction is supplied by the position side.
+        gross += abs(raw_value)
+        net += abs(raw_value) * (D(1) if side == "buy" else D(-1))
+    return PositionExposure(gross, net, True)
+
 
 @dataclass(frozen=True)
 class MarginLot:
