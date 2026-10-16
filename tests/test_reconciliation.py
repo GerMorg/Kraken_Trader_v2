@@ -152,3 +152,26 @@ def test_canceled_order_with_unverifiable_executed_quantity_is_not_reconciled():
     assert any(item["reason"] == "EXCHANGE_ORDER_STATE_OR_QUANTITY_UNVERIFIABLE"
                for item in db.circuit_breakers())
     db.close()
+
+
+def test_reconciliation_advances_open_order_to_filled_once_after_closed_snapshot():
+    db = Persistence(":memory:")
+    _submitted(db)
+    open_order = _order("open", executed="0")
+    db.record_exchange_order("O1", open_order, source="OPEN")
+    first = reconcile_order_intents(db)
+    assert first["matched_intents"] == 1
+    assert db.intent_state("I1") == "OPEN"
+
+    closed_order = _order("closed", executed="1")
+    db.record_exchange_order("O1", closed_order, source="CLOSED")
+    second = reconcile_order_intents(db)
+    assert second["matched_intents"] == 1
+    assert db.intent_state("I1") == "FILLED"
+    assert second["full_portfolio_reconciliation"] is False
+
+    third = reconcile_order_intents(db)
+    assert third["matched_intents"] == 0
+    assert db.intent_state("I1") == "FILLED"
+    assert not db.circuit_breakers()
+    db.close()
