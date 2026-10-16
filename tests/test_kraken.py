@@ -120,3 +120,28 @@ def test_cursor_history_rejects_nonzero_offset_combination():
     with pytest.raises(ValueError, match="CLOSED_ORDERS_CURSOR_AND_OFFSET_MUTUALLY_EXCLUSIVE"):
         client.closed_orders(offset=5, with_cursor=True)
     assert calls == []
+
+
+def test_add_order_invalid_json_response_is_marked_ambiguous(monkeypatch):
+    import base64
+    import pytest
+    from app.kraken import KrakenAmbiguousError, KrakenClient
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b"{not-json"
+
+    monkeypatch.setattr("app.kraken.urlopen", lambda *args, **kwargs: Response())
+    client = KrakenClient(
+        "test-key",
+        base64.b64encode(b"test-secret").decode("ascii"),
+        nonce_provider=lambda: 123,
+    )
+    with pytest.raises(KrakenAmbiguousError, match="ADD_ORDER_RESPONSE_PARSE_OUTCOME_UNKNOWN"):
+        client.private("AddOrder", {"pair": "XBTUSD", "type": "buy", "volume": "0.1"})
