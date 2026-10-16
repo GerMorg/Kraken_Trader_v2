@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7 — CI-Blocker behoben
+
+- Fehlender `json`-Import in der positionsbezogenen Wallet-/Order-Reconciliation korrigiert, sodass die tatsächlich ausgeführte CI nicht mehr an Ruff `F821` scheitert.
+- Paketversion, Home-Assistant-Manifest und Projektmetadaten konsistent auf `0.1.7` erhöht.
+- Vollständige GitHub-Actions-Qualitäts-, Test-, Sicherheits-, HA-Struktur-, Compile- und Containerprüfung ist für den vorherigen Korrekturstand auf beiden ausgelösten CI-Läufen erfolgreich; die neue Version wird nach diesem Commit erneut geprüft.
+
 ## 0.1.6 — Datenintegrität und Steuerreport-Invalidierung
 
 - Steuerberichte werden anhand des vollständigen kanonisierten Ereignisinhalts invalidiert; nachträgliche Korrekturen vorhandener Ereignisse (EUR-Bewertung, Gebühren, Verifikations- und Review-Status) aktualisieren bestehende Jahresreports. Der Import bleibt idempotent und insert-only; eine separate persistente Update-API erlaubt explizite spätere Steuerdaten-Anreicherung, ohne dass der nächste Rohdaten-Backfill diese Bewertung überschreibt. Historische Trades und Ledgers werden nun zusätzlich als autoritative Exchange-Datensätze aktualisiert, wenn Kraken vorhandene IDs mit korrigierten Feldern zurückliefert. Zwischen zwei Account-Snapshots werden Wallet-Balance-Deltas außerdem gegen den jüngsten Kraken-Ledger-Balancewert geprüft; fehlende Ledger-Belege, widersprüchliche gleichzeitige Ledgerstände oder unerklärte Bestandsänderungen bleiben fail-closed. Dieser Teilabgleich setzt ausdrücklich keine Gesamtportfolio-Reconciliation frei. Identische Wiederholungen bleiben idempotent; wirtschaftlich relevante Fill-Korrekturen entwerten eine zuvor verifizierte EUR-Steuerbewertung.
