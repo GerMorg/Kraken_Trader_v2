@@ -359,7 +359,7 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
 
     import app.runtime as runtime_module
     from app.kraken import assess_api_key_info
-    from app.models import Instrument
+    from app.models import Instrument, Ticker
 
     runtime, db, audit = make_runtime()
     runtime.settings = Settings.from_mapping({
@@ -394,6 +394,8 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
                 return {}
             if method == "Ticker":
                 return {}
+            if method == "OHLC":
+                return {}
             raise AssertionError(f"unexpected public endpoint: {method}")
 
         def api_key_permission_assessment(self):
@@ -402,7 +404,13 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
 
         def account_snapshot(self, *, include_closed_orders=True):
             self.snapshot_options.append(include_closed_orders)
-            snapshot = account_snapshot({})
+            snapshot = account_snapshot({
+                "POSITION-1": {
+                    "pair": "XXBTZUSD", "type": "buy", "posstatus": "open",
+                    "vol": "1", "vol_closed": "0", "cost": "100", "fee": "0",
+                    "margin": "25", "value": "103.5", "net": "3.5", "time": "1700000000",
+                },
+            })
             snapshot["closed_orders"] = {"closed": {}} if include_closed_orders else None
             return snapshot
 
@@ -411,8 +419,15 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
 
     client = FakeClient()
     runtime.client = client
+    ticker = Ticker(
+        pair_id="XXBTZUSD",
+        last=D("103.50"),
+        bid=D("103.50"),
+        ask=D("103.51"),
+        volume_quote_24h=D("100000"),
+    )
     monkeypatch.setattr(runtime_module, "usd_crypto_universe", lambda _raw: [instrument])
-    monkeypatch.setattr(runtime_module, "parse_tickers", lambda *_args: {})
+    monkeypatch.setattr(runtime_module, "parse_tickers", lambda *_args: {"XXBTZUSD": ticker})
 
     result = runtime.cycle()
 
@@ -425,6 +440,8 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
     assert "KRAKEN_HISTORY_SYNC_SKIPPED" in logs
     assert "ORDER_RECONCILIATION_SKIPPED_HISTORY_UNAVAILABLE" in logs
     assert "API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED" in logs
+    assert '"action":"REDUCE_LONG"' in logs
+    assert '"position_txid":"POSITION-1"' in logs
     assert "never-log-this" not in logs
     cycle_summaries = [
         json.loads(line) for line in logs.splitlines()
