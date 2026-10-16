@@ -13,7 +13,7 @@ from app.config import Settings
 from app.costs import estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
 from app.kraken import KrakenAPIError, KrakenClient
 from app.history_sync import sync_history_source
-from app.market import executable_reference_price, parse_ohlc_rows, parse_tickers, usd_crypto_universe, volume_for_notional_usd
+from app.market import executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.position_management import evaluate_position_exits
@@ -161,6 +161,8 @@ class TraderRuntime:
                 self.persistence.trip_circuit_breaker("MARKET_UNIVERSE","NO_VALID_USD_MARKETS")
                 return {"cycle_id":cycle_id,"status":"BLOCKED","reason":"NO_VALID_USD_MARKETS"}
             tickers=parse_tickers(self.client.public("Ticker"),instruments)
+            ticker_observed_at = time.time()
+            ticker_times = {pair_id: ticker_observed_at for pair_id in tickers}
             ranked=sorted((i for i in instruments if i.pair_id in tickers),
                 key=lambda i:tickers[i.pair_id].volume_quote_24h,reverse=True)
             candidates=ranked[:self.settings.max_market_candidates]; counts["candidates"]=len(candidates)
@@ -214,6 +216,8 @@ class TraderRuntime:
                 # account calls above. Refresh it before deriving position-exit marks.
                 refreshed_tickers = parse_tickers(self.client.public("Ticker"), instruments)
                 tickers = refreshed_tickers
+                ticker_observed_at = time.time()
+                ticker_times = {pair_id: ticker_observed_at for pair_id in tickers}
                 self.audit.emit(
                     "MARKET_TICKERS_REFRESHED",
                     cycle_id=cycle_id,
@@ -305,6 +309,7 @@ class TraderRuntime:
                         )
                         continue
                     ticker = fresh_ticker
+                    ticker_times[instrument.pair_id] = time.time()
                     tickers[instrument.pair_id] = fresh_ticker
                 else:
                     ticker = tickers.get(instrument.pair_id)
@@ -322,8 +327,22 @@ class TraderRuntime:
                     self.audit.emit("MARKET_FILTER_REJECTED",cycle_id=cycle_id,pair=instrument.wsname,
                                     reason="SPREAD_TOO_WIDE",spread_bps=ticker.spread_bps)
                     continue
+                quote_observed_at = ticker_times.get(instrument.pair_id)
                 raw_ohlc=self.client.public("OHLC",{"pair":instrument.altname,"interval":60})
                 bars=parse_ohlc_rows(raw_ohlc,instrument.pair_id)
+                if not quote_is_fresh(
+                    quote_observed_at, time.time(), self.settings.market_max_age_seconds
+                ):
+                    counts["blocked"] += 1
+                    self.audit.emit(
+                        "NO_TRADE",
+                        cycle_id=cycle_id,
+                        pair=instrument.wsname,
+                        reason="MARKET_QUOTE_STALE",
+                        quote_observed_at=quote_observed_at,
+                        max_age_seconds=self.settings.market_max_age_seconds,
+                    )
+                    continue
                 for bar in bars:
                     self.persistence.record_bar(instrument.pair_id,60,bar["ts"],str(bar["open"]),str(bar["high"]),
                                                 str(bar["low"]),str(bar["close"]),str(bar["volume"]))
