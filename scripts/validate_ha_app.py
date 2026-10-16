@@ -18,6 +18,7 @@ docker_path = root / "kraken_margin_trader" / "Dockerfile"
 run_path = root / "kraken_margin_trader" / "run.sh"
 package_path = root / "kraken_margin_trader" / "app" / "__init__.py"
 pyproject_path = root / "pyproject.toml"
+readme_path = root / "README.md"
 errors: list[str] = []
 
 try:
@@ -25,6 +26,7 @@ try:
     repo = yaml.safe_load(repo_path.read_text(encoding="utf-8"))
     project = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     package_tree = ast.parse(package_path.read_text(encoding="utf-8"))
+    readme = readme_path.read_text(encoding="utf-8")
 except (OSError, yaml.YAMLError, tomllib.TOMLDecodeError, SyntaxError) as exc:
     print(f"manifest or package metadata parse failed: {type(exc).__name__}", file=sys.stderr)
     raise SystemExit(1)
@@ -54,13 +56,23 @@ else:
         errors.append("manifest version does not match pyproject project.version")
     if package_version != manifest_version:
         errors.append("manifest version does not match app.__version__")
+    # The README version is user-facing release metadata. Keep it under the same
+    # CI invariant as the package, project metadata, and Home Assistant manifest.
+    status_lines = [
+        line.strip()
+        for line in readme.splitlines()
+        if line.strip().startswith("## Aktueller Status")
+    ]
+    expected_status = f"## Aktueller Status — {manifest_version}"
+    if status_lines != [expected_status]:
+        errors.append("README current-status version does not match add-on manifest version")
     if "sensors_enabled" in manifest.get("options", {}):
         errors.append("sensors must not be a product option")
 
 if not isinstance(repo, dict) or not repo.get("url"):
     errors.append("repository.yaml URL missing")
 
-for required in (docker_path, run_path, package_path, pyproject_path):
+for required in (docker_path, run_path, package_path, pyproject_path, readme_path):
     if not required.is_file():
         errors.append(f"missing runtime file: {required.relative_to(root)}")
 
