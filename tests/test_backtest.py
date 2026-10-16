@@ -173,7 +173,23 @@ def test_orderbook_replay_blocks_margin_net_pnl_without_financing_evidence():
 def test_orderbook_replay_accepts_explicit_financing_in_the_usd_quote_currency():
     data = bars()
     snapshots = order_books(data)
-    funding = {snapshot.timestamp: D("1") for snapshot in snapshots}
+    from app.orderbook_simulator import MarginCostEvidence
+
+    funding = {
+        snapshot.timestamp: MarginCostEvidence(
+            quote_currency="USD",
+            opening_fee_quote=D("0.25"),
+            opening_fee_source="synthetic-test-fixture",
+            opening_fee_evidence_id=f"OPEN-{snapshot.timestamp}",
+            opening_fee_timestamp=snapshot.timestamp,
+            rollover_fee_quote=D("0.75"),
+            rollover_fee_source="synthetic-test-fixture",
+            rollover_fee_evidence_id=f"ROLLOVER-{snapshot.timestamp}",
+            rollover_fee_timestamp=snapshot.timestamp + 3600,
+            quality="RESEARCH_ESTIMATE",
+        )
+        for snapshot in snapshots
+    }
     replay = replay_orderbook(data, snapshots, leverage=2, funding=funding)
 
     assert replay.issues == (), replay.issues
@@ -228,7 +244,7 @@ def replay_orderbook(data, snapshots, *, leverage, funding=None):
         data,
         costs,
         snapshots,
-        financing_cost_quote_by_entry_timestamp=funding,
+        margin_cost_evidence_by_entry_timestamp=funding,
         quote_currency="USD",
         equity_usd=D("10000"),
         position_pct=D("10"),
@@ -252,3 +268,32 @@ def test_ohlcv_replay_never_closes_a_trade_on_its_entry_bar():
 
     assert trades
     assert all(trade.entry_time < trade.exit_time for trade in trades)
+
+
+def test_orderbook_replay_rejects_margin_cost_evidence_in_wrong_currency():
+    from app.orderbook_simulator import MarginCostEvidence
+
+    data = bars()
+    snapshots = order_books(data)
+    mismatched = {
+        snapshot.timestamp: MarginCostEvidence(
+            quote_currency="USDC",
+            opening_fee_quote=D("0.25"),
+            opening_fee_source="synthetic-test-fixture",
+            opening_fee_evidence_id=f"OPEN-USDC-{snapshot.timestamp}",
+            opening_fee_timestamp=snapshot.timestamp,
+            rollover_fee_quote=D("0.75"),
+            rollover_fee_source="synthetic-test-fixture",
+            rollover_fee_evidence_id=f"ROLLOVER-USDC-{snapshot.timestamp}",
+            rollover_fee_timestamp=snapshot.timestamp + 3600,
+            quality="RESEARCH_ESTIMATE",
+        )
+        for snapshot in snapshots
+    }
+    replay = replay_orderbook(data, snapshots, leverage=2, funding=mismatched)
+
+    assert replay.status == "INCOMPLETE_REQUIRES_REVIEW"
+    assert any(
+        issue.reason == "ORDERBOOK_EXECUTION_REJECTED:MARGIN_COST_QUOTE_CURRENCY_MISMATCH"
+        for issue in replay.issues
+    )
