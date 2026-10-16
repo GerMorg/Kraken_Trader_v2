@@ -6,8 +6,8 @@ from app.persistence import Persistence
 from app.portfolio_reconciliation import reconcile_positions_to_fills
 
 
-def _snapshot(position: dict | None) -> dict:
-    positions = {"P1": position} if position else {}
+def _snapshot(position: dict | None, *, position_id: str = "P1") -> dict:
+    positions = {position_id: position} if position else {}
     return {
         "captured_at": time.time(),
         "balance": {"ZUSD": "500"},
@@ -53,10 +53,10 @@ def _mark_history_complete(db: Persistence) -> None:
         })
 
 
-def _add_fill(db: Persistence, *, volume="1", side="buy", pair="XXBTZUSD",
+def _add_fill(db: Persistence, *, trade_id="P1", volume="1", side="buy", pair="XXBTZUSD",
               margin="100", ledgers=None):
     db.record_fill({
-        "trade_id": "P1",
+        "trade_id": trade_id,
         "order_id": "O1",
         "pair": pair,
         "side": side,
@@ -103,6 +103,44 @@ def test_open_position_is_reconciled_to_exact_trade_order_and_related_ledger():
     assert result["position_fill_reconciliation_complete"] is True
     assert result["full_portfolio_reconciliation"] is False
     assert not db.circuit_breakers()
+    db.close()
+
+
+def test_position_key_is_not_assumed_to_be_trade_id_when_order_match_is_unique():
+    db = Persistence(":memory:")
+    db.record_account_snapshot(_snapshot(_position(), position_id="POSITION-TXID"))
+    _add_order(db)
+    _add_fill(db, trade_id="TRADE-TXID", ledgers=["L1"])
+    db.record_ledger({
+        "ledger_id": "L1", "asset": "USDC", "amount": "-100",
+        "fee": "0", "event_type": "margin", "ts": "2026-10-16T05:00:00+00:00",
+        "verified": True, "raw": {"refid": "POSITION-TXID"},
+    })
+    _mark_history_complete(db)
+
+    result = reconcile_positions_to_fills(db)
+
+    assert result["status"] == "POSITION_FILL_MATCHED"
+    assert result["positions_matched_to_fills"] == 1
+    assert result["opening_orders_matched"] == 1
+    assert not db.circuit_breakers()
+    db.close()
+
+
+def test_one_opening_order_with_multiple_unallocated_fills_is_ambiguous():
+    db = Persistence(":memory:")
+    db.record_account_snapshot(_snapshot(_position(), position_id="POSITION-TXID"))
+    _add_order(db)
+    _add_fill(db, trade_id="TRADE-1", ledgers=["L1"])
+    _add_fill(db, trade_id="TRADE-2", ledgers=["L2"])
+    _mark_history_complete(db)
+
+    result = reconcile_positions_to_fills(db)
+
+    assert result["unmatched_position_fills"] == 1
+    assert any(item["reason"] == "POSITION_OPENING_ORDER_HAS_AMBIGUOUS_FILLS"
+               for item in db.circuit_breakers())
+    assert result["full_portfolio_reconciliation"] is False
     db.close()
 
 
