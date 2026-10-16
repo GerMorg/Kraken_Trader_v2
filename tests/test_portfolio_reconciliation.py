@@ -225,3 +225,66 @@ def test_referenced_ledger_missing_from_history_trips_breaker():
                for item in db.circuit_breakers())
     assert result["full_portfolio_reconciliation"] is False
     db.close()
+
+
+def test_wallet_balances_reconcile_against_latest_ledger_balance():
+    from app.portfolio_reconciliation import reconcile_wallet_balance_deltas
+
+    previous = {"captured_at": "100", "balance": {"USDC": "10.0", "XXBT": "0.5"}}
+    current = {"captured_at": "120", "balance": {"USDC": "9.5", "XXBT": "0.5"}}
+    ledgers = [{
+        "ledger_id": "L1", "asset": "USDC",
+        "raw": {"raw": {"time": 110, "balance": "9.5"}},
+    }]
+    result = reconcile_wallet_balance_deltas(
+        previous, current, ledgers, ledger_history_complete=True
+    )
+    assert result["complete"] is True
+    assert result["full_portfolio_reconciliation"] is False
+    assert result["assets_matched_to_latest_ledger_balance"] == 1
+    assert result["assets_stable_without_ledger_activity"] == 1
+    assert result["mismatches"] == 0
+
+
+def test_wallet_balance_change_without_a_ledger_entry_fails_closed():
+    from app.portfolio_reconciliation import reconcile_wallet_balance_deltas
+
+    previous = {"captured_at": "100", "balance": {"USDC": "10"}}
+    current = {"captured_at": "120", "balance": {"USDC": "9.5"}}
+    result = reconcile_wallet_balance_deltas(
+        previous, current, [], ledger_history_complete=True
+    )
+    assert result["complete"] is False
+    assert result["mismatches"] == 1
+    assert result["asset_results"][0]["status"] == "BALANCE_CHANGED_WITHOUT_LEDGER_EVIDENCE"
+
+
+def test_wallet_reconciliation_fails_closed_on_conflicting_same_time_ledger_balances():
+    from app.portfolio_reconciliation import reconcile_wallet_balance_deltas
+
+    previous = {"captured_at": "100", "balance": {"USDC": "10"}}
+    current = {"captured_at": "120", "balance": {"USDC": "9.5"}}
+    ledgers = [
+        {"ledger_id": "L1", "asset": "USDC", "raw": {"raw": {"time": 110, "balance": "9.5"}}},
+        {"ledger_id": "L2", "asset": "USDC", "raw": {"raw": {"time": 110, "balance": "9.4"}}},
+    ]
+    result = reconcile_wallet_balance_deltas(
+        previous, current, ledgers, ledger_history_complete=True
+    )
+    assert result["complete"] is False
+    assert result["asset_results"][0]["status"] == "LATEST_LEDGER_ORDERING_AMBIGUOUS"
+
+
+def test_wallet_reconciliation_never_claims_success_without_baseline_or_complete_history():
+    from app.portfolio_reconciliation import reconcile_wallet_balance_deltas
+
+    current = {"captured_at": "120", "balance": {"USDC": "9.5"}}
+    assert reconcile_wallet_balance_deltas(
+        None, current, [], ledger_history_complete=True
+    )["status"] == "BASELINE_REQUIRED"
+    incomplete = reconcile_wallet_balance_deltas(
+        {"captured_at": "100", "balance": {"USDC": "10"}},
+        current, [], ledger_history_complete=False,
+    )
+    assert incomplete["complete"] is False
+    assert incomplete["status"] == "LEDGER_WINDOW_INCOMPLETE"
