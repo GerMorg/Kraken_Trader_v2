@@ -108,6 +108,33 @@ def _save_ledger(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
     return True
 
 
+def _save_closed_order(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
+    stamp = _timestamp(row.get("closetm"))
+    status = str(row.get("status", "")).strip().lower()
+    description = row.get("descr")
+    order_type = str(description.get("ordertype", "")).lower() if isinstance(description, dict) else ""
+    try:
+        volume = D(str(row["vol"]))
+        executed = D(str(row["vol_exec"]))
+    except (KeyError, ArithmeticError, TypeError, ValueError):
+        return False
+    settlement_zero_volume = order_type == "settle-position" and volume == 0 and executed == 0
+    if (
+        stamp is None
+        or status not in {"closed", "canceled", "expired", "rejected"}
+        or not volume.is_finite()
+        or not executed.is_finite()
+        or volume < 0
+        or executed < 0
+        or executed > volume
+        or (volume == 0 and not settlement_zero_volume)
+        or not row_id
+    ):
+        return False
+    persistence.record_exchange_order(row_id, row, source="CLOSED")
+    return True
+
+
 def sync_history_source(
     *,
     client: Any,
@@ -118,7 +145,7 @@ def sync_history_source(
 ) -> dict[str, Any]:
     """Incrementally backfill one Kraken source and never overstate history completeness."""
     normalized = source.upper()
-    if normalized not in {"TRADES", "LEDGERS"}:
+    if normalized not in {"TRADES", "LEDGERS", "CLOSED_ORDERS"}:
         raise ValueError("HISTORY_SOURCE_INVALID")
     if page_budget < 1 or page_budget > 50:
         raise ValueError("HISTORY_PAGE_BUDGET_OUT_OF_RANGE")
@@ -160,9 +187,14 @@ def sync_history_source(
         if normalized == "TRADES":
             response = client.trades_history(offset=offset, start=start, end=end)
             items = _result_items(response.get("trades"))
-        else:
+        elif normalized == "LEDGERS":
             response = client.ledgers(offset=offset, start=start, end=end)
             items = _result_items(response.get("ledger"))
+        else:
+            response = client.closed_orders(
+                offset=offset, start=start, end=end, close_time="close", include_trades=True
+            )
+            items = _result_items(response.get("closed"))
         count = _count(response.get("count"))
         if items is None or count is None:
             state["last_error"] = "HISTORY_RESPONSE_SHAPE_OR_COUNT_INVALID"
@@ -184,7 +216,12 @@ def sync_history_source(
             persistence.save_history_sync_state(state)
             break
         for row_id, row in items.items():
-            valid = _save_trade(row_id, row, persistence) if normalized == "TRADES" else _save_ledger(row_id, row, persistence)
+            if normalized == "TRADES":
+                valid = _save_trade(row_id, row, persistence)
+            elif normalized == "LEDGERS":
+                valid = _save_ledger(row_id, row, persistence)
+            else:
+                valid = _save_closed_order(row_id, row, persistence)
             if not valid:
                 state["last_error"] = "HISTORY_ITEM_INVALID"
                 persistence.save_history_sync_state(state)
