@@ -31,3 +31,10 @@ Das Audit `kraken_trade_real/docs/AUDIT_2026-10-14.md` untersuchte insbesondere 
 ## Nicht übernehmen
 
 Das neue Projekt übernimmt keine Legacy-Lernengine, keinen News-/Gemini-Alpha-Zuschlag, keine Tactical-HFT-ähnliche Nebenstrategie, keine Futures- oder tokenisierte-Aktien-Unterstützung und keine implizite pauschale Margin-Finanzierungsrate.
+
+## Zusätzliche Datenintegritätsprüfungen (16.10.2026)
+
+- Jahres-Steuerreports dürfen nicht nur anhand von Ereignisanzahl und Event-IDs gecacht werden: Reconciliation kann bestehende Ereignisse später mit tatsächlichen Gebühren, FX-Werten oder Verifikationsflags anreichern. Der Runtime-Cache vergleicht daher den vollständigen kanonisierten Ereignisinhalt; ein Regressionstest prüft die Aktualisierung bei gleichbleibender ID und Anzahl.
+- Bei einer OHLC-Abfrage für ein einzelnes Instrument darf bei fehlendem erwarteten Pair-Key nur ein eindeutig einzelner Aliasdatensatz als Antwort gelten. Mehrere mögliche Ergebnisreihen werden geschlossen verworfen; ein Regressionstest schützt gegen die Zuordnung fremder Marktpreise zum aktuellen Pair.
+
+Diese Änderungen sind Datenintegritäts-Härtungen, kein Nachweis für vollständige Positions-/Ledger-Reconciliation, Ausführungsqualität oder Profitabilität. Das interne Live-Release-Gate bleibt geschlossen.
