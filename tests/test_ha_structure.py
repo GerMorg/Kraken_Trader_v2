@@ -90,7 +90,7 @@ def test_apparmor_profile_grants_runtime_paths_without_disabling_confinement():
     profile = (root / "kraken_margin_trader" / "apparmor.txt").read_text(encoding="utf-8")
 
     assert manifest["apparmor"] is True
-    assert "profile hassio-addon-kraken_margin_trader " in profile
+    assert "profile kraken_margin_trader " in profile
     assert "/opt/kraken-trader/app/ r," in profile
     assert "/opt/kraken-trader/app/ x," in profile
     assert "/opt/kraken-trader/app/** r," in profile
