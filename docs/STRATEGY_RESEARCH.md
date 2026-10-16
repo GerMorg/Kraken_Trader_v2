@@ -13,6 +13,17 @@ Die Standardschwellen sind 120 bps über 24 Stunden und 180 bps über 72 Stunden
 - Bailey et al., *The Probability of Backtest Overfitting*: https://escholarship.org/uc/item/4w1110bb
 - Hurst, Ooi & Pedersen, *A Century of Evidence on Trend-Following Investing*: https://www.aqr.com/Insights/Research/Journal-Article/A-Century-of-Evidence-on-Trend-Following-Investing
 
+### Aktueller Evidenzstand (geprüft am 16. Oktober 2026)
+
+Han, Kang & Ryu, *Momentum in the Cryptocurrency Market: A Comprehensive Analysis under Realistic Assumptions*, Review of Asset Pricing Studies, online veröffentlicht am 13. Oktober 2026, DOI 10.1093/rapstu/raag011. Die veröffentlichte Zusammenfassung berichtet starke Evidenz für Time-Series-Momentum, nahezu keine für Cross-Sectional-Momentum und zeigt, dass unter täglicher Mark-to-Market-Bewertung viele Cross-Sectional-Portfolios liquidiert werden; statistisch signifikante Mittelwertrenditen führten dort teilweise zu negativen Gewinnen. Die Autoren betonen fette Verteilungsschwänze und dass der Mittelwert für Profitabilitätstests nicht genügt. Quelle: https://academic.oup.com/raps/advance-article-abstract/doi/10.1093/rapstu/raag011/8914819
+
+Konsequenzen für diese Implementierung:
+
+- Die vorhandene 24-/72-Stunden-Regel bleibt eine zu prüfende Time-Series-Momentum-Hypothese; sie wird nicht als Renditeprognose mit bekannter Trefferwahrscheinlichkeit interpretiert.
+- Ein positiver Momentum-Proxy gilt nicht als kalibrierter Netto-Edge. Das unabhängige Risikogate verlangt explizit `edge_calibrated=True`; der Runtime-Pfad übergibt `False`, bis OOS-/Forward-Belege aus dem unveränderten Modell und nach realistischen Kosten vorliegen.
+- Bei gehebelten Positionen sind Liquidationspfad, Gap-/Tail-Loss, Margin-Level, Funding-/Rollover-Währung und unvollständige Order-/Ledger-Zuordnung Freigabekriterien, keine optionalen Komfortmetriken.
+- Backtest-Ergebnisse benötigen Mehrfachtest-/Overfitting-Kontrollen und einen nicht zur Parametersuche verwendeten finalen Test; eine gute In-Sample-Mittelrendite genügt nicht.
+
 Die Studien betrachten andere Stichproben, Regeln, Zeiträume und Ausführungsannahmen. Sie belegen nicht, dass dieses Modell für dieses Konto oder gehebelte Kraken-Spot-Margin-Trades profitabel ist. Krypto-Returns sind häufig fett-schwänzig und Drawdowns können steil sein; der Mittelwert allein reicht nicht zur Risikobeurteilung.
 
 ## Stand des Simulators
