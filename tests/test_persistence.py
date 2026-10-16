@@ -145,3 +145,60 @@ def test_existing_history_schema_is_migrated_to_cursor_column(tmp_path):
     })
     assert db.history_sync_state("TRADES")["next_cursor"] == "migrated-cursor"
     db.close()
+
+
+def test_account_and_position_snapshots_are_durable_and_auditable():
+    db = Persistence(":memory:")
+    snapshot = {
+        "captured_at": "2026-10-16T05:30:00+00:00",
+        "balance": {"USDC": "100.0", "XBT": "0.01"},
+        "trade_balance": {"e": "100.0", "mf": "80.0", "m": "20.0", "ml": "500"},
+        "open_orders": {"open": {"O-OPEN": {"status": "open"}}},
+        "closed_orders": {"closed": {"O-CLOSED": {"status": "closed"}}},
+        "open_positions": {
+            "P1": {
+                "pair": "XXBTZUSD", "type": "buy", "posstatus": "open",
+                "vol": "0.01", "vol_closed": "0", "cost": "500",
+                "fee": "2", "margin": "100", "value": "520", "net": "18",
+                "time": 1760590000, "rollovertm": 1760600000,
+                "terms": "0.01% per 4 hours",
+            },
+        },
+    }
+    recorded = db.record_account_snapshot(snapshot)
+    assert recorded["position_count"] == 1
+    assert recorded["positions_shape_complete"] is True
+    assert recorded["reconciliation_complete"] is False
+
+    latest = db.latest_account_snapshot()
+    assert latest is not None
+    assert latest["snapshot_id"] == recorded["snapshot_id"]
+    assert latest["balance"]["USDC"] == "100.0"
+    assert latest["trade_balance"]["ml"] == "500"
+    assert latest["raw_json"]["open_positions"]["P1"]["margin"] == "100"
+
+    positions = db.latest_exchange_position_snapshot()
+    assert len(positions) == 1
+    assert positions[0]["position_txid"] == "P1"
+    assert positions[0]["volume"] == "0.01"
+    assert positions[0]["margin"] == "100"
+    assert positions[0]["net"] == "18"
+    assert positions[0]["raw"]["terms"] == "0.01% per 4 hours"
+    db.close()
+
+
+def test_malformed_position_snapshot_is_persisted_but_never_marked_complete():
+    db = Persistence(":memory:")
+    snapshot = {
+        "captured_at": "2026-10-16T05:30:00+00:00",
+        "balance": {}, "trade_balance": {},
+        "open_orders": {"open": {}}, "closed_orders": {"closed": {}},
+        "open_positions": {"P-BAD": {"pair": "XXBTZUSD"}},
+    }
+    recorded = db.record_account_snapshot(snapshot)
+    assert recorded["positions_shape_complete"] is False
+    assert recorded["position_count"] == 0
+    assert db.latest_account_snapshot()["reconciliation_complete"] is False
+    assert db.latest_account_snapshot()["open_positions"]["P-BAD"] == {"pair": "XXBTZUSD"}
+    assert db.latest_exchange_position_snapshot() == []
+    db.close()
