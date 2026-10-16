@@ -83,6 +83,32 @@ def parse_tickers(raw: dict[str, Any], instruments: Iterable[Instrument]) -> dic
             result[ticker.pair_id] = ticker
     return result
 
+def executable_reference_price(ticker: Ticker, direction: str) -> Decimal:
+    """Return the executable quote side used for conservative entry sizing.
+
+    Long entries pay the ask; short entries sell at the bid. The last-traded price
+    is not a guaranteed execution price and can understate requested order notional.
+    """
+    normalized = direction.upper()
+    if normalized == "LONG":
+        price = ticker.ask
+    elif normalized == "SHORT":
+        price = ticker.bid
+    else:
+        return D(0)
+
+    if (
+        not ticker.bid.is_finite()
+        or not ticker.ask.is_finite()
+        or ticker.bid <= 0
+        or ticker.ask < ticker.bid
+        or not price.is_finite()
+        or price <= 0
+    ):
+        return D(0)
+    return price
+
+
 def parse_ohlc_rows(raw_result: dict[str, Any], pair_id: str) -> list[dict[str, Any]]:
     rows = raw_result.get(pair_id)
     if rows is None:
