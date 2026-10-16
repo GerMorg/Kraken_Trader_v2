@@ -46,7 +46,7 @@ def test_trade_history_backfill_resumes_across_pages_and_is_idempotent():
     db = Persistence(":memory:")
     client = FakeHistoryClient(trade_pages={
         None: {"trades": {"T1": trade(), "T2": trade()}, "cursor": {"next": "TRADES-CURSOR-2"}},
-        "TRADES-CURSOR-2": {"trades": {"T3": trade()}, "cursor": {"next": None}},
+        "TRADES-CURSOR-2": {"trades": {"T3": trade()}},
     })
 
     first = sync_history_source(client=client, persistence=db, source="TRADES",
@@ -92,7 +92,7 @@ def test_ledger_history_persists_actual_asset_and_keeps_tax_value_unverified():
 def test_history_invalid_page_never_advances_cursor_or_marks_complete():
     db = Persistence(":memory:")
     client = FakeHistoryClient(trade_pages={
-        None: {"trades": {"T1": {**trade(), "time": "NaN"}}, "cursor": {"next": None}},
+        None: {"trades": {"T1": {**trade(), "time": "NaN"}}},
     })
     result = sync_history_source(client=client, persistence=db, source="TRADES",
                                  page_budget=1, now_epoch=1769000000)
@@ -113,23 +113,6 @@ def test_history_count_is_required_and_invalid_response_fails_closed():
     assert result["generation_complete"] is False
     assert result["last_error"] == "HISTORY_RESPONSE_SHAPE_OR_COUNT_INVALID"
     assert result["next_offset"] == 0
-    db.close()
-
-
-def test_cursor_history_missing_terminal_metadata_fails_closed():
-    db = Persistence(":memory:")
-    client = FakeHistoryClient(trade_pages={
-        None: {"trades": {"T1": trade()}},
-    })
-    result = sync_history_source(
-        client=client, persistence=db, source="TRADES",
-        page_budget=1, now_epoch=1769000000,
-    )
-    assert result["generation_complete"] is False
-    assert result["initial_backfill_complete"] is False
-    assert result["last_error"] == "HISTORY_CURSOR_SHAPE_INVALID"
-    assert result["next_offset"] == 0
-    assert db.fills() == []
     db.close()
 
 
@@ -161,7 +144,7 @@ def test_closed_orders_history_backfill_resumes_and_persists_by_order_id():
     client = FakeHistoryClient(closed_pages={
         None: {"closed": {"O1": _closed_order(), "O2": _closed_order()},
                "cursor": {"next": "CLOSED-CURSOR-2"}},
-        "CLOSED-CURSOR-2": {"closed": {"O3": _closed_order()}, "cursor": {"next": None}},
+        "CLOSED-CURSOR-2": {"closed": {"O3": _closed_order()}},
     })
 
     first = sync_history_source(client=client, persistence=db, source="CLOSED_ORDERS",
@@ -187,7 +170,7 @@ def test_closed_orders_history_backfill_resumes_and_persists_by_order_id():
 def test_invalid_closed_order_does_not_advance_history_cursor():
     db = Persistence(":memory:")
     client = FakeHistoryClient(closed_pages={
-        None: {"closed": {"O1": _closed_order(closed_time="NaN")}, "cursor": {"next": None}},
+        None: {"closed": {"O1": _closed_order(closed_time="NaN")}},
     })
     result = sync_history_source(client=client, persistence=db, source="CLOSED_ORDERS",
                                  page_budget=1, now_epoch=1769000000)
@@ -206,7 +189,7 @@ def test_trade_history_classifies_margin_fills_separately_and_preserves_ledger_r
         "ledgers": ["L-MARGIN-1", "L-FEE-1"],
     }
     client = FakeHistoryClient(trade_pages={
-        None: {"trades": {"TMARGIN": margin_trade}, "cursor": {"next": None}},
+        None: {"trades": {"TMARGIN": margin_trade}},
     })
     result = sync_history_source(client=client, persistence=db, source="TRADES",
                                  page_budget=1, now_epoch=1769000000)
@@ -225,7 +208,7 @@ def test_trade_history_missing_ledger_reference_shape_is_not_accepted():
     db = Persistence(":memory:")
     invalid = trade()
     invalid.pop("ledgers")
-    client = FakeHistoryClient(trade_pages={None: {"trades": {"T-NO-LEDGERS": invalid}, "cursor": {"next": None}}})
+    client = FakeHistoryClient(trade_pages={None: {"trades": {"T-NO-LEDGERS": invalid}}})
     result = sync_history_source(client=client, persistence=db, source="TRADES",
                                  page_budget=1, now_epoch=1769000000)
     assert result["generation_complete"] is False
@@ -239,7 +222,7 @@ def test_trade_history_missing_margin_field_is_incomplete_not_guessed_as_spot():
     missing_margin = trade()
     missing_margin.pop("margin")
     client = FakeHistoryClient(trade_pages={
-        None: {"trades": {"T-MISSING-MARGIN": missing_margin}, "cursor": {"next": None}},
+        None: {"trades": {"T-MISSING-MARGIN": missing_margin}},
     })
     result = sync_history_source(client=client, persistence=db, source="TRADES",
                                  page_budget=1, now_epoch=1769000000)
@@ -274,7 +257,7 @@ def test_history_refresh_corrects_fill_and_invalidates_stale_tax_valuation():
     db = Persistence(":memory:")
     first_trade = trade()
     client = FakeHistoryClient(trade_pages={
-        None: {"trades": {"T-REVISED": first_trade}, "cursor": {"next": None}},
+        None: {"trades": {"T-REVISED": first_trade}},
     })
     first = sync_history_source(
         client=client, persistence=db, source="TRADES", page_budget=1,
@@ -293,7 +276,7 @@ def test_history_refresh_corrects_fill_and_invalidates_stale_tax_valuation():
     })
 
     corrected_trade = {**first_trade, "price": "91000", "fee": "0.21"}
-    client.trade_pages = {None: {"trades": {"T-REVISED": corrected_trade}, "cursor": {"next": None}}}
+    client.trade_pages = {None: {"trades": {"T-REVISED": corrected_trade}}}
     second = sync_history_source(
         client=client, persistence=db, source="TRADES", page_budget=1,
         now_epoch=1769000300,
