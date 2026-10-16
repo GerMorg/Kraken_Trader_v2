@@ -112,7 +112,7 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
     current_equity = equity_usd
     # Require at least one bar after entry so a simulated trade cannot be
     # opened and closed against the same timestamp at the end of the dataset.
-    while index + 1 < len(ordered) and current_equity > 0:
+    while index + 2 < len(ordered) and current_equity > 0:
         signal=generate_trend_signal("SIM",[x.close for x in ordered[:index+1]],
                                      fast_threshold_bps=fast_threshold_bps,slow_threshold_bps=slow_threshold_bps)
         if not signal.has_direction:
