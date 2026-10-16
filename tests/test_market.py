@@ -73,3 +73,14 @@ def test_ohlc_parser_rejects_impossible_high_low_bars():
     rows = parse_ohlc_rows(raw, "XBTUSD")
     assert len(rows) == 1
     assert rows[0]["ts"] == 2
+
+
+def test_ohlc_parser_rejects_ambiguous_alias_fallback_instead_of_using_first_market():
+    from app.market import parse_ohlc_rows
+
+    rows = [
+        [1760000000, "100", "102", "99", "101", "0", "10"],
+        [1760003600, "101", "103", "100", "102", "0", "11"],
+    ]
+    result = parse_ohlc_rows({"OTHERPAIR": rows, "THIRDPAIR": rows, "last": "cursor"}, "XBTUSD")
+    assert result == []
