@@ -91,8 +91,8 @@ class RiskSnapshot:
     gross_exposure_usd: Decimal
     net_exposure_usd: Decimal
     open_positions: int
-    daily_pnl_pct: Decimal
-    drawdown_pct: Decimal
+    daily_pnl_pct: Decimal | None
+    drawdown_pct: Decimal | None
     margin_level_pct: Decimal | None
     snapshot_age_seconds: Decimal
     complete: bool
