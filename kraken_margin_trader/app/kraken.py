@@ -98,11 +98,13 @@ class KrakenClient:
         balance = self.private("Balance")
         trade = self.private("TradeBalance", {"aclass":"currency","asset":"ZUSD"})
         orders = self.private("OpenOrders", {"trades":True})
+        closed = self.closed_orders(include_trades=True)
         positions = self.private("OpenPositions", {"docalcs":True,"consolidation":"market"})
         return {
             "balance": balance,
             "trade_balance": trade,
             "open_orders": orders,
+            "closed_orders": closed,
             "open_positions": positions,
             "captured_at": time.time(),
             # Successful API replies are not proof that fills, ledgers, loans and wallet assets reconcile.
