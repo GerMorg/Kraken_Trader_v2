@@ -167,7 +167,7 @@ def test_orderbook_replay_blocks_margin_net_pnl_without_financing_evidence():
 
     assert replay.status == "INCOMPLETE_REQUIRES_REVIEW"
     assert replay.trades == ()
-    assert any(issue.reason == "NET_PNL_UNVERIFIABLE_MARGIN_FINANCING" for issue in replay.issues)
+    assert any(issue.reason == "NET_PNL_UNVERIFIABLE_MARGIN_COSTS" for issue in replay.issues)
 
 
 def test_orderbook_replay_accepts_explicit_financing_in_the_usd_quote_currency():
