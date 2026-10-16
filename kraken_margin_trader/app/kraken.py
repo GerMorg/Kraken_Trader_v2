@@ -114,17 +114,25 @@ class KrakenClient:
 
     def closed_orders(self, *, offset: int = 0, start: int | None = None,
                       end: int | None = None, close_time: str = "both",
-                      include_trades: bool = True) -> dict[str, Any]:
-        """Fetch closed-order history for recovery; this does not itself reconcile fills."""
+                      include_trades: bool = True, with_cursor: bool = False,
+                      cursor: str | None = None) -> dict[str, Any]:
+        """Fetch closed-order history; cursor mode follows Kraken's current pagination contract."""
         if offset < 0:
             raise ValueError("CLOSED_ORDERS_OFFSET_MUST_BE_NON_NEGATIVE")
+        if with_cursor and offset != 0:
+            raise ValueError("CLOSED_ORDERS_CURSOR_AND_OFFSET_MUTUALLY_EXCLUSIVE")
         if close_time not in {"open", "close", "both"}:
             raise ValueError("CLOSED_ORDERS_CLOSE_TIME_INVALID")
         params: dict[str, Any] = {
-            "ofs": offset,
             "closetime": close_time,
             "trades": include_trades,
         }
+        if with_cursor:
+            params["with_cursor"] = True
+            if cursor:
+                params["cursor"] = cursor
+        else:
+            params["ofs"] = offset
         if start is not None:
             params["start"] = start
         if end is not None:
@@ -132,10 +140,20 @@ class KrakenClient:
         return self.private("ClosedOrders", params)
 
     def trades_history(self, *, offset: int = 0, start: int | str | None = None,
-                       end: int | str | None = None) -> dict[str, Any]:
+                       end: int | str | None = None, with_cursor: bool = False,
+                       cursor: str | None = None) -> dict[str, Any]:
+        """Fetch trade/fill history, supporting the current cursor pagination API."""
         if offset < 0:
             raise ValueError("TRADES_HISTORY_OFFSET_MUST_BE_NON_NEGATIVE")
-        params: dict[str, Any] = {"ofs": offset, "trades": True, "ledgers": True}
+        if with_cursor and offset != 0:
+            raise ValueError("TRADES_HISTORY_CURSOR_AND_OFFSET_MUTUALLY_EXCLUSIVE")
+        params: dict[str, Any] = {"trades": True, "ledgers": True}
+        if with_cursor:
+            params["with_cursor"] = True
+            if cursor:
+                params["cursor"] = cursor
+        else:
+            params["ofs"] = offset
         if start is not None:
             params["start"] = start
         if end is not None:
