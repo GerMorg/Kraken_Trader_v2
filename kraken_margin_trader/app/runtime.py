@@ -19,7 +19,7 @@ from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.position_management import evaluate_position_exits
 from app.portfolio import aggregate_position_exposure
-from app.portfolio_reconciliation import reconcile_positions_to_fills
+from app.portfolio_reconciliation import reconcile_positions_to_fills, reconcile_wallet_balance_deltas
 from app.reconciliation import reconcile_order_intents
 from app.risk import choose_trade_leverage, evaluate_entry, size_position_usd
 from app.strategy import generate_trend_signal
@@ -204,6 +204,9 @@ class TraderRuntime:
                         cycle_id=cycle_id,
                         **history_summary,
                     )
+                # Keep the previous snapshot as an immutable delta baseline before
+                # persisting the just-fetched account state.
+                previous_account_snapshot = self.persistence.latest_account_snapshot()
                 # Fetch the account/position snapshot after history network calls so
                 # the risk gate uses a genuinely recent snapshot.
                 account = self.client.account_snapshot()
@@ -213,6 +216,73 @@ class TraderRuntime:
                     cycle_id=cycle_id,
                     **persisted_snapshot,
                 )
+                previous_snapshot_time = _decimal(
+                    previous_account_snapshot.get("captured_at")
+                ) if previous_account_snapshot is not None else None
+                if previous_account_snapshot is None:
+                    wallet_reconciliation = reconcile_wallet_balance_deltas(
+                        None, account, [], ledger_history_complete=False,
+                    )
+                elif previous_snapshot_time is None:
+                    wallet_reconciliation = {
+                        "status": "PREVIOUS_SNAPSHOT_TIMESTAMP_INVALID",
+                        "complete": False,
+                        "full_portfolio_reconciliation": False,
+                        "assets_checked": 0,
+                        "assets_matched_to_latest_ledger_balance": 0,
+                        "assets_stable_without_ledger_activity": 0,
+                        "mismatches": 0,
+                        "evidence_gaps": ["PREVIOUS_SNAPSHOT_TIMESTAMP_INVALID"],
+                        "asset_results": [],
+                    }
+                else:
+                    # A second, bounded ledger query after Balance() is needed: a
+                    # pre-snapshot ledger query alone cannot cover movements that
+                    # occurred while account endpoints were being read.
+                    ledger_window = sync_history_source(
+                        client=self.client,
+                        persistence=self.persistence,
+                        source="LEDGERS",
+                        page_budget=10,
+                        now_epoch=int(time.time()),
+                        force_refresh=True,
+                        start_epoch_override=int(previous_snapshot_time),
+                    )
+                    ledger_history_complete = bool(
+                        ledger_window.get("initial_backfill_complete")
+                        and ledger_window.get("generation_complete")
+                        and ledger_window.get("last_error") is None
+                    )
+                    self.audit.emit(
+                        "KRAKEN_LEDGER_WINDOW_SYNC",
+                        cycle_id=cycle_id,
+                        **ledger_window,
+                        reconciliation_window_start=str(previous_snapshot_time),
+                    )
+                    wallet_reconciliation = reconcile_wallet_balance_deltas(
+                        previous_account_snapshot,
+                        account,
+                        self.persistence.ledger_events(),
+                        ledger_history_complete=ledger_history_complete,
+                    )
+                self.audit.emit(
+                    "WALLET_BALANCE_RECONCILIATION_SUMMARY",
+                    cycle_id=cycle_id,
+                    **wallet_reconciliation,
+                    full_portfolio_reconciliation=False,
+                    complete_for_entries=False,
+                )
+                if wallet_reconciliation.get("mismatches", 0) > 0:
+                    self.persistence.trip_circuit_breaker(
+                        "WALLET_BALANCE_RECONCILIATION",
+                        "WALLET_BALANCE_MISMATCH",
+                        {
+                            "cycle_id": cycle_id,
+                            "status": wallet_reconciliation.get("status"),
+                            "evidence_gaps": wallet_reconciliation.get("evidence_gaps", []),
+                            "asset_results": wallet_reconciliation.get("asset_results", []),
+                        },
+                    )
                 if not persisted_snapshot["positions_shape_complete"]:
                     self.persistence.trip_circuit_breaker(
                         "ACCOUNT_SNAPSHOT",
