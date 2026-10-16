@@ -26,7 +26,7 @@ def test_account_snapshot_does_not_claim_reconciliation_from_api_success():
     }
     calls = []
     def fake_private(method, params=None):
-        calls.append(method)
+        calls.append((method, params))
         return results[method]
     client.private = fake_private
     snapshot = client.account_snapshot()
@@ -34,7 +34,15 @@ def test_account_snapshot_does_not_claim_reconciliation_from_api_success():
     assert snapshot["reconciliation_complete"] is False
     assert "verified" not in snapshot
     assert snapshot["closed_orders"] == {"closed": {}}
-    assert calls == ["Balance", "TradeBalance", "OpenOrders", "ClosedOrders", "OpenPositions"]
+    assert calls == [
+        ("Balance", None),
+        ("TradeBalance", {"aclass": "currency", "asset": "ZUSD"}),
+        ("OpenOrders", {"trades": True}),
+        ("ClosedOrders", {"closetime": "both", "trades": True, "ofs": 0}),
+        # Do not request consolidation=market: individual position txids are needed
+        # for partial close accounting, FIFO and per-position financing reconciliation.
+        ("OpenPositions", {"docalcs": True}),
+    ]
 
 
 def test_history_clients_validate_offsets_and_send_pagination_parameters():
