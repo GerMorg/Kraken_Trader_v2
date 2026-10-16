@@ -72,7 +72,7 @@ class KrakenClient:
         request = Request(
             SPOT_BASE + path, data=encoded, method="POST",
             headers={"API-Key": self.api_key, "API-Sign": sign_spot(path, payload, self.api_secret),
-                     "Content-Type":"application/x-www-form-urlencoded", "User-Agent":"KrakenTraderV2/0.1.0"})
+                     "Content-Type":"application/x-www-form-urlencoded", "User-Agent":f"KrakenTraderV2/{__version__}"})
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310 -- fixed Kraken HTTPS origin; endpoint names are static
                 value = _decode_response(response.read())
