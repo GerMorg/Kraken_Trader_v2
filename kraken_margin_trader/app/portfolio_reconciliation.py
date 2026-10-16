@@ -172,18 +172,22 @@ def reconcile_wallet_balance_deltas(
                 result["evidence_gaps"].append(f"{asset}:SAME_TIMESTAMP_LEDGER_BALANCES_CONFLICT")
             else:
                 expected = ledger_balances[0]
-                assert expected is not None
-                difference = current_amount - expected
-                item["expected_balance"] = str(expected)
-                item["difference"] = str(difference)
-                item["evidence"] = "LATEST_LEDGER_BALANCE"
-                if abs(difference) <= tolerance:
-                    item["status"] = "MATCHED"
-                    result["assets_matched_to_latest_ledger_balance"] += 1
-                else:
-                    item["status"] = "BALANCE_DIFFERS_FROM_LATEST_LEDGER"
+                if expected is None:
+                    item["status"] = "LATEST_LEDGER_BALANCE_MISSING_OR_INVALID"
                     result["mismatches"] += 1
-                    result["evidence_gaps"].append(f"{asset}:BALANCE_DIFFERS_FROM_LEDGER")
+                    result["evidence_gaps"].append(f"{asset}:LATEST_LEDGER_BALANCE_INVALID")
+                else:
+                    difference = current_amount - expected
+                    item["expected_balance"] = str(expected)
+                    item["difference"] = str(difference)
+                    item["evidence"] = "LATEST_LEDGER_BALANCE"
+                    if abs(difference) <= tolerance:
+                        item["status"] = "MATCHED"
+                        result["assets_matched_to_latest_ledger_balance"] += 1
+                    else:
+                        item["status"] = "BALANCE_DIFFERS_FROM_LATEST_LEDGER"
+                        result["mismatches"] += 1
+                        result["evidence_gaps"].append(f"{asset}:BALANCE_DIFFERS_FROM_LEDGER")
         result["asset_results"].append(item)
         result["assets_checked"] += 1
 
