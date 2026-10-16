@@ -154,7 +154,7 @@ else:
     ):
         if permission not in apparmor_profile:
             errors.append(f"AppArmor profile missing required permission: {permission}")
-    if re.search(r"(?m)^\\s*file\\s*,\\s*$", apparmor_profile):
+    if re.search(r"(?m)^\s*file\s*,\s*$", apparmor_profile):
         errors.append("AppArmor profile must not use a blanket file-access grant")
 
     ci_path = root / ".github" / "workflows" / "ci.yml"
