@@ -57,15 +57,21 @@ def test_backtest_portfolio_metrics_use_equity_weighted_pnl_not_raw_position_ret
         equity_usd=equity, position_pct=D("10"), max_holding_bars=4,
     )
     assert trades
+    equity_before_trade = equity
     for trade in trades:
-        assert trade.notional_usd <= equity * D("0.10")
+        assert trade.notional_usd <= equity_before_trade * D("0.10")
         assert trade.net_pnl_usd == trade.notional_usd * trade.net_return_pct / D(100)
-        assert trade.equity_return_pct == trade.net_pnl_usd / equity * D(100)
+        assert trade.equity_return_pct == trade.net_pnl_usd / equity_before_trade * D(100)
+        equity_before_trade += trade.net_pnl_usd
     metrics = summary_metrics(trades)
     assert metrics["total_costs_usd"] == sum((t.total_cost_usd for t in trades), D(0))
     assert metrics["net_pnl_usd"] == sum((t.net_pnl_usd for t in trades), D(0))
     assert "expected_shortfall_95_equity_return_pct" in metrics
     assert "max_consecutive_loss_trades" in metrics
+    assert "sortino_trade_proxy" in metrics
+    assert "max_recovery_trades" in metrics
+    assert "long_net_pnl_usd" in metrics
+    assert "short_net_pnl_usd" in metrics
 
 
 def test_backtest_rejects_nan_costs_invalid_ohlcv_and_excessive_participation():
