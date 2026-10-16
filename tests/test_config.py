@@ -37,3 +37,23 @@ def test_secret_values_are_not_in_safe_summary():
 def test_cash_reserve_can_be_increased_but_not_lowered():
     assert Settings.from_mapping({"risk_cash_reserve_pct": 50}).risk_cash_reserve_pct == Decimal("50")
     assert Settings.from_mapping({"risk_cash_reserve_pct": 5}).risk_cash_reserve_pct == Decimal("20")
+
+
+def test_position_exit_policy_defaults_are_explicit_and_bounded():
+    config = Settings()
+    assert config.position_take_profit_pct == Decimal("3.5")
+    assert config.position_take_profit_fraction == Decimal("0.5")
+    assert config.position_stop_loss_pct == Decimal("3.0")
+
+
+def test_position_exit_policy_settings_are_clamped_and_non_finite_values_fail_safe():
+    config = Settings.from_mapping({
+        "position_take_profit_pct": 100,
+        "position_take_profit_fraction": 0,
+        "position_stop_loss_pct": "NaN",
+    })
+    assert config.position_take_profit_pct == Decimal("20")
+    assert config.position_take_profit_fraction == Decimal("0.1")
+    # A malformed decimal follows the documented configured default.
+    assert config.position_stop_loss_pct == Decimal("3.0")
+    assert config.safe_summary()["position_take_profit_pct"] == "20"
