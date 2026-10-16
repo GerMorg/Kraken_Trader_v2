@@ -142,7 +142,6 @@ else:
         errors.append("AppArmor profile name must match the Home Assistant add-on profile")
     for permission in (
         "/opt/kraken-trader/app/ r,",
-        "/opt/kraken-trader/app/ x,",
         "/opt/kraken-trader/app/** r,",
         "/config/** rwk,",
         "/data/** rwk,",
