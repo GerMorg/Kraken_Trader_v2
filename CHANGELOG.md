@@ -4,7 +4,7 @@
 
 - Steuerberichte werden anhand des vollständigen kanonisierten Ereignisinhalts invalidiert; nachträgliche Korrekturen vorhandener Ereignisse (EUR-Bewertung, Gebühren, Verifikations- und Review-Status) aktualisieren bestehende Jahresreports.
 - OHLC-Antworten mit unbekanntem Alias werden nur akzeptiert, wenn genau ein möglicher Markt-Datensatz vorhanden ist. Mehrdeutige Antworten werden geschlossen verworfen, statt versehentlich Preise eines anderen Markts zuzuordnen.
-- Regressionstests ergänzen beide Datenintegritätsfälle. Erneute vollständige CI-Prüfung nach Versionsbump erforderlich.
+- Regressionstests ergänzen beide Datenintegritätsfälle. Neue Einstiege werden für die Mengenberechnung mit dem ausführbaren Ask bei Longs beziehungsweise Bid bei Shorts bewertet, nicht mit dem letzten Handelspreis.
 
 ## 0.1.5 — Positions-Recovery und Shadow-Exit-Planung
 
