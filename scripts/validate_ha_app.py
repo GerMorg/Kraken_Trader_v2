@@ -104,12 +104,29 @@ else:
         errors.append("Dockerfile must copy the Python package into the configured app root")
     if "import app.main" not in dockerfile:
         errors.append("Dockerfile must smoke-test importing app.main during image build")
+    if 'ENTRYPOINT ["/run.sh"]' not in dockerfile:
+        errors.append("Dockerfile must enforce run.sh as the container ENTRYPOINT")
     if "APP_MAIN=" not in run_script or "app/main.py" not in run_script:
         errors.append("run.sh must validate the expected app.main path before startup")
     if "PYTHONPATH=" not in run_script:
         errors.append("run.sh must explicitly configure the Python package search path")
     if 'exec python -m app.main "$@"' not in run_script:
         errors.append("run.sh must execute app.main and forward command-line arguments")
+    if (
+        "container entrypoint:" not in run_script
+        or "PYTHONPATH before correction" not in run_script
+        or "APP_VERSION" not in run_script
+    ):
+        errors.append("run.sh must log image version and import-failure diagnostics")
+    if "APP_VERSION=${BUILD_VERSION}" not in dockerfile:
+        errors.append("Dockerfile must expose BUILD_VERSION for startup diagnostics")
+
+    ci_path = root / ".github" / "workflows" / "ci.yml"
+    ci_workflow = ci_path.read_text(encoding="utf-8")
+    if "docker run --rm kraken-trader-v2:ci --healthcheck" not in ci_workflow:
+        errors.append("CI must run the container using its declared default ENTRYPOINT")
+    if "docker run --rm --entrypoint /run.sh" in ci_workflow:
+        errors.append("CI must not bypass the image ENTRYPOINT during the container smoke test")
 
 if not isinstance(repo, dict) or not repo.get("url"):
     errors.append("repository.yaml URL missing")

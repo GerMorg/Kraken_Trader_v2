@@ -14,6 +14,11 @@ from app.persistence import Persistence
 from app.runtime import TraderRuntime
 
 def main() -> int:
+    print(
+        f"Kraken Trader startup: version={__version__} "
+        f"python={sys.version.split()[0]} executable={sys.executable}",
+        flush=True,
+    )
     parser=argparse.ArgumentParser(description="Kraken Trader v2 HA app")
     parser.add_argument("--healthcheck",action="store_true")
     parser.add_argument("--options",default="/data/options.json")
