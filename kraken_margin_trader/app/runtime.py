@@ -137,7 +137,19 @@ class TraderRuntime:
             candidates=ranked[:self.settings.max_market_candidates]; counts["candidates"]=len(candidates)
             account=None; snapshot=None; trade_volume={}
             if self.settings.credentials_present:
-                account=self.client.account_snapshot()
+                account = self.client.account_snapshot()
+                persisted_snapshot = self.persistence.record_account_snapshot(account)
+                self.audit.emit(
+                    "ACCOUNT_SNAPSHOT_PERSISTED",
+                    cycle_id=cycle_id,
+                    **persisted_snapshot,
+                )
+                if not persisted_snapshot["positions_shape_complete"]:
+                    self.persistence.trip_circuit_breaker(
+                        "ACCOUNT_SNAPSHOT",
+                        "POSITION_SNAPSHOT_SHAPE_INVALID",
+                        {"cycle_id": cycle_id, "snapshot_id": persisted_snapshot["snapshot_id"]},
+                    )
                 history_summaries=[]
                 for history_source in ("TRADES", "LEDGERS", "CLOSED_ORDERS"):
                     history_summary=sync_history_source(
