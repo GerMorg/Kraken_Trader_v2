@@ -91,6 +91,24 @@ def parse_tickers(raw: dict[str, Any], instruments: Iterable[Instrument]) -> dic
             result[ticker.pair_id] = ticker
     return result
 
+def quote_is_fresh(observed_at: float | Decimal | None, now: float | Decimal,
+                   max_age_seconds: int) -> bool:
+    """Check quote age without treating missing, future or non-finite times as fresh."""
+    try:
+        captured = D(str(observed_at))
+        current = D(str(now))
+        maximum_age = D(str(max_age_seconds))
+    except (ArithmeticError, TypeError, ValueError):
+        return False
+    if (
+        not captured.is_finite() or not current.is_finite()
+        or not maximum_age.is_finite() or maximum_age <= 0
+    ):
+        return False
+    age = current - captured
+    return age.is_finite() and D(0) <= age <= maximum_age
+
+
 def executable_reference_price(ticker: Ticker, direction: str) -> Decimal:
     """Return the executable quote side used for conservative entry sizing.
 
