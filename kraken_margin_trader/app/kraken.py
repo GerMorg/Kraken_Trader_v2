@@ -40,6 +40,87 @@ def _decode_response(raw: bytes) -> dict[str, Any]:
         raise KrakenAPIError("KRAKEN_RESPONSE_INVALID_ROOT")
     return value
 
+REQUIRED_ACCOUNT_QUERY_PERMISSIONS = frozenset({
+    "query-funds",
+    "query-open-trades",
+    "query-closed-trades",
+    "query-ledger",
+})
+WITHDRAWAL_PERMISSIONS = frozenset({
+    "withdraw-funds",
+    "add-withdraw-address",
+    "update-withdraw-address",
+})
+ORDER_WRITE_PERMISSIONS = frozenset({"modify-trades", "close-trades"})
+
+
+def _nonnegative_epoch(value: Any) -> int | None:
+    try:
+        epoch = int(str(value))
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return epoch if epoch >= 0 else None
+
+
+def assess_api_key_info(
+    response: dict[str, Any], *, now_epoch: int | None = None
+) -> dict[str, Any]:
+    """Return a credential-safe API key permission assessment.
+
+    Kraken's GetApiKeyInfo response contains the API key itself. This function
+    deliberately returns only allowlisted, non-secret fields and never copies
+    the raw response into logs or persistent event data.
+    """
+    raw_permissions = response.get("permissions")
+    if not isinstance(raw_permissions, list) or any(
+        not isinstance(item, str) or not item.strip()
+        for item in raw_permissions
+    ):
+        raise KrakenAPIError("KRAKEN_API_KEY_INFO_PERMISSIONS_INVALID")
+
+    permissions = sorted({item.strip() for item in raw_permissions})
+    permission_set = set(permissions)
+    missing_query = sorted(REQUIRED_ACCOUNT_QUERY_PERMISSIONS - permission_set)
+    withdrawal = sorted(WITHDRAWAL_PERMISSIONS & permission_set)
+    missing_order_write = sorted(ORDER_WRITE_PERMISSIONS - permission_set)
+    valid_until = _nonnegative_epoch(response.get("validUntil"))
+    query_from = _nonnegative_epoch(response.get("queryFrom"))
+    query_to = _nonnegative_epoch(response.get("queryTo"))
+    now = int(time.time()) if now_epoch is None else int(now_epoch)
+
+    metadata_complete = all(
+        value is not None for value in (valid_until, query_from, query_to)
+    )
+    key_expired = valid_until is None or (
+        valid_until != 0 and valid_until <= now
+    )
+    history_window_restricted = (
+        query_from is None
+        or query_to is None
+        or query_from > 0
+        or (query_to > 0 and query_to <= now)
+    )
+    ready_for_account_reconciliation = (
+        metadata_complete
+        and not missing_query
+        and not withdrawal
+        and not key_expired
+        and not history_window_restricted
+    )
+    return {
+        "permissions": permissions,
+        "missing_required_query_permissions": missing_query,
+        "withdrawal_permissions_present": withdrawal,
+        "missing_order_write_permissions": missing_order_write,
+        "api_key_metadata_complete": metadata_complete,
+        "api_key_expired_or_expiry_unknown": key_expired,
+        "historical_query_window_restricted": history_window_restricted,
+        "api_key_valid_until": valid_until,
+        "api_key_query_from": query_from,
+        "api_key_query_to": query_to,
+        "ready_for_account_reconciliation": ready_for_account_reconciliation,
+    }
+
 class KrakenClient:
     MIN_PUBLIC_REQUEST_INTERVAL_SECONDS = 1.0
 
@@ -136,6 +217,11 @@ class KrakenClient:
                 raise KrakenAmbiguousError("ADD_ORDER_RESULT_SHAPE_OUTCOME_UNKNOWN")
             raise KrakenAPIError("KRAKEN_PRIVATE_RESULT_INVALID")
         return result
+
+    def api_key_permission_assessment(self, *, now_epoch: int | None = None) -> dict[str, Any]:
+        """Check required read scopes and reject overly privileged/limited API keys."""
+        response = self.private("GetApiKeyInfo")
+        return assess_api_key_info(response, now_epoch=now_epoch)
 
     def account_snapshot(self) -> dict[str, Any]:
         balance = self.private("Balance")
