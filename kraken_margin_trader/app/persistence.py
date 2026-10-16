@@ -350,11 +350,47 @@ class Persistence:
         positions = wrapped if isinstance(wrapped, dict) else raw_positions
         positions_shape_complete = isinstance(positions, dict)
         normalized: list[tuple[str, dict[str, Any]]] = []
+        required_position_fields = (
+            "pair", "type", "posstatus", "vol", "vol_closed", "cost",
+            "fee", "margin", "value", "net", "time",
+        )
         for txid, row in positions.items():
             if not isinstance(row, dict) or not str(txid).strip():
                 positions_shape_complete = False
                 continue
-            if "pair" not in row or "type" not in row:
+            if any(field not in row for field in required_position_fields):
+                positions_shape_complete = False
+                continue
+            side = str(row.get("type", "")).strip().lower()
+            status = str(row.get("posstatus", "")).strip().lower()
+            if (
+                not str(row.get("pair", "")).strip()
+                or side not in {"buy", "sell"}
+                or status != "open"
+            ):
+                positions_shape_complete = False
+                continue
+            try:
+                volume = Decimal(str(row["vol"]))
+                closed = Decimal(str(row["vol_closed"]))
+                cost = Decimal(str(row["cost"]))
+                fee = Decimal(str(row["fee"]))
+                margin = Decimal(str(row["margin"]))
+                value = Decimal(str(row["value"]))
+                net = Decimal(str(row["net"]))
+                opened = Decimal(str(row["time"]))
+                rollover_raw = row.get("rollovertm")
+                rollover = Decimal(str(rollover_raw)) if rollover_raw not in (None, "") else None
+            except (ArithmeticError, TypeError, ValueError):
+                positions_shape_complete = False
+                continue
+            numeric = (volume, closed, cost, fee, margin, value, net, opened)
+            if (
+                any(not number.is_finite() for number in numeric)
+                or (rollover is not None and (not rollover.is_finite() or rollover < 0))
+                or volume <= 0 or closed < 0 or closed > volume
+                or cost < 0 or fee < 0 or margin < 0 or value < 0 or opened < 0
+            ):
                 positions_shape_complete = False
                 continue
             normalized.append((str(txid), row))
