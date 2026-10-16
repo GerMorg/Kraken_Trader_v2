@@ -110,10 +110,16 @@ else:
         errors.append("run.sh must validate the expected app.main path before startup")
     if "PYTHONPATH=" not in run_script:
         errors.append("run.sh must explicitly configure the Python package search path")
-    if "sys.path.insert(0, app_root)" not in run_script:
-        errors.append("run.sh must explicitly insert APP_ROOT into Python sys.path")
-    if "import app.main" not in run_script or "sys.exit(app.main.main())" not in run_script:
-        errors.append("run.sh must import and execute app.main through the explicit Python bootstrap")
+    if "spec_from_file_location" not in run_script:
+        errors.append("run.sh must load the application package from explicit file paths")
+    if 'submodule_search_locations=[str(app_dir)]' not in run_script:
+        errors.append("run.sh must set the application package search location explicitly")
+    if 'spec_from_file_location("app.main", str(main_file))' not in run_script:
+        errors.append("run.sh must load app.main from its explicit source path")
+    if "sys.exit(main_module.main())" not in run_script:
+        errors.append("run.sh must execute the loaded app.main module")
+    if "app_dir_entries=" not in run_script or "main_readable=" not in run_script:
+        errors.append("run.sh must emit package filesystem diagnostics on startup/failure")
     if (
         "container entrypoint:" not in run_script
         or "PYTHONPATH before correction" not in run_script
@@ -127,6 +133,8 @@ else:
     ci_workflow = ci_path.read_text(encoding="utf-8")
     if "docker run --rm kraken-trader-v2:ci --healthcheck" not in ci_workflow:
         errors.append("CI must run the container using its declared default ENTRYPOINT")
+    if "&& /run.sh --healthcheck" not in dockerfile:
+        errors.append("Dockerfile build must execute the real startup bootstrap healthcheck")
     if "docker run --rm --entrypoint /run.sh" in ci_workflow:
         errors.append("CI must not bypass the image ENTRYPOINT during the container smoke test")
 
