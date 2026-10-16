@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from math import sqrt
 from statistics import mean, pstdev
-from typing import Sequence
+from typing import Literal, Sequence
 
 from app.strategy import generate_trend_signal
 from app.orderbook_simulator import OrderBookRoundTrip, OrderBookSnapshot, simulate_order_book_round_trip
@@ -382,6 +382,13 @@ def replay_trend_strategy_on_order_books(
         if not signal.has_direction:
             index += 1
             continue
+        if signal.direction not in ("LONG", "SHORT"):
+            issues.append(
+                OrderBookReplayIssue(ordered[index].timestamp, "SIGNAL_DIRECTION_INVALID")
+            )
+            index += 1
+            continue
+        direction: Literal["LONG", "SHORT"] = signal.direction
 
         entry_bar = ordered[index + 1]
         if entry_bar.open <= 0 or entry_bar.base_volume <= 0:
@@ -454,7 +461,7 @@ def replay_trend_strategy_on_order_books(
             round_trip: OrderBookRoundTrip = simulate_order_book_round_trip(
                 entry_book,
                 exit_book,
-                direction=signal.direction,
+                direction=direction,
                 requested_notional_quote=target_notional,
                 entry_fee_bps=costs.taker_fee_bps_per_side,
                 exit_fee_bps=costs.taker_fee_bps_per_side,
@@ -516,7 +523,7 @@ def replay_trend_strategy_on_order_books(
         net_pnl = round_trip.net_realized_pnl_quote
         trades.append(
             SimTrade(
-                direction=signal.direction,
+                direction=direction,
                 entry_time=entry_book.timestamp,
                 exit_time=exit_book.timestamp,
                 entry=round_trip.entry.average_price,
