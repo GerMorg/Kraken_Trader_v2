@@ -76,6 +76,7 @@ class Persistence:
                     start_epoch INTEGER NOT NULL,
                     end_epoch INTEGER NOT NULL,
                     next_offset INTEGER NOT NULL,
+                    next_cursor TEXT,
                     expected_count INTEGER,
                     initial_backfill_complete INTEGER NOT NULL,
                     generation_complete INTEGER NOT NULL,
@@ -84,8 +85,13 @@ class Persistence:
                 );
                 CREATE TABLE IF NOT EXISTS circuit_breakers(name TEXT PRIMARY KEY,active INTEGER NOT NULL,reason TEXT NOT NULL,ts TEXT NOT NULL,detail_json TEXT NOT NULL);
             """)
+            history_columns = {
+                str(row["name"]) for row in self.connection.execute("PRAGMA table_info(history_sync_state)")
+            }
+            if "next_cursor" not in history_columns:
+                self.connection.execute("ALTER TABLE history_sync_state ADD COLUMN next_cursor TEXT")
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','2') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','3') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
@@ -297,7 +303,7 @@ class Persistence:
         normalized = source.upper()
         with self.lock:
             row = self.connection.execute(
-                "SELECT source,start_epoch,end_epoch,next_offset,expected_count,"
+                "SELECT source,start_epoch,end_epoch,next_offset,next_cursor,expected_count,"
                 "initial_backfill_complete,generation_complete,last_error,updated_at "
                 "FROM history_sync_state WHERE source=?",
                 (normalized,),
@@ -323,16 +329,17 @@ class Persistence:
             raise ValueError("HISTORY_SYNC_EXPECTED_COUNT_INVALID")
         with self.lock:
             self.connection.execute(
-                "INSERT INTO history_sync_state(source,start_epoch,end_epoch,next_offset,expected_count,"
+                "INSERT INTO history_sync_state(source,start_epoch,end_epoch,next_offset,next_cursor,expected_count,"
                 "initial_backfill_complete,generation_complete,last_error,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(source) DO UPDATE SET "
+                "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source) DO UPDATE SET "
                 "start_epoch=excluded.start_epoch,end_epoch=excluded.end_epoch,"
-                "next_offset=excluded.next_offset,expected_count=excluded.expected_count,"
+                "next_offset=excluded.next_offset,next_cursor=excluded.next_cursor,expected_count=excluded.expected_count,"
                 "initial_backfill_complete=excluded.initial_backfill_complete,"
                 "generation_complete=excluded.generation_complete,last_error=excluded.last_error,"
                 "updated_at=excluded.updated_at",
                 (
                     source, start_epoch, end_epoch, next_offset,
+                    str(state["next_cursor"]) if state.get("next_cursor") else None,
                     int(expected) if expected is not None else None,
                     int(bool(state.get("initial_backfill_complete", False))),
                     int(bool(state.get("generation_complete", False))),
