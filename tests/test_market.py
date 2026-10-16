@@ -107,3 +107,20 @@ def test_entry_sizing_reference_fails_closed_on_invalid_quote():
     )
     assert executable_reference_price(invalid, "LONG") == Decimal("0")
     assert executable_reference_price(invalid, "SHORT") == Decimal("0")
+
+
+def test_ticker_parser_rejects_missing_or_zero_24h_quote_turnover():
+    instrument = usd_crypto_universe({
+        "XBTUSD": {
+            "altname": "XBTUSD", "wsname": "XBT/USD", "aclass_base": "currency",
+            "status": "online", "ordermin": "0.001", "lot_decimals": 3,
+            "pair_decimals": 1,
+        },
+    })[0]
+    raw = {
+        "XBTUSD": {
+            "c": ["100", "100"], "a": ["101"], "b": ["99"],
+            "v": ["0", "0"], "p": ["100", "100"],
+        },
+    }
+    assert parse_tickers(raw, [instrument]) == {}
