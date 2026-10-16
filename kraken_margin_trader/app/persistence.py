@@ -306,7 +306,7 @@ class Persistence:
 
     def save_history_sync_state(self, state: dict[str, Any]) -> None:
         source = str(state["source"]).upper()
-        if source not in {"TRADES", "LEDGERS"}:
+        if source not in {"TRADES", "LEDGERS", "CLOSED_ORDERS"}:
             raise ValueError("HISTORY_SOURCE_INVALID")
         start_epoch = int(state["start_epoch"])
         end_epoch = int(state["end_epoch"])
