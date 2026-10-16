@@ -399,13 +399,34 @@ def simulate_order_book_round_trip(
         spread_cost = (entry_half_spread + exit_half_spread) * closed_quantity
 
         if entry_side == "BUY":
-            entry_impact_per_unit = entry.average_price - entry_book.asks[0].price
+            entry_touch = entry_book.asks[0].price
+            entry_impact_per_unit = entry.average_price - entry_touch
         else:
-            entry_impact_per_unit = entry_book.bids[0].price - entry.average_price
+            entry_touch = entry_book.bids[0].price
+            entry_impact_per_unit = entry_touch - entry.average_price
         if exit_side == "BUY":
-            exit_impact_per_unit = exit_result.average_price - exit_book.asks[0].price
+            exit_touch = exit_book.asks[0].price
+            exit_impact_per_unit = exit_result.average_price - exit_touch
         else:
-            exit_impact_per_unit = exit_book.bids[0].price - exit_result.average_price
+            exit_touch = exit_book.bids[0].price
+            exit_impact_per_unit = exit_touch - exit_result.average_price
+
+        # Decimal division uses a finite precision context. Clamp only tiny
+        # negative per-unit impact caused by an exactly-one-level VWAP rounding
+        # back from the touch price; meaningful negative impact is invalid.
+        for label, impact, touch in (
+            ("ENTRY", entry_impact_per_unit, entry_touch),
+            ("EXIT", exit_impact_per_unit, exit_touch),
+        ):
+            if impact < 0:
+                rounding_tolerance = max(D("1e-30"), abs(touch) * D("1e-24"))
+                if abs(impact) <= rounding_tolerance:
+                    if label == "ENTRY":
+                        entry_impact_per_unit = D(0)
+                    else:
+                        exit_impact_per_unit = D(0)
+                else:
+                    raise ValueError("ROUND_TRIP_EXECUTION_COST_NEGATIVE")
         slippage_impact = (entry_impact_per_unit + exit_impact_per_unit) * closed_quantity
         spread_slippage_cost = spread_cost + slippage_impact
         if any(
