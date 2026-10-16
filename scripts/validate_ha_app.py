@@ -17,6 +17,7 @@ manifest_path = root / "kraken_margin_trader" / "config.yaml"
 repo_path = root / "repository.yaml"
 docker_path = root / "kraken_margin_trader" / "Dockerfile"
 run_path = root / "kraken_margin_trader" / "run.sh"
+apparmor_path = root / "kraken_margin_trader" / "apparmor.txt"
 package_path = root / "kraken_margin_trader" / "app" / "__init__.py"
 pyproject_path = root / "pyproject.toml"
 readme_path = root / "README.md"
@@ -30,6 +31,7 @@ try:
     readme = readme_path.read_text(encoding="utf-8")
     dockerfile = docker_path.read_text(encoding="utf-8")
     run_script = run_path.read_text(encoding="utf-8")
+    apparmor_profile = apparmor_path.read_text(encoding="utf-8")
 except (OSError, yaml.YAMLError, tomllib.TOMLDecodeError, SyntaxError) as exc:
     print(f"manifest or package metadata parse failed: {type(exc).__name__}", file=sys.stderr)
     raise SystemExit(1)
@@ -71,6 +73,8 @@ else:
         errors.append("README current-status version does not match add-on manifest version")
     if "sensors_enabled" in manifest.get("options", {}):
         errors.append("sensors must not be a product option")
+    if manifest.get("apparmor") is not True:
+        errors.append("AppArmor must remain enabled for the trading app")
 
     mappings = manifest.get("map", [])
     if not isinstance(mappings, list):
@@ -132,6 +136,25 @@ else:
         errors.append("run.sh must log image version and import-failure diagnostics")
     if "APP_VERSION=${BUILD_VERSION}" not in dockerfile:
         errors.append("Dockerfile must expose BUILD_VERSION for startup diagnostics")
+    # A custom AppArmor profile is mandatory because application code, DNS sockets,
+    # Python runtime libraries, and the writable tax-report mount need explicit access.
+    if "profile kraken_margin_trader " not in apparmor_profile:
+        errors.append("AppArmor profile name must match the Home Assistant add-on profile")
+    for permission in (
+        "/opt/kraken-trader/app/ r,",
+        "/opt/kraken-trader/app/** r,",
+        "/config/** rwk,",
+        "/data/** rwk,",
+        "network inet stream,",
+        "network inet dgram,",
+        "network inet6 stream,",
+        "network inet6 dgram,",
+        "#include <abstractions/nameservice>",
+    ):
+        if permission not in apparmor_profile:
+            errors.append(f"AppArmor profile missing required permission: {permission}")
+    if re.search(r"(?m)^\s*file\s*,\s*$", apparmor_profile):
+        errors.append("AppArmor profile must not use a blanket file-access grant")
 
     ci_path = root / ".github" / "workflows" / "ci.yml"
     ci_workflow = ci_path.read_text(encoding="utf-8")
@@ -145,7 +168,7 @@ else:
 if not isinstance(repo, dict) or not repo.get("url"):
     errors.append("repository.yaml URL missing")
 
-for required in (docker_path, run_path, package_path, pyproject_path, readme_path):
+for required in (docker_path, run_path, apparmor_path, package_path, pyproject_path, readme_path):
     if not required.is_file():
         errors.append(f"missing runtime file: {required.relative_to(root)}")
 

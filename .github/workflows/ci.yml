@@ -37,6 +37,14 @@ jobs:
       - run: python -m pip install ".[dev]"
       - run: bandit -q -r kraken_margin_trader/app
       - run: pip-audit
+  apparmor:
+    name: AppArmor profile syntax and policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y apparmor
+      - run: sudo apparmor_parser --skip-kernel-load --warn=all kraken_margin_trader/apparmor.txt
+
   ha_structure:
     name: Home Assistant add-on structure
     runs-on: ubuntu-latest
