@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from math import sqrt
 from statistics import mean, pstdev
-from typing import Literal, Sequence
+from typing import Literal, Sequence, cast
 
 from app.strategy import generate_trend_signal
 from app.orderbook_simulator import OrderBookRoundTrip, OrderBookSnapshot, simulate_order_book_round_trip
@@ -112,7 +112,7 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
     current_equity = equity_usd
     # Require at least one bar after entry so a simulated trade cannot be
     # opened and closed against the same timestamp at the end of the dataset.
-    while index + 2 < len(ordered) and current_equity > 0:
+    while index + 1 < len(ordered) and current_equity > 0:
         signal=generate_trend_signal("SIM",[x.close for x in ordered[:index+1]],
                                      fast_threshold_bps=fast_threshold_bps,slow_threshold_bps=slow_threshold_bps)
         if not signal.has_direction:
@@ -374,7 +374,7 @@ def replay_trend_strategy_on_order_books(
     issues: list[OrderBookReplayIssue] = []
     current_equity = equity_usd
     index = 72
-    while index + 1 < len(ordered) and current_equity > 0:
+    while index + 2 < len(ordered) and current_equity > 0:
         signal = generate_trend_signal(
             "SIM",
             [item.close for item in ordered[: index + 1]],
@@ -390,7 +390,7 @@ def replay_trend_strategy_on_order_books(
             )
             index += 1
             continue
-        direction: Literal["LONG", "SHORT"] = signal.direction
+        direction = cast(Literal["LONG", "SHORT"], signal.direction)
 
         entry_bar = ordered[index + 1]
         if entry_bar.open <= 0 or entry_bar.base_volume <= 0:
