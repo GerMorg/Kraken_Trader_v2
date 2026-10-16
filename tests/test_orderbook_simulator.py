@@ -168,6 +168,11 @@ def test_long_round_trip_accounts_for_execution_prices_and_two_fee_rates():
     assert result.closed_quantity == D("2")
     assert result.remaining_quantity == D("0")
     assert result.gross_realized_pnl_quote == D("3")
+    assert result.mid_market_gross_pnl_quote == D("7")
+    assert result.spread_cost_quote == D("3")
+    assert result.slippage_impact_quote == D("1")
+    assert result.spread_slippage_cost_quote == D("4")
+    assert result.mid_market_gross_pnl_quote - result.spread_slippage_cost_quote == result.gross_realized_pnl_quote
     assert result.trading_fees_quote == D("0.203") + D("0.412")
     assert result.net_realized_pnl_quote == D("3") - D("0.203") - D("0.412")
     assert result.quote_currency == "USD"
@@ -231,6 +236,10 @@ def test_margin_round_trip_subtracts_explicit_financing_in_same_quote_currency()
 
     assert result.position_status == "CLOSED"
     assert result.gross_realized_pnl_quote == D("6")
+    assert result.mid_market_gross_pnl_quote == D("9")
+    assert result.spread_cost_quote == D("3")
+    assert result.slippage_impact_quote == D("0")
+    assert result.spread_slippage_cost_quote == D("3")
     assert result.margin_cost_quote == D("1")
     assert result.margin_cost_evidence_quality == "HISTORICAL_SIMULATION"
     assert result.margin_cost_evidence_ids == ("OPEN-FEE-TEST-1", "ROLLOVER-FEE-TEST-1")
@@ -264,6 +273,9 @@ def test_partial_exit_keeps_unclosed_quantity_explicit():
     assert result.closed_quantity == D("0.5")
     assert result.remaining_quantity == D("1.5")
     assert result.gross_realized_pnl_quote == D("0.75")
+    assert result.mid_market_gross_pnl_quote == D("1.75")
+    assert result.spread_cost_quote == D("0.75")
+    assert result.slippage_impact_quote == D("0.25")
     assert result.net_realized_pnl_quote == D("0.75")
 
 
