@@ -4,6 +4,7 @@ import pytest
 
 from app.orderbook_simulator import (
     BookLevel,
+    MarginCostEvidence,
     OrderBookSnapshot,
     simulate_order_book_execution,
 )
@@ -194,7 +195,7 @@ def test_margin_round_trip_refuses_net_pnl_without_verified_financing_cost():
     assert result.position_status == "CLOSED_COST_INCOMPLETE"
     assert result.gross_realized_pnl_quote == D("6")
     assert result.net_realized_pnl_quote is None
-    assert result.financing_cost_quote is None
+    assert result.margin_cost_quote is None
 
 
 def test_margin_round_trip_subtracts_explicit_financing_in_same_quote_currency():
@@ -214,12 +215,24 @@ def test_margin_round_trip_subtracts_explicit_financing_in_same_quote_currency()
         exit_fee_bps=D("20"),
         quote_currency="USD",
         is_margin=True,
-        financing_cost_quote=D("1"),
+        margin_cost_evidence=MarginCostEvidence(
+            quote_currency="USD",
+            opening_fee_quote=D("0.2"),
+            opening_fee_source="synthetic-research-fixture",
+            opening_fee_evidence_id="OPEN-FEE-TEST-1",
+            opening_fee_timestamp=1_800_000_000,
+            rollover_fee_quote=D("0.8"),
+            rollover_fee_source="synthetic-research-fixture",
+            rollover_fee_evidence_id="ROLLOVER-FEE-TEST-1",
+            rollover_fee_timestamp=1_800_000_300,
+            quality="HISTORICAL_SIMULATION",
+        ),
     )
 
     assert result.position_status == "CLOSED"
     assert result.gross_realized_pnl_quote == D("6")
-    assert result.financing_cost_quote == D("1")
+    assert result.margin_cost_quote == D("1")
+    assert result.margin_cost_evidence_quality == "HISTORICAL_SIMULATION"
     assert result.trading_fees_quote == D("0.198") + D("0.384")
     assert result.net_realized_pnl_quote == D("6") - D("0.198") - D("0.384") - D("1")
 
@@ -281,3 +294,85 @@ def test_vwap_rounding_noise_does_not_reject_a_valid_single_level_buy():
     assert result.slippage_bps >= 0
     assert result.average_price is not None
     assert abs(result.average_price - D("101")) < D("1e-18")
+
+
+def test_margin_cost_evidence_rejects_currency_mismatch_and_untraced_zero_rollover():
+    from app.orderbook_simulator import simulate_order_book_round_trip
+
+    exit_book = OrderBookSnapshot(
+        timestamp=1_800_000_300,
+        bids=(BookLevel(D("95"), D("5")),),
+        asks=(BookLevel(D("96"), D("5")),),
+    )
+    with pytest.raises(ValueError, match="MARGIN_COST_EVIDENCE_REFERENCE_REQUIRED"):
+        MarginCostEvidence(
+            quote_currency="USD",
+            opening_fee_quote=D("0.2"),
+            opening_fee_source="exchange-ledger",
+            opening_fee_evidence_id="OPEN-1",
+            opening_fee_timestamp=1_800_000_000,
+            rollover_fee_quote=D("0"),
+            rollover_fee_source="",
+            rollover_fee_evidence_id="",
+            rollover_fee_timestamp=1_800_000_300,
+            quality="EXCHANGE_VERIFIED",
+        )
+
+    mismatched = MarginCostEvidence(
+        quote_currency="USDC",
+        opening_fee_quote=D("0.2"),
+        opening_fee_source="synthetic-test",
+        opening_fee_evidence_id="OPEN-USDC",
+        opening_fee_timestamp=1_800_000_000,
+        rollover_fee_quote=D("0"),
+        rollover_fee_source="synthetic-test",
+        rollover_fee_evidence_id="NO-ROLLOVER-USDC",
+        rollover_fee_timestamp=1_800_000_300,
+        quality="RESEARCH_ESTIMATE",
+    )
+    with pytest.raises(ValueError, match="MARGIN_COST_QUOTE_CURRENCY_MISMATCH"):
+        simulate_order_book_round_trip(
+            book(),
+            exit_book,
+            direction="SHORT",
+            requested_notional_quote=D("200"),
+            entry_fee_bps=D("10"),
+            exit_fee_bps=D("20"),
+            quote_currency="USD",
+            is_margin=True,
+            margin_cost_evidence=mismatched,
+        )
+
+
+def test_margin_cost_evidence_rejects_rollover_after_exit():
+    from app.orderbook_simulator import simulate_order_book_round_trip
+
+    exit_book = OrderBookSnapshot(
+        timestamp=1_800_000_300,
+        bids=(BookLevel(D("95"), D("5")),),
+        asks=(BookLevel(D("96"), D("5")),),
+    )
+    future_cost = MarginCostEvidence(
+        quote_currency="USD",
+        opening_fee_quote=D("0.2"),
+        opening_fee_source="synthetic-test",
+        opening_fee_evidence_id="OPEN-USD",
+        opening_fee_timestamp=1_800_000_000,
+        rollover_fee_quote=D("0.8"),
+        rollover_fee_source="synthetic-test",
+        rollover_fee_evidence_id="FUTURE-ROLLOVER-USD",
+        rollover_fee_timestamp=1_800_000_301,
+        quality="RESEARCH_ESTIMATE",
+    )
+    with pytest.raises(ValueError, match="MARGIN_ROLLOVER_FEE_AFTER_EXIT"):
+        simulate_order_book_round_trip(
+            book(),
+            exit_book,
+            direction="SHORT",
+            requested_notional_quote=D("200"),
+            entry_fee_bps=D("10"),
+            exit_fee_bps=D("20"),
+            quote_currency="USD",
+            is_margin=True,
+            margin_cost_evidence=future_cost,
+        )
