@@ -35,6 +35,18 @@ def _open_position_rows(response: dict[str,Any]) -> dict[str,dict[str,Any]]:
     return {str(key):row for key,row in source.items()
             if isinstance(row,dict) and "pair" in row and "type" in row}
 
+
+def _exchange_order_rows(response: Any, key: str) -> dict[str, dict[str, Any]] | None:
+    if not isinstance(response, dict):
+        return None
+    rows = response.get(key)
+    if not isinstance(rows, dict):
+        return None
+    if any(not str(order_id).strip() or not isinstance(row, dict)
+           for order_id, row in rows.items()):
+        return None
+    return {str(order_id): row for order_id, row in rows.items()}
+
 class TraderRuntime:
     def __init__(self,settings: Settings,persistence: Persistence,audit: AuditLogger) -> None:
         self.settings,self.persistence,self.audit=settings,persistence,audit
@@ -155,12 +167,28 @@ class TraderRuntime:
                     )
                 self._refresh_tax_report()
                 rows = _open_position_rows(account["open_positions"])
-                open_orders = account["open_orders"].get("open", {})
-                closed_orders = account.get("closed_orders", {}).get("closed", {})
+                open_orders = _exchange_order_rows(account.get("open_orders"), "open")
+                closed_orders = _exchange_order_rows(account.get("closed_orders"), "closed")
+                if open_orders is None or closed_orders is None:
+                    self.persistence.trip_circuit_breaker(
+                        "ORDER_SNAPSHOT", "ORDER_RESPONSE_SHAPE_INVALID",
+                        {"cycle_id": cycle_id},
+                    )
+                    self.audit.emit(
+                        "EXCHANGE_ORDER_SNAPSHOT_INVALID",
+                        cycle_id=cycle_id,
+                        open_orders_valid=open_orders is not None,
+                        closed_orders_valid=closed_orders is not None,
+                    )
+                else:
+                    for order_id, order in open_orders.items():
+                        self.persistence.record_exchange_order(order_id, order, source="OPEN")
+                    for order_id, order in closed_orders.items():
+                        self.persistence.record_exchange_order(order_id, order, source="CLOSED")
                 self.persistence.record_event("ACCOUNT_SNAPSHOT_CAPTURED", {
                     "open_positions": len(rows),
-                    "open_orders": len(open_orders) if isinstance(open_orders, dict) else None,
-                    "closed_orders": len(closed_orders) if isinstance(closed_orders, dict) else None,
+                    "open_orders": len(open_orders) if open_orders is not None else None,
+                    "closed_orders": len(closed_orders) if closed_orders is not None else None,
                     "captured_at": account["captured_at"],
                     "api_queries_succeeded": True,
                     "reconciliation_complete": False,
