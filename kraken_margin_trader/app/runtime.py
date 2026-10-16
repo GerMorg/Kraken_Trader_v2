@@ -16,6 +16,7 @@ from app.market import parse_ohlc_rows, parse_tickers, usd_crypto_universe, volu
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.portfolio import aggregate_position_exposure
+from app.portfolio_reconciliation import reconcile_positions_to_fills
 from app.reconciliation import reconcile_order_intents
 from app.risk import choose_trade_leverage, evaluate_entry, size_position_usd
 from app.strategy import generate_trend_signal
@@ -216,6 +217,12 @@ class TraderRuntime:
                         "ORDER_RECONCILIATION_SUMMARY",
                         cycle_id=cycle_id,
                         **reconciliation,
+                    )
+                    position_reconciliation = reconcile_positions_to_fills(self.persistence)
+                    self.audit.emit(
+                        "POSITION_FILL_RECONCILIATION_SUMMARY",
+                        cycle_id=cycle_id,
+                        **position_reconciliation,
                     )
                 self.persistence.record_event("ACCOUNT_SNAPSHOT_CAPTURED", {
                     "open_positions": len(rows),
