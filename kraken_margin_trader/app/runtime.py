@@ -58,6 +58,11 @@ class TraderRuntime:
         self.tax_reports=AustrianTaxReports()
         self._last_tax_report_signature: dict[int, tuple[str, ...]] = {}
 
+    def _fetch_fresh_ticker(self, instrument: Any) -> Any | None:
+        """Fetch this market's executable quote immediately before entry evaluation."""
+        response = self.client.public("Ticker", {"pair": instrument.altname})
+        return parse_tickers(response, [instrument]).get(instrument.pair_id)
+
     def _account_risk_snapshot(self,snapshot: dict[str,Any]) -> RiskSnapshot:
         trade=snapshot["trade_balance"]; rows=_open_position_rows(snapshot["open_positions"])
         orders=snapshot["open_orders"].get("open",{}); balance=snapshot["balance"]
@@ -205,6 +210,20 @@ class TraderRuntime:
                         reconciliation_complete=False,
                     )
                 self._refresh_tax_report()
+                # The original ticker snapshot predates the history backfill and private
+                # account calls above. Refresh it before deriving position-exit marks.
+                refreshed_tickers = parse_tickers(self.client.public("Ticker"), instruments)
+                tickers = refreshed_tickers
+                self.audit.emit(
+                    "MARKET_TICKERS_REFRESHED",
+                    cycle_id=cycle_id,
+                    count=len(tickers),
+                    captured_at=time.time(),
+                )
+                if not tickers:
+                    self.persistence.trip_circuit_breaker(
+                        "MARKET_DATA", "MARKET_TICKER_REFRESH_EMPTY", {"cycle_id": cycle_id}
+                    )
                 rows = _open_position_rows(account["open_positions"])
                 open_orders = _exchange_order_rows(account.get("open_orders"), "open")
                 closed_orders = _exchange_order_rows(account.get("closed_orders"), "closed")
@@ -271,7 +290,33 @@ class TraderRuntime:
             else:
                 self.audit.emit("ACCOUNT_UNAVAILABLE_PUBLIC_ONLY",reason="API_CREDENTIALS_NOT_CONFIGURED")
             for instrument in candidates:
-                ticker=tickers[instrument.pair_id]
+                if account is not None:
+                    try:
+                        fresh_ticker = self._fetch_fresh_ticker(instrument)
+                    except KrakenAPIError:
+                        raise
+                    if fresh_ticker is None:
+                        counts["blocked"] += 1
+                        self.audit.emit(
+                            "NO_TRADE",
+                            cycle_id=cycle_id,
+                            pair=instrument.wsname,
+                            reason="MARKET_TICKER_REFRESH_INVALID",
+                        )
+                        continue
+                    ticker = fresh_ticker
+                    tickers[instrument.pair_id] = fresh_ticker
+                else:
+                    ticker = tickers.get(instrument.pair_id)
+                    if ticker is None:
+                        counts["blocked"] += 1
+                        self.audit.emit(
+                            "NO_TRADE",
+                            cycle_id=cycle_id,
+                            pair=instrument.wsname,
+                            reason="MARKET_TICKER_MISSING",
+                        )
+                        continue
                 if ticker.spread_bps>D(40):
                     counts["blocked"]+=1
                     self.audit.emit("MARKET_FILTER_REJECTED",cycle_id=cycle_id,pair=instrument.wsname,
