@@ -39,3 +39,7 @@ SQLite mit WAL und `synchronous=FULL` speichert Nonce, Events, Kerzen, eindeutig
 10. Tests gegen echte, abgeschirmte Test-/Validierungsendpunkte nur ohne echte Ausführung; keine echten Orders innerhalb CI.
 
 Bis diese Kriterien erfüllt und belegt sind, bleibt unbeaufsichtigter Live-Margin-Handel gesperrt.
+
+## Position-level exit decision persistence
+
+Jeder Runtime-Zyklus wertet offene Einzelpositionen mit aktuellen Tickerdaten aus und speichert `POSITION_MANAGEMENT_DECISION` sowohl als Event als auch in der Auditspur. Vorschläge enthalten die Positions-ID, Einstiegsschätzung, relevante Ausstiegsseite, Kursbewegung, Restmenge, vorgeschlagene Menge, Konfiguration und explizit `execution_mode=SHADOW_ONLY`. Auch die Nicht-Entscheidung und nicht unterstützte Positionen werden sichtbar protokolliert. Der Plan erstellt keine Kraken Conditional-Close-Order und setzt keine exchange-native Stop- oder Take-Profit-Order. Die dauerhafte Reconciliation- und Live-Freigabesicherheit wird davon nicht aufgehoben.
