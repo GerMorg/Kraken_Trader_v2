@@ -14,6 +14,9 @@ def _intent():
         "side": "LONG",
         "volume": "1",
         "leverage": 2,
+        "decision_evidence": {
+            "instrument_pair_aliases": ["XBTUSD", "XBT/USD", "XXBTZUSD"],
+        },
     }
 
 
@@ -174,4 +177,60 @@ def test_reconciliation_advances_open_order_to_filled_once_after_closed_snapshot
     assert third["matched_intents"] == 0
     assert db.intent_state("I1") == "FILLED"
     assert not db.circuit_breakers()
+    db.close()
+
+
+def test_reconciliation_rejects_exchange_order_pair_mismatch():
+    db = Persistence(":memory:")
+    _submitted(db)
+    mismatched = _order("closed", executed="1")
+    mismatched["descr"]["pair"] = "ETH/USD"
+    db.record_exchange_order("O1", mismatched, source="CLOSED")
+
+    result = reconcile_order_intents(db)
+
+    assert db.intent_state("I1") == "SUBMITTING"
+    assert result["invalid_exchange_states"] == 1
+    assert any(
+        item["reason"] == "EXCHANGE_ORDER_DOES_NOT_MATCH_LOCAL_INTENT"
+        and item["detail"].get("mismatch") == "PAIR"
+        for item in db.circuit_breakers()
+    )
+    db.close()
+
+
+def test_reconciliation_rejects_exchange_order_side_mismatch():
+    db = Persistence(":memory:")
+    _submitted(db)
+    mismatched = _order("closed", executed="1")
+    mismatched["descr"]["type"] = "sell"
+    db.record_exchange_order("O1", mismatched, source="CLOSED")
+
+    result = reconcile_order_intents(db)
+
+    assert db.intent_state("I1") == "SUBMITTING"
+    assert result["invalid_exchange_states"] == 1
+    assert any(
+        item["reason"] == "EXCHANGE_ORDER_DOES_NOT_MATCH_LOCAL_INTENT"
+        and item["detail"].get("mismatch") == "SIDE"
+        for item in db.circuit_breakers()
+    )
+    db.close()
+
+
+def test_reconciliation_rejects_exchange_order_volume_mismatch():
+    db = Persistence(":memory:")
+    _submitted(db)
+    mismatched = _order("closed", volume="2", executed="2")
+    db.record_exchange_order("O1", mismatched, source="CLOSED")
+
+    result = reconcile_order_intents(db)
+
+    assert db.intent_state("I1") == "SUBMITTING"
+    assert result["invalid_exchange_states"] == 1
+    assert any(
+        item["reason"] == "EXCHANGE_ORDER_DOES_NOT_MATCH_LOCAL_INTENT"
+        and item["detail"].get("mismatch") == "ORDER_VOLUME"
+        for item in db.circuit_breakers()
+    )
     db.close()
