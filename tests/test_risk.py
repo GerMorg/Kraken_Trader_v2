@@ -24,7 +24,7 @@ def signal(direction="LONG"):
 def evaluate(direction, account, notional=D("100")):
     return evaluate_entry(instrument=instrument(),signal=signal(direction),snapshot=account,
         settings=Settings(),cost_complete=True,estimated_net_edge_bps=D("10"),leverage=2,
-        proposed_notional_usd=notional)
+        proposed_notional_usd=notional,edge_calibrated=True)
 
 def test_position_size_respects_stop_risk_and_position_ceiling():
     size=size_position_usd(equity_usd=D("1000"),stop_distance_pct=D("2"),gap_buffer_pct=D("1"),
@@ -34,7 +34,7 @@ def test_position_size_respects_stop_risk_and_position_ceiling():
 
 def test_missing_reconciliation_or_costs_rejects_trade():
     result=evaluate_entry(instrument=instrument(),signal=signal(),snapshot=snapshot(reconciliation_ok=False),
-       settings=Settings(),cost_complete=False,estimated_net_edge_bps=None,leverage=2,proposed_notional_usd=D("100"))
+       settings=Settings(),cost_complete=False,estimated_net_edge_bps=None,leverage=2,proposed_notional_usd=D("100"),edge_calibrated=True)
     assert not result.allowed
     assert "PORTFOLIO_RECONCILIATION_FAILED" in result.reasons
     assert "TOTAL_COSTS_UNVERIFIED" in result.reasons
@@ -68,6 +68,22 @@ def test_position_size_rejects_non_finite_or_invalid_limits():
         gap_buffer_pct=D("1"),cost_bps=D("10"))==D(0)
     assert size_position_usd(equity_usd=D("1000"),stop_distance_pct=D("2"),
         gap_buffer_pct=D("1"),cost_bps=D("10"),leverage=0)==D(0)
+
+
+def test_uncalibrated_positive_edge_is_blocked_explicitly():
+    result = evaluate_entry(
+        instrument=instrument(),
+        signal=signal(),
+        snapshot=snapshot(),
+        settings=Settings(),
+        cost_complete=True,
+        estimated_net_edge_bps=D("100"),
+        leverage=2,
+        proposed_notional_usd=D("100"),
+        edge_calibrated=False,
+    )
+    assert not result.allowed
+    assert "EDGE_NOT_VALIDATED" in result.reasons
 
 
 def test_unknown_daily_pnl_and_drawdown_baselines_fail_closed():
