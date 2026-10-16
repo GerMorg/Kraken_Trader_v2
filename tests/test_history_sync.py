@@ -292,3 +292,45 @@ def test_history_refresh_corrects_fill_and_invalidates_stale_tax_valuation():
     assert revised_event["verified"] == 0
     assert revised_event["manual_review"] == 1
     db.close()
+
+
+def test_forced_ledger_refresh_can_scope_to_a_snapshot_interval():
+    db = Persistence(":memory:")
+    client = FakeHistoryClient(ledger_pages={
+        0: {"ledger": {"L-RECENT": ledger()}, "count": 1},
+    })
+    first = sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1,
+        now_epoch=1769000000,
+    )
+    assert first["generation_complete"] is True
+    forced = sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1,
+        now_epoch=1769000010, force_refresh=True, start_epoch_override=1768999900,
+    )
+    assert forced["generation_complete"] is True
+    assert client.calls[-1] == ("LEDGERS", 0, 1768999899, 1769000010)
+    assert forced["initial_backfill_complete"] is True
+    db.close()
+
+
+def test_forced_refresh_does_not_reset_an_incomplete_initial_backfill():
+    db = Persistence(":memory:")
+    client = FakeHistoryClient(ledger_pages={
+        0: {"ledger": {"L1": ledger()}, "count": 3},
+        1: {"ledger": {"L2": ledger()}, "count": 3},
+    })
+    first = sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1,
+        now_epoch=1769000000,
+    )
+    assert first["generation_complete"] is False
+    second = sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1,
+        now_epoch=1769000010, force_refresh=True, start_epoch_override=1768999900,
+    )
+    assert second["generation_complete"] is False
+    assert second["next_offset"] == 2
+    assert second["initial_backfill_complete"] is False
+    assert client.calls[-1] == ("LEDGERS", 1, 0, 1769000000)
+    db.close()
