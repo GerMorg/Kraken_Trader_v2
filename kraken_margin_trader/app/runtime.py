@@ -139,7 +139,7 @@ class TraderRuntime:
             if self.settings.credentials_present:
                 account=self.client.account_snapshot()
                 history_summaries=[]
-                for history_source in ("TRADES", "LEDGERS"):
+                for history_source in ("TRADES", "LEDGERS", "CLOSED_ORDERS"):
                     history_summary=sync_history_source(
                         client=self.client,
                         persistence=self.persistence,
