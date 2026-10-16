@@ -25,27 +25,25 @@ def _number(value: Any) -> Decimal | None:
 
 def _target_state(order: dict[str, Any]) -> str | None:
     status = str(order.get("status", "")).strip().lower()
-    if status in {"canceled", "expired"}:
-        return "CANCELED" if status == "canceled" else "EXPIRED"
+    if status not in {"open", "closed", "canceled", "expired", "rejected"}:
+        return None
+    volume = _number(order.get("vol"))
+    executed = _number(order.get("vol_exec"))
+    if volume is None or executed is None or volume <= 0 or executed < 0 or executed > volume:
+        return None
+    if status == "canceled":
+        return "CANCELED"
+    if status == "expired":
+        return "EXPIRED"
     if status == "rejected":
-        return "REJECTED"
+        return "REJECTED" if executed == 0 else None
     if status == "open":
-        volume = _number(order.get("vol"))
-        executed = _number(order.get("vol_exec", "0"))
-        if volume is None or executed is None or volume <= 0 or executed < 0 or executed > volume:
-            return None
         if executed == volume:
             # An exchange-open order with fully executed volume is inconsistent.
             return None
         return "PARTIALLY_FILLED" if executed > 0 else "OPEN"
-    if status == "closed":
-        volume = _number(order.get("vol"))
-        executed = _number(order.get("vol_exec"))
-        if volume is None or executed is None or volume <= 0 or executed < 0 or executed > volume:
-            return None
-        # Kraken's "closed" is only treated as filled when the executed amount proves it.
-        return "FILLED" if executed == volume else None
-    return None
+    # Kraken's "closed" is only treated as filled when the executed amount proves it.
+    return "FILLED" if executed == volume else None
 
 
 def reconcile_order_intents(persistence: Any) -> dict[str, Any]:
@@ -167,7 +165,11 @@ def reconcile_order_intents(persistence: Any) -> dict[str, Any]:
         }
         try:
             current = state
-            if current == "SUBMITTING":
+            if current == "SUBMITTING" and target == "REJECTED":
+                persistence.transition_intent(str(intent["intent_id"]), target, detail)
+                current = target
+                stats["state_updates"] += 1
+            elif current == "SUBMITTING":
                 persistence.transition_intent(
                     str(intent["intent_id"]), "ACKNOWLEDGED", {**detail, "reconciled_state": "ACKNOWLEDGED"}
                 )
