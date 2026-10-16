@@ -276,7 +276,12 @@ class Persistence:
         result = []
         for row in rows:
             item = dict(row)
-            item["payload"] = json.loads(item.pop("payload_json"))
+            serialized_event = json.loads(item.pop("payload_json"))
+            # The row's typed columns are the canonical indexable fields. Expose
+            # only the caller's audit payload here, not a duplicate nested copy
+            # of the complete event envelope.
+            event_payload = serialized_event.get("payload", {})
+            item["payload"] = event_payload if isinstance(event_payload, dict) else {}
             result.append(item)
         return result
 
