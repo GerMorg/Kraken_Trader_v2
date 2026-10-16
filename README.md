@@ -27,6 +27,6 @@ Die Anwendung verwendet keine HA-Sensoren und kein Dashboard. Alle Zeitpunkte im
 
 ## Wichtige Einschränkungen
 
-Die vorhandenen Signale sind Hypothesen, keine kalibrierten Wahrscheinlichkeiten. Kosten und geschätzte Marktrendite sind nicht als bewiesener Nettovorteil zu verstehen. Unbekannte Gebühren, unvollständige Account-Snapshots oder ungeklärte Reconciliation müssen Trades blockieren. Der erste Backtest-Prototyp verwendet OHLCV-Proxies und ist **kein vollständiger Orderbuch-/Exchange-Ausführungssimulator**. CI-Grün allein belegt keine Profitabilität und keine Sicherheit bei Ausfall.
+Die vorhandenen Signale sind Hypothesen, keine kalibrierten Wahrscheinlichkeiten. Kosten und geschätzte Marktrendite sind nicht als bewiesener Nettovorteil zu verstehen; eine positive unkalibrierte Edge-Schätzung kann die Risikofreigabe nicht passieren. Shadow-Kandidaten bleiben getrennt von ausführbaren Order-Intents. Unbekannte Gebühren, unvollständige Account-Snapshots oder ungeklärte Reconciliation müssen Trades blockieren. Der erste Backtest-Prototyp verwendet OHLCV-Proxies und ist **kein vollständiger Orderbuch-/Exchange-Ausführungssimulator**. CI-Grün allein belegt keine Profitabilität und keine Sicherheit bei Ausfall.
 
 Siehe [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/MARGIN_OPERATIONS.md](docs/MARGIN_OPERATIONS.md) und [docs/EXECUTION_AND_RECOVERY.md](docs/EXECUTION_AND_RECOVERY.md).
