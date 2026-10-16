@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.18 — AppArmor-Pfade, DNS und Steuerreportzugriff
+
+- Die v0.1.17-Logs zeigen normale Unix-Modi (`0755`/`0644`) und UID 0, aber `PermissionError` beim Öffnen von `/opt/kraken-trader/app/__init__.py`. Das bestehende AppArmor-Profil erlaubte den Zugriff auf diesen Anwendungsbaum nicht.
+- Ergänzt read-only Traversierung/Lesen von `/opt/kraken-trader/app/**`; AppArmor bleibt aktiviert, `full_access` und pauschale Datei-Freigaben werden nicht verwendet.
+- Ergänzt die fehlenden DNS-Datagrammregeln für IPv4/IPv6 und die Schreibrechte für den dokumentierten `/config/reports/tax/AT/<Jahr>/`-Exportpfad.
+- CI validiert notwendige Profilregeln, kompiliert `apparmor.txt` mit `apparmor_parser --skip-kernel-load` und prüft weiter den Start unter einer unprivilegierten UID.
+
 ## 0.1.17 — Laufzeit-Dateirechte und nicht privilegierter Starttest
 
 - Die HA-Logs von 0.1.16 zeigen `PermissionError: [Errno 13] Permission denied: '/opt/kraken-trader/app'` im Diagnosecode. Der unmittelbare Fehler war das fehlende Verzeichnis-Leserecht für den laufenden Containerprozess.
