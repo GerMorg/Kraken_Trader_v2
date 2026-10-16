@@ -73,7 +73,7 @@ def test_stop_loss_closes_all_remaining_short_volume_using_ask():
     assert result["status"] == "RISK_REDUCTION_RECOMMENDED"
     assert result["action"] == "CLOSE_SHORT"
     assert result["recommended_volume"] == "0.80000000"
-    assert result["price_move_pct"] == "-4.0"
+    assert D(result["price_move_pct"]) == D("-4.0")
 
 
 def test_position_exit_plan_is_no_action_between_configured_thresholds():
@@ -86,7 +86,7 @@ def test_position_exit_plan_is_no_action_between_configured_thresholds():
 def test_exit_plan_never_rounds_quantities_up_to_exchange_minimum():
     instrument = _instrument(minimum="0.01", decimals=3)
     result = _evaluate(
-        _position(side="buy", volume="0.01", closed="0"),
+        _position(side="buy", volume="0.01", closed="0", cost="10"),
         _ticker(bid="1040", ask="1041"),
         instrument,
     )
