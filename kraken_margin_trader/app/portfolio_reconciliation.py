@@ -204,6 +204,15 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
             )
             continue
 
+        if position_volume is None:
+            # Explicit narrowing also keeps malformed persisted input fail-closed.
+            result["fill_field_mismatches"] += 1
+            persistence.trip_circuit_breaker(
+                "POSITION_FILL_RECONCILIATION",
+                "POSITION_VOLUME_UNVERIFIABLE",
+                {"position_txid": position_id},
+            )
+            continue
         result["positions_matched_to_fills"] += 1
         closed_volume = _decimal(raw_position.get("vol_closed"))
         if closed_volume is None or closed_volume < 0:
