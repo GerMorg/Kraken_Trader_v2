@@ -234,12 +234,11 @@ def test_settlement_rejects_currency_or_ledger_mismatch():
         build_add_order_params(intent, instrument(), validate_only=True)
 
 
-def test_missing_add_order_txid_keeps_intent_unknown_not_rejected(monkeypatch):
+def test_missing_add_order_txid_keeps_intent_unknown_not_rejected():
     db = Persistence(":memory:")
     audit = AuditLogger(path="/definitely-invalid-root/events.jsonl", stream=io.StringIO())
     client = KrakenClient("k", "s")
     client.private = lambda method, params=None: {}
-    monkeypatch.setattr("app.execution.LIVE_EXECUTION_RELEASED", True)
     settings = Settings.from_mapping({
         "mode": "LIVE", "live_enabled": True, "kill_switch": False,
     })
