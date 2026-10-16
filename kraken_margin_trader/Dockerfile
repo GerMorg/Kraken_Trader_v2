@@ -1,6 +1,6 @@
 FROM python:3.12-alpine
 
-ARG BUILD_VERSION=0.1.13
+ARG BUILD_VERSION=0.1.14
 ARG BUILD_ARCH=amd64
 
 LABEL \
@@ -20,4 +20,4 @@ RUN test -f /opt/kraken-trader/app/main.py \
   && test -f /opt/kraken-trader/app/__init__.py \
   && python -c "import app.main; print('Kraken Trader application import: OK')"
 
-CMD ["/run.sh"]
+ENTRYPOINT ["/run.sh"]
