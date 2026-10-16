@@ -86,8 +86,13 @@ def parse_tickers(raw: dict[str, Any], instruments: Iterable[Instrument]) -> dic
 def parse_ohlc_rows(raw_result: dict[str, Any], pair_id: str) -> list[dict[str, Any]]:
     rows = raw_result.get(pair_id)
     if rows is None:
-        candidates = [value for key,value in raw_result.items() if key != "last"]
-        rows = candidates[0] if candidates else []
+        # Kraken may return an alias rather than pair_id for a single-pair query.
+        # Accept that alias only if exactly one non-cursor result exists. Picking the
+        # first of multiple rows can silently apply another market's prices to this pair.
+        candidates = [value for key, value in raw_result.items() if key != "last"]
+        if len(candidates) != 1:
+            return []
+        rows = candidates[0]
     if not isinstance(rows, list):
         return []
     parsed = []
