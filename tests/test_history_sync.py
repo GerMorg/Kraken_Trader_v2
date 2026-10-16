@@ -30,7 +30,7 @@ def trade(trade_time=1768000000):
     return {
         "time": trade_time, "type": "buy", "pair": "XBTUSD",
         "vol": "0.01", "price": "90000", "fee": "0.20", "margin": "0.00000",
-        "ordertxid": "ORDER-1",
+        "ordertxid": "ORDER-1", "ledgers": [],
     }
 
 
@@ -201,6 +201,19 @@ def test_trade_history_classifies_margin_fills_separately_and_preserves_ledger_r
     assert event["payload"]["product_type"] == "SPOT_MARGIN"
     assert event["payload"]["margin_amount"] == "900.00"
     assert event["payload"]["related_ledger_ids"] == ["L-MARGIN-1", "L-FEE-1"]
+    db.close()
+
+
+def test_trade_history_missing_ledger_reference_shape_is_not_accepted():
+    db = Persistence(":memory:")
+    invalid = trade()
+    invalid.pop("ledgers")
+    client = FakeHistoryClient(trade_pages={None: {"trades": {"T-NO-LEDGERS": invalid}}})
+    result = sync_history_source(client=client, persistence=db, source="TRADES",
+                                 page_budget=1, now_epoch=1769000000)
+    assert result["generation_complete"] is False
+    assert result["last_error"] == "HISTORY_ITEM_INVALID"
+    assert db.fills() == []
     db.close()
 
 
