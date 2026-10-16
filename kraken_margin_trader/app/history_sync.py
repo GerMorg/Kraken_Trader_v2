@@ -276,18 +276,20 @@ def sync_history_source(
         next_cursor: str | None = None
         if cursor_source:
             cursor_payload = response.get("cursor")
-            if cursor_payload is not None:
-                if not isinstance(cursor_payload, dict):
-                    state["last_error"] = "HISTORY_CURSOR_SHAPE_INVALID"
+            # Cursor mode has an explicit end-of-results marker. Missing cursor metadata
+            # is not equivalent to cursor.next=null; treating it as EOF could silently
+            # mark a truncated exchange-history backfill complete.
+            if not isinstance(cursor_payload, dict) or "next" not in cursor_payload:
+                state["last_error"] = "HISTORY_CURSOR_SHAPE_INVALID"
+                persistence.save_history_sync_state(state)
+                break
+            raw_next = cursor_payload.get("next")
+            if raw_next is not None:
+                if not isinstance(raw_next, str) or not raw_next.strip() or raw_next == request_cursor:
+                    state["last_error"] = "HISTORY_CURSOR_INVALID_OR_REPEATED"
                     persistence.save_history_sync_state(state)
                     break
-                raw_next = cursor_payload.get("next")
-                if raw_next is not None:
-                    if not isinstance(raw_next, str) or not raw_next.strip() or raw_next == request_cursor:
-                        state["last_error"] = "HISTORY_CURSOR_INVALID_OR_REPEATED"
-                        persistence.save_history_sync_state(state)
-                        break
-                    next_cursor = raw_next
+                next_cursor = raw_next
             if next_cursor is not None and not items:
                 state["last_error"] = "HISTORY_EMPTY_PAGE_WITH_NEXT_CURSOR"
                 persistence.save_history_sync_state(state)
