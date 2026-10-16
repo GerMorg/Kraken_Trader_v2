@@ -1,10 +1,11 @@
 # Changelog
 
-## 0.1.7 — CI-Blocker behoben
+## 0.1.7 — CI-Blocker und Versionskonsistenz
 
-- Fehlender `json`-Import in der positionsbezogenen Wallet-/Order-Reconciliation korrigiert, sodass die tatsächlich ausgeführte CI nicht mehr an Ruff `F821` scheitert.
+- Fehlender `json`-Import in der positionsbezogenen Wallet-/Order-Reconciliation korrigiert, sodass Ruff nicht mehr an `F821` scheitert.
 - Paketversion, Home-Assistant-Manifest und Projektmetadaten konsistent auf `0.1.7` erhöht.
-- Vollständige GitHub-Actions-Qualitäts-, Test-, Sicherheits-, HA-Struktur-, Compile- und Containerprüfung ist für den vorherigen Korrekturstand auf beiden ausgelösten CI-Läufen erfolgreich; die neue Version wird nach diesem Commit erneut geprüft.
+- Die Benutzer-Dokumentation war noch auf `0.1.6` stehen geblieben. README-Version und Manifest sind jetzt durch den HA-Strukturvalidator und einen Regressionstest gekoppelt, damit diese Abweichung künftig die CI fehlschlagen lässt.
+- Der GitHub-Actions-Lauf `38891266043` für den vorherigen Metadaten-Commit `da24444` war mit allen fünf Jobs erfolgreich. Für die nachfolgenden Änderungen ist der jeweils neue Lauf auf dem exakten Branch-Head maßgeblich.
 
 ## 0.1.6 — Datenintegrität und Steuerreport-Invalidierung
 
