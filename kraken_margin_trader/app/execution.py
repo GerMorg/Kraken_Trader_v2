@@ -11,9 +11,6 @@ from app.models import Action, Instrument
 from app.persistence import Persistence
 
 D = Decimal
-# Source-owned release gate. Never activate before completing all safety/validation criteria.
-LIVE_EXECUTION_RELEASED = False
-
 class LiveExecutionBlocked(RuntimeError):
     pass
 
@@ -163,14 +160,22 @@ class OrderAuthority:
             self.persistence.transition_intent(intent.intent_id,"REJECTED",{"reason":"PRECHECK_FAILED"})
             return {"state":"REJECTED","reason":"PRECHECK_FAILED"}
         self.persistence.transition_intent(intent.intent_id,"PRECHECK_PASSED")
-        if not validate_only:
-            if not LIVE_EXECUTION_RELEASED:
-                self.persistence.transition_intent(intent.intent_id,"BLOCKED",{"reason":"INTERNAL_LIVE_RELEASE_GATE_CLOSED"})
-                self.audit.emit("LIVE_ORDER_BLOCKED_BY_RELEASE_GATE",intent_id=intent.intent_id,pair=intent.pair,action=intent.action.value)
-                raise LiveExecutionBlocked("INTERNAL_LIVE_RELEASE_GATE_CLOSED")
-            if not self.settings.live_requested:
-                self.persistence.transition_intent(intent.intent_id,"BLOCKED",{"reason":"LIVE_SWITCH_OR_KILL_SWITCH"})
-                raise LiveExecutionBlocked("LIVE_SWITCH_OR_KILL_SWITCH")
+        if not validate_only and not self.settings.live_requested:
+            self.persistence.transition_intent(
+                intent.intent_id,
+                "BLOCKED",
+                {"reason": "LIVE_SWITCH_OR_KILL_SWITCH"},
+            )
+            self.audit.emit(
+                "LIVE_ORDER_BLOCKED_BY_OPERATOR_SWITCHES",
+                intent_id=intent.intent_id,
+                pair=intent.pair,
+                action=intent.action.value,
+                mode=self.settings.mode,
+                live_enabled=self.settings.live_enabled,
+                kill_switch=self.settings.kill_switch,
+            )
+            raise LiveExecutionBlocked("LIVE_SWITCH_OR_KILL_SWITCH")
         try:
             params = build_add_order_params(intent,instrument,validate_only=validate_only)
         except ValueError as exc:
