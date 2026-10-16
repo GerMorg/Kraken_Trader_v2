@@ -40,3 +40,9 @@ Nicht erreichbarer Kraken-Status, API-Authentifizierungs-/Datenfehler und nicht 
 ## Validierung vor jeder späteren Freigabe
 
 Testen: adverse Gap- und Spread-Szenarien, Gebührenschocks, USDC-Depeg, Margin-Rate-/Rollover-Anstieg, korrelierte Longs/Shorts, Teilfüllungen, offene/unklare Orders und Abweichung zwischen Wallet, Lots und Exchange-Positionen. Eine steigende Signalqualität darf keine unveränderlichen Caps umgehen.
+
+## Shadow-Exit-Regeln für bestehende Lots
+
+Die derzeitige Positionsverwaltung beobachtet jeden einzelnen Kraken-Positions-Lot, bewertet den Ausstieg mit Bid (Long) beziehungsweise Ask (Short) und erstellt nur eine Empfehlung. Die Startparameter sind +3,5 % Brutto-Kursbewegung für einen Teilverkauf von 50 % der aktuell verbleibenden Menge und −3,0 % für eine Empfehlung zur Schließung der verbleibenden Menge. Die Mengengrundlage ist `vol - vol_closed`; die Menge wird auf die Börsen-Lotpräzision abgerundet und nie auf die Mindestmenge angehoben.
+
+Diese Schwellen sind keine wissenschaftlich validierte Strategie-Optimierung. Sie sind weder Gebühren-/Funding-bereinigte Gewinntrigger noch garantierte Stop-Loss-Ausführung: Open fee, Rollover, tatsächlicher Kreditbetrag, weitere Slippage, Gebührenwährung, Kraken-Orderakzeptanz und die lokale Prozessverfügbarkeit werden nicht durch diesen Shadow-Plan abgesichert. Die Empfehlungen werden protokolliert, nie übermittelt. Eine echte Reduktion erfordert später die zentrale Order Authority, geprüfte Positions-/Order-Reconciliation und nachgewiesene Exchange-Parameter.
