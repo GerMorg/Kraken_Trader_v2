@@ -27,7 +27,7 @@ class FakeHistoryClient:
 def trade(trade_time=1768000000):
     return {
         "time": trade_time, "type": "buy", "pair": "XBTUSD",
-        "vol": "0.01", "price": "90000", "fee": "0.20",
+        "vol": "0.01", "price": "90000", "fee": "0.20", "margin": "0.00000",
         "ordertxid": "ORDER-1",
     }
 
@@ -175,4 +175,42 @@ def test_invalid_closed_order_does_not_advance_history_cursor():
     assert result["last_error"] == "HISTORY_ITEM_INVALID"
     assert result["next_offset"] == 0
     assert db.exchange_orders() == []
+    db.close()
+
+
+def test_trade_history_classifies_margin_fills_separately_and_preserves_ledger_refs():
+    db = Persistence(":memory:")
+    margin_trade = {
+        **trade(),
+        "margin": "900.00",
+        "ledgers": ["L-MARGIN-1", "L-FEE-1"],
+    }
+    client = FakeHistoryClient(trade_pages={
+        0: {"trades": {"TMARGIN": margin_trade}, "count": 1},
+    })
+    result = sync_history_source(client=client, persistence=db, source="TRADES",
+                                 page_budget=1, now_epoch=1769000000)
+    assert result["generation_complete"] is True
+    event = next(e for e in db.tax_events_for_year(2026) if e["event_id"] == "TRADE:TMARGIN")
+    assert event["event_type"] == "MARGIN_TRADE_FILL"
+    assert event["verified"] == 0
+    assert event["manual_review"] == 1
+    assert event["payload"]["product_type"] == "SPOT_MARGIN"
+    assert event["payload"]["margin_amount"] == "900.00"
+    assert event["payload"]["related_ledger_ids"] == ["L-MARGIN-1", "L-FEE-1"]
+    db.close()
+
+
+def test_trade_history_missing_margin_field_is_incomplete_not_guessed_as_spot():
+    db = Persistence(":memory:")
+    missing_margin = trade()
+    missing_margin.pop("margin")
+    client = FakeHistoryClient(trade_pages={
+        0: {"trades": {"T-MISSING-MARGIN": missing_margin}, "count": 1},
+    })
+    result = sync_history_source(client=client, persistence=db, source="TRADES",
+                                 page_budget=1, now_epoch=1769000000)
+    assert result["generation_complete"] is False
+    assert result["last_error"] == "HISTORY_ITEM_INVALID"
+    assert db.tax_events_for_year(2026) == []
     db.close()
