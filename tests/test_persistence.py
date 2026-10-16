@@ -56,3 +56,35 @@ def test_intent_creation_rejects_unknown_initial_state():
         db.create_intent(intent(), initial_state="SUBMITTING")
     assert db.unresolved_intents() == []
     db.close()
+
+
+def test_exchange_order_snapshots_are_durable_and_transition_open_to_closed():
+    db = Persistence(":memory:")
+    opened = {
+        "status": "open", "cl_ord_id": "client-1", "vol": "0.2", "vol_exec": "0.1",
+        "cost": "10", "fee": "0.04", "opentm": 1760000000,
+        "descr": {"pair": "XBT/USD", "type": "buy", "ordertype": "limit"},
+    }
+    closed = {
+        **opened, "status": "closed", "vol_exec": "0.2", "closetm": 1760000100,
+    }
+    assert db.record_exchange_order("O1", opened, source="OPEN")
+    assert db.record_exchange_order("O1", closed, source="CLOSED")
+    rows = db.exchange_orders()
+    assert len(rows) == 1
+    assert rows[0]["order_id"] == "O1"
+    assert rows[0]["client_order_id"] == "client-1"
+    assert rows[0]["source"] == "CLOSED"
+    assert rows[0]["status"] == "closed"
+    assert rows[0]["volume_executed"] == "0.2"
+    assert '"closetm":1760000100' in rows[0]["raw_json"]
+    db.close()
+
+
+def test_exchange_order_snapshot_rejects_unknown_source_or_empty_id():
+    db = Persistence(":memory:")
+    with pytest.raises(ValueError, match="EXCHANGE_ORDER_SOURCE_INVALID"):
+        db.record_exchange_order("O1", {"status": "open"}, source="HISTORY")
+    with pytest.raises(ValueError, match="EXCHANGE_ORDER_ID_OR_PAYLOAD_INVALID"):
+        db.record_exchange_order("", {"status": "open"}, source="OPEN")
+    db.close()
