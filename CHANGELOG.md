@@ -17,6 +17,7 @@
 - Beobachtete offene und geschlossene Exchange-Orders werden anhand der Kraken-Order-ID mit Status, Client-ID, Menge, Kostenfeldern und Rohantwort persistent gespeichert und bei Folgeabfrage aktualisiert; dies ersetzt noch keine vollständige Order-/Fill-/Ledger-Reconciliation.
 - Malformed Order-Snapshot-Strukturen aktivieren einen persistenten Circuit Breaker und blockieren Risikoerhöhungen.
 - Eindeutige Ordermatches werden fail-closed gegen Status und ausgeführte Menge abgeglichen; fehlende abgesendete Orders, mehrdeutige Matches, Mengenwidersprüche und unbekannte offene Orders lösen einen Circuit Breaker aus. Der Mechanismus setzt die Gesamtportfolio-Reconciliation nicht auf erfolgreich.
+- ClosedOrders wird zusätzlich als eigenständige Historienquelle mit persistiertem Offset, festem Abfragefenster, Count-/Shape-Prüfung und Wiederaufnahme über begrenzte Seitenbudgets synchronisiert; ein fehlgeschlagener Backfill wird nicht als vollständig ausgewiesen.
 
 ## 0.1.3 — Mehrjährige Steuerexporte und Versionskonsistenz
 
