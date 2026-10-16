@@ -195,9 +195,9 @@ def test_trade_history_classifies_margin_fills_separately_and_preserves_ledger_r
     assert event["event_type"] == "MARGIN_TRADE_FILL"
     assert event["verified"] == 0
     assert event["manual_review"] == 1
-    assert event["payload"]["product_type"] == "SPOT_MARGIN"
-    assert event["payload"]["margin_amount"] == "900.00"
-    assert event["payload"]["related_ledger_ids"] == ["L-MARGIN-1", "L-FEE-1"]
+    assert event["payload"]["payload"]["product_type"] == "SPOT_MARGIN"
+    assert event["payload"]["payload"]["margin_amount"] == "900.00"
+    assert event["payload"]["payload"]["related_ledger_ids"] == ["L-MARGIN-1", "L-FEE-1"]
     db.close()
 
 
