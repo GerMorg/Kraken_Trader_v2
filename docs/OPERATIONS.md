@@ -16,7 +16,7 @@ Vor dem privaten Account-Backfill ruft die App `GetApiKeyInfo` auf und prüft Qu
 ## Einstellungen
 
 - `mode`: `SHADOW` oder `PAPER` sind die sicheren Modi; `LIVE`-Option ist derzeit durch das interne Source-Gate wirkungslos für echte Ausführung.
-- `live_enabled`: zusätzlicher UI-Schalter, hebt keine internen Grenzen auf.
+- `live_enabled`: expliziter UI-Schalter für echte Orderübermittlung in Verbindung mit `mode: LIVE` und `kill_switch: false`; kein weiterer Compile-Time-Release-Schalter ist vorhanden. Diese Schalter heben die dokumentierten Daten-, Kosten-, Edge- und Risikoprüfungen nicht auf.
 - `kill_switch`: sicherer Default `true`.
 - Marktscanintervall, Datenalter, Kandidatenzahl und TSM-Schwellen können im begrenzten Bereich gesteuert werden.
 - Risikogrenzen können verschärft, aber nicht oberhalb der Source-Caps gesetzt werden.
@@ -30,4 +30,4 @@ Achte besonders auf `CYCLE_BLOCKED`, `NO_TRADE`, `RISK_GATE_REJECTED`, `CYCLE_FA
 
 ## Aktueller Freigabestatus
 
-**Keine Live-Freigabe.** Der Source-Release-Schalter ist `False`, Konto-/Margin-Ledger-Reconciliation fehlt und dynamische Margin-Raten werden nicht ausreichend bestätigt. Erst nach grüner CI, vollständigen Integrations-/Recoverytests, realistischer historischen Prüfung und einem abgeschlossenen Forward-Shadow-Test ist eine neue explizite, geprüfte Freigabe zulässig. Die erste spätere Live-Stufe muss klein, beaufsichtigt und mit getesteter Schutz-/Recoverystrategie erfolgen.
+**Noch keine Empfehlung für unbeaufsichtigten Live-Margin-Betrieb.** Der feste Source-Code-Release-Schalter wurde entfernt: `LIVE` plus `live_enabled: true` plus `kill_switch: false` erreicht die zentrale Order Authority. Orders bleiben dennoch blockiert, solange die expliziten Live-Prüfungen scheitern. Aktuell fehlen ein kalibrierter Netto-Edge, lückenlose tägliche PnL-/Drawdown-Baselines, vollständige USDC-/Kredit-/Ledger-Reconciliation und bestätigte aktuelle instrumentbezogene Margin-Kosten sowie ein realer HA-Installationstest. Die erste spätere Live-Stufe muss klein, beaufsichtigt und mit getesteter Schutz-/Recoverystrategie erfolgen.
