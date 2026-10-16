@@ -153,10 +153,17 @@ def simulate_order_book_execution(
             slippage_bps = (average_price / top_price - D(1)) * D(10000)
         else:
             slippage_bps = (D(1) - average_price / top_price) * D(10000)
-        # Decimal arithmetic can produce tiny negative artifacts only if an
-        # upstream order book violates ordering; keep the result fail-closed.
-        if not slippage_bps.is_finite() or slippage_bps < 0:
+        if not slippage_bps.is_finite():
             raise ValueError("ORDER_BOOK_SLIPPAGE_CALCULATION_INVALID")
+        # Decimal division has finite context precision. Multiplying a repeating
+        # quantity by the top price and dividing it back can yield an epsilon-
+        # sized negative slippage even for a one-level, valid fill. Clamp only
+        # that arithmetic noise; meaningful negative slippage remains invalid.
+        if slippage_bps < 0:
+            if abs(slippage_bps) <= D("1e-18"):
+                slippage_bps = D(0)
+            else:
+                raise ValueError("ORDER_BOOK_SLIPPAGE_CALCULATION_INVALID")
 
     fee_quote = quote_total * fee_bps / D(10000)
     status: ExecutionStatus
