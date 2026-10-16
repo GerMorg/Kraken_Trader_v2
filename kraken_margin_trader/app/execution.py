@@ -192,6 +192,25 @@ class OrderAuthority:
             self.persistence.transition_intent(intent.intent_id,"VALIDATED",{"result":"VALIDATION_ONLY"})
             self.audit.emit("ORDER_VALIDATION_SUCCEEDED_NOT_EXECUTED",intent_id=intent.intent_id)
             return {"state":"VALIDATED","result":result}
-        self.persistence.transition_intent(intent.intent_id,"ACKNOWLEDGED",{"txid":result.get("txid",[])})
+        txids = result.get("txid")
+        if (
+            not isinstance(txids, list)
+            or not txids
+            or any(not isinstance(txid, str) or not txid.strip() for txid in txids)
+        ):
+            # The HTTP call may have reached Kraken even if its response is malformed.
+            # Keep the intent unresolved; never turn an unknown outcome into REJECTED.
+            self.persistence.transition_intent(
+                intent.intent_id,
+                "UNKNOWN_RECONCILING",
+                {"reason": "ADD_ORDER_RESPONSE_TXID_MISSING_OR_INVALID"},
+            )
+            self.audit.emit(
+                "ORDER_OUTCOME_UNKNOWN_RECONCILING",
+                intent_id=intent.intent_id,
+                reason="ADD_ORDER_RESPONSE_TXID_MISSING_OR_INVALID",
+            )
+            raise KrakenAmbiguousError("ADD_ORDER_RESPONSE_TXID_MISSING_OR_INVALID")
+        self.persistence.transition_intent(intent.intent_id,"ACKNOWLEDGED",{"txid":txids})
         self.audit.emit("ORDER_ACKNOWLEDGED_REQUIRES_RECONCILIATION",intent_id=intent.intent_id)
         return {"state":"ACKNOWLEDGED","result":result}
