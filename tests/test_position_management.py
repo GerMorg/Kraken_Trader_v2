@@ -50,6 +50,19 @@ def test_take_profit_reduces_half_of_remaining_long_position_not_original_volume
     assert result["exchange_native_protection"] is False
 
 
+def test_position_pair_altname_resolves_to_canonical_instrument_and_ticker():
+    position = _position(side="buy", pair="XBTUSD")
+    result = evaluate_position_exits(
+        {"open": {"P-ALIAS": position}},
+        {"XXBTZUSD": _ticker()},
+        {"XXBTZUSD": _instrument()},
+        take_profit_pct=D("3.5"), take_profit_fraction=D("0.5"), stop_loss_pct=D("3.0"),
+    )[0]
+    assert result["status"] == "PARTIAL_TAKE_PROFIT_RECOMMENDED"
+    assert result["pair"] == "XBTUSD"
+    assert result["action"] == "REDUCE_LONG"
+
+
 def test_take_profit_uses_ask_to_cover_a_short_and_reduces_remaining_half():
     position = _position(side="sell", volume="1", closed="0")
     result = _evaluate(position, _ticker(bid="959", ask="960"))
