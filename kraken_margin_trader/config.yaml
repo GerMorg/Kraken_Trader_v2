@@ -29,6 +29,9 @@ options:
   expected_holding_hours: 8
   strategy_fast_bps: 120
   strategy_slow_bps: 180
+  position_take_profit_pct: 3.5
+  position_take_profit_fraction: 0.5
+  position_stop_loss_pct: 3.0
   risk_per_trade_pct: 0.5
   risk_max_position_pct: 20
   risk_max_gross_pct: 80
@@ -53,6 +56,9 @@ schema:
   expected_holding_hours: int(1,168)
   strategy_fast_bps: int(25,1000)
   strategy_slow_bps: int(50,2000)
+  position_take_profit_pct: float(0.5,20)
+  position_take_profit_fraction: float(0.1,0.9)
+  position_stop_loss_pct: float(0.5,20)
   risk_per_trade_pct: float(0.1,0.5)
   risk_max_position_pct: float(1,20)
   risk_max_gross_pct: float(5,80)
