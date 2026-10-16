@@ -5,9 +5,10 @@ from app.persistence import Persistence
 
 
 class FakeHistoryClient:
-    def __init__(self, trade_pages=None, ledger_pages=None):
+    def __init__(self, trade_pages=None, ledger_pages=None, closed_pages=None):
         self.trade_pages = trade_pages or {}
         self.ledger_pages = ledger_pages or {}
+        self.closed_pages = closed_pages or {}
         self.calls = []
 
     def trades_history(self, *, offset, start, end):
@@ -17,6 +18,10 @@ class FakeHistoryClient:
     def ledgers(self, *, offset, start, end):
         self.calls.append(("LEDGERS", offset, start, end))
         return self.ledger_pages[offset]
+
+    def closed_orders(self, *, offset, start, end, close_time, include_trades):
+        self.calls.append(("CLOSED_ORDERS", offset, start, end, close_time, include_trades))
+        return self.closed_pages[offset]
 
 
 def trade(trade_time=1768000000):
@@ -115,7 +120,59 @@ def test_history_requires_known_source_and_bounded_page_budget():
     db = Persistence(":memory:")
     client = FakeHistoryClient()
     with pytest.raises(ValueError, match="HISTORY_SOURCE_INVALID"):
-        sync_history_source(client=client, persistence=db, source="CLOSED_ORDERS")
+        sync_history_source(client=client, persistence=db, source="UNKNOWN_ORDERS")
     with pytest.raises(ValueError, match="HISTORY_PAGE_BUDGET_OUT_OF_RANGE"):
         sync_history_source(client=client, persistence=db, source="TRADES", page_budget=0)
+    db.close()
+
+
+def _closed_order(closed_time=1768000000, *, status="closed", volume="1", executed="1"):
+    return {
+        "closetm": closed_time,
+        "status": status,
+        "vol": volume,
+        "vol_exec": executed,
+        "cl_ord_id": "client-1",
+        "descr": {"pair": "XBT/USD", "type": "buy", "ordertype": "limit"},
+    }
+
+
+def test_closed_orders_history_backfill_resumes_and_persists_by_order_id():
+    db = Persistence(":memory:")
+    client = FakeHistoryClient(closed_pages={
+        0: {"closed": {"O1": _closed_order(), "O2": _closed_order()}, "count": 3},
+        2: {"closed": {"O3": _closed_order()}, "count": 3},
+    })
+
+    first = sync_history_source(client=client, persistence=db, source="CLOSED_ORDERS",
+                                page_budget=1, now_epoch=1769000000)
+    assert first["generation_complete"] is False
+    assert first["initial_backfill_complete"] is False
+    assert first["next_offset"] == 2
+
+    second = sync_history_source(client=client, persistence=db, source="CLOSED_ORDERS",
+                                 page_budget=1, now_epoch=1769000000)
+    assert second["generation_complete"] is True
+    assert second["initial_backfill_complete"] is True
+    assert second["next_offset"] == 3
+    assert {row["order_id"] for row in db.exchange_orders()} == {"O1", "O2", "O3"}
+    assert all(row["source"] == "CLOSED" for row in db.exchange_orders())
+    assert client.calls == [
+        ("CLOSED_ORDERS", 0, 0, 1769000000, "close", True),
+        ("CLOSED_ORDERS", 2, 0, 1769000000, "close", True),
+    ]
+    db.close()
+
+
+def test_invalid_closed_order_does_not_advance_history_cursor():
+    db = Persistence(":memory:")
+    client = FakeHistoryClient(closed_pages={
+        0: {"closed": {"O1": _closed_order(closed_time="NaN")}, "count": 1},
+    })
+    result = sync_history_source(client=client, persistence=db, source="CLOSED_ORDERS",
+                                 page_budget=1, now_epoch=1769000000)
+    assert result["generation_complete"] is False
+    assert result["last_error"] == "HISTORY_ITEM_INVALID"
+    assert result["next_offset"] == 0
+    assert db.exchange_orders() == []
     db.close()
