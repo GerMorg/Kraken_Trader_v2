@@ -227,6 +227,20 @@ def test_orderbook_replay_accepts_explicit_financing_in_the_usd_quote_currency()
     assert replay.status == "ORDERBOOK_SCENARIO_ONLY"
     assert replay.trades
     assert all(trade.total_cost_usd > 0 for trade in replay.trades)
+    assert all(trade.margin_cost_usd > 0 for trade in replay.trades)
+    assert all(trade.margin_cost_quality == "RESEARCH_ESTIMATE" for trade in replay.trades)
+    assert all(len(trade.margin_cost_evidence_ids) == 2 for trade in replay.trades)
+    assert all(
+        abs(
+            trade.gross_mid_market_pnl_usd
+            - trade.trading_fees_usd
+            - trade.spread_cost_usd
+            - trade.slippage_impact_usd
+            - trade.margin_cost_usd
+            - trade.net_pnl_usd
+        ) < D("1e-18")
+        for trade in replay.trades
+    )
 
 
 def test_orderbook_replay_fails_closed_if_exit_book_is_missing_or_stale():
