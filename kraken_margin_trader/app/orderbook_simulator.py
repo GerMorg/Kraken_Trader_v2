@@ -269,6 +269,10 @@ class OrderBookRoundTrip:
     entry: OrderBookExecution | None
     exit: OrderBookExecution | None
     gross_realized_pnl_quote: Decimal | None
+    mid_market_gross_pnl_quote: Decimal | None
+    spread_cost_quote: Decimal | None
+    slippage_impact_quote: Decimal | None
+    spread_slippage_cost_quote: Decimal | None
     trading_fees_quote: Decimal
     margin_cost_quote: Decimal | None
     margin_cost_evidence_quality: MarginCostQuality | None
@@ -331,9 +335,28 @@ def simulate_order_book_round_trip(
     )
     if entry.filled_quantity == 0:
         return OrderBookRoundTrip(
-            direction, "NOT_OPENED", requested_notional_quote, target_quantity,
-            D(0), D(0), D(0), entry, None, None, D(0),
-            D(0), None, (), (), None, False, normalized_quote,
+            direction=direction,
+            position_status="NOT_OPENED",
+            requested_notional_quote=requested_notional_quote,
+            target_quantity=target_quantity,
+            entered_quantity=D(0),
+            closed_quantity=D(0),
+            remaining_quantity=D(0),
+            entry=entry,
+            exit=None,
+            gross_realized_pnl_quote=None,
+            mid_market_gross_pnl_quote=None,
+            spread_cost_quote=None,
+            slippage_impact_quote=None,
+            spread_slippage_cost_quote=None,
+            trading_fees_quote=D(0),
+            margin_cost_quote=D(0),
+            margin_cost_evidence_quality=None,
+            margin_cost_evidence_ids=(),
+            margin_cost_sources=(),
+            net_realized_pnl_quote=None,
+            entry_target_filled=False,
+            quote_currency=normalized_quote,
         )
 
     exit_result = simulate_order_book_execution(
@@ -346,6 +369,10 @@ def simulate_order_book_round_trip(
     closed_quantity = exit_result.filled_quantity
     remaining_quantity = entry.filled_quantity - closed_quantity
     gross_pnl: Decimal | None = None
+    mid_market_gross_pnl: Decimal | None = None
+    spread_cost: Decimal | None = None
+    slippage_impact: Decimal | None = None
+    spread_slippage_cost: Decimal | None = None
     trading_fees = D(0)
     allocated_margin_cost: Decimal | None = D(0)
     margin_quality: MarginCostQuality | None = None
@@ -357,6 +384,43 @@ def simulate_order_book_round_trip(
             gross_pnl = exit_result.quote_amount - entry_quote_for_closed
         else:
             gross_pnl = entry_quote_for_closed - exit_result.quote_amount
+
+        entry_mid = (entry_book.bids[0].price + entry_book.asks[0].price) / D(2)
+        exit_mid = (exit_book.bids[0].price + exit_book.asks[0].price) / D(2)
+        if direction == "LONG":
+            mid_market_gross_pnl = (exit_mid - entry_mid) * closed_quantity
+        else:
+            mid_market_gross_pnl = (entry_mid - exit_mid) * closed_quantity
+
+        entry_half_spread = (entry_book.asks[0].price - entry_book.bids[0].price) / D(2)
+        exit_half_spread = (exit_book.asks[0].price - exit_book.bids[0].price) / D(2)
+        spread_cost = (entry_half_spread + exit_half_spread) * closed_quantity
+
+        if entry_side == "BUY":
+            entry_impact_per_unit = entry.average_price - entry_book.asks[0].price
+        else:
+            entry_impact_per_unit = entry_book.bids[0].price - entry.average_price
+        if exit_side == "BUY":
+            exit_impact_per_unit = exit_result.average_price - exit_book.asks[0].price
+        else:
+            exit_impact_per_unit = exit_book.bids[0].price - exit_result.average_price
+        slippage_impact = (entry_impact_per_unit + exit_impact_per_unit) * closed_quantity
+        spread_slippage_cost = spread_cost + slippage_impact
+        if any(
+            value is None or not value.is_finite()
+            for value in (
+                mid_market_gross_pnl,
+                spread_cost,
+                slippage_impact,
+                spread_slippage_cost,
+            )
+        ):
+            raise ValueError("ROUND_TRIP_EXECUTION_COST_INVALID")
+        if spread_cost < 0 or slippage_impact < 0:
+            raise ValueError("ROUND_TRIP_EXECUTION_COST_NEGATIVE")
+        if abs((mid_market_gross_pnl - gross_pnl) - spread_slippage_cost) > D("1e-12"):
+            raise ValueError("ROUND_TRIP_EXECUTION_COST_RECONCILIATION_FAILED")
+
         entry_fee_allocated = entry.fee_quote * closed_quantity / entry.filled_quantity
         trading_fees = entry_fee_allocated + exit_result.fee_quote
         if is_margin:
@@ -394,6 +458,10 @@ def simulate_order_book_round_trip(
         entry=entry,
         exit=exit_result,
         gross_realized_pnl_quote=gross_pnl,
+        mid_market_gross_pnl_quote=mid_market_gross_pnl,
+        spread_cost_quote=spread_cost,
+        slippage_impact_quote=slippage_impact,
+        spread_slippage_cost_quote=spread_slippage_cost,
         trading_fees_quote=trading_fees,
         margin_cost_quote=allocated_margin_cost,
         margin_cost_evidence_quality=margin_quality,
