@@ -233,6 +233,11 @@ def test_margin_round_trip_subtracts_explicit_financing_in_same_quote_currency()
     assert result.gross_realized_pnl_quote == D("6")
     assert result.margin_cost_quote == D("1")
     assert result.margin_cost_evidence_quality == "HISTORICAL_SIMULATION"
+    assert result.margin_cost_evidence_ids == ("OPEN-FEE-TEST-1", "ROLLOVER-FEE-TEST-1")
+    assert result.margin_cost_sources == (
+        "synthetic-research-fixture",
+        "synthetic-research-fixture",
+    )
     assert result.trading_fees_quote == D("0.198") + D("0.384")
     assert result.net_realized_pnl_quote == D("6") - D("0.198") - D("0.384") - D("1")
 
