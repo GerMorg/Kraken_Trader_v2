@@ -403,9 +403,11 @@ class TraderRuntime:
                 self.audit.emit(
                     "WALLET_BALANCE_RECONCILIATION_SUMMARY",
                     cycle_id=cycle_id,
-                    **wallet_reconciliation,
-                    full_portfolio_reconciliation=False,
-                    complete_for_entries=False,
+                    **{
+                        **wallet_reconciliation,
+                        "full_portfolio_reconciliation": False,
+                        "complete_for_entries": False,
+                    },
                 )
                 if wallet_reconciliation.get("mismatches", 0) > 0:
                     self.persistence.trip_circuit_breaker(
