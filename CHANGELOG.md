@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.8 — Orderbuch-Replay und sicherheitsgerichtete Tests
+
+- Ergänzt einen deterministischen L2-Book-Walk für BUY/SELL mit Preispriorität, Limitpreisgrenzen, sichtbarer Tiefe, Participation-Cap, Teilfüllungen, Restmenge, VWAP, Spread-, Slippage- und Quote-Gebührenberechnung.
+- Ergänzt die Long-/Short-Trade-Replay-Funktion des Momentum-Backtests auf zeitgestempelten Orderbuch-Snapshots. Die Auswahl von Marktdaten erfolgt ohne Look-ahead; fehlende/veraltete Exit-Daten oder Teilfüllungen lassen den Trade ausdrücklich ungelöst.
+- Margin-Netto-PnL bleibt unbekannt, wenn Finanzierung nicht explizit und in der gleichen Quote-Währung belegt ist. Es werden keine USDC-Finanzierungskosten stillschweigend als USD-Nullkosten angenommen.
+- Regressionstests decken Buch-Tiefe, Gebühren/VWAP, Preislimits, ungefüllte und teilweise gefüllte Aufträge, Margin-Finanzierungsnachweise und nicht abgeschlossene Exits ab.
+- Orderbuch-Replay bleibt Szenario-Research; ohne qualitätsgesicherte historische L2-Daten, vollständig abgebildetes Börsenverhalten sowie OOS-/Forward-Shadow-Evidenz erfolgt weder Profitabilitätsbehauptung noch Live-Freigabe.
+
 ## 0.1.7 — CI-Blocker und Versionskonsistenz
 
 - Fehlender `json`-Import in der positionsbezogenen Wallet-/Order-Reconciliation korrigiert, sodass Ruff nicht mehr an `F821` scheitert.
