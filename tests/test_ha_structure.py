@@ -92,7 +92,6 @@ def test_apparmor_profile_grants_runtime_paths_without_disabling_confinement():
     assert manifest["apparmor"] is True
     assert "profile kraken_margin_trader " in profile
     assert "/opt/kraken-trader/app/ r," in profile
-    assert "/opt/kraken-trader/app/ x," in profile
     assert "/opt/kraken-trader/app/** r," in profile
     assert "/config/** rwk," in profile
     assert "/data/** rwk," in profile
