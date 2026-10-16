@@ -18,6 +18,7 @@
 - Malformed Order-Snapshot-Strukturen aktivieren einen persistenten Circuit Breaker und blockieren Risikoerhöhungen.
 - Eindeutige Ordermatches werden fail-closed gegen Status und ausgeführte Menge abgeglichen; fehlende abgesendete Orders, mehrdeutige Matches, Mengenwidersprüche und unbekannte offene Orders lösen einen Circuit Breaker aus. Der Mechanismus setzt die Gesamtportfolio-Reconciliation nicht auf erfolgreich.
 - ClosedOrders wird zusätzlich als eigenständige Historienquelle mit persistiertem Offset, festem Abfragefenster, Count-/Shape-Prüfung und Wiederaufnahme über begrenzte Seitenbudgets synchronisiert; ein fehlgeschlagener Backfill wird nicht als vollständig ausgewiesen.
+- Trades-History-Fills werden anhand des Kraken-`margin`-Felds technisch zwischen Margin und Cash Spot getrennt. Fehlende oder ungültige Produktdaten lassen den History-Backfill fehlschlagen; verwandte Ledger-IDs bleiben im Roh-Payload erhalten.
 
 ## 0.1.3 — Mehrjährige Steuerexporte und Versionskonsistenz
 
