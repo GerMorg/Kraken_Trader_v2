@@ -173,6 +173,13 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
                 {"position_txid": position_id},
             )
             continue
+        if margin_value is not None and margin_value > 0 and not related_ledgers:
+            result["missing_related_ledgers"] += 1
+            persistence.trip_circuit_breaker(
+                "POSITION_FILL_RECONCILIATION",
+                "MARGIN_POSITION_WITHOUT_RELATED_LEDGER_REFERENCES",
+                {"position_txid": position_id},
+            )
         for ledger_id in related_ledgers:
             result["related_ledgers_checked"] += 1
             if str(ledger_id) not in ledgers:
