@@ -165,7 +165,7 @@ def sync_history_source(
     if state is None:
         state = {
             "source": normalized, "start_epoch": 0, "end_epoch": now,
-            "next_offset": 0, "expected_count": None,
+            "next_offset": 0, "next_cursor": None, "expected_count": None,
             "initial_backfill_complete": False, "generation_complete": False,
             "last_error": None,
         }
@@ -189,43 +189,76 @@ def sync_history_source(
             "cached_until_refresh": True, "last_error": None,
         }
 
+    cursor_source = normalized in {"TRADES", "CLOSED_ORDERS"}
     pages = 0
     saved = 0
     while pages < page_budget and not state["generation_complete"]:
         offset = int(state["next_offset"])
+        request_cursor = state.get("next_cursor") if cursor_source else None
         start = int(state["start_epoch"])
         end = int(state["end_epoch"])
         if normalized == "TRADES":
-            response = client.trades_history(offset=offset, start=start, end=end)
+            response = client.trades_history(
+                offset=0, start=start, end=end, with_cursor=True, cursor=request_cursor
+            )
             items = _result_items(response.get("trades"))
         elif normalized == "LEDGERS":
             response = client.ledgers(offset=offset, start=start, end=end)
             items = _result_items(response.get("ledger"))
         else:
             response = client.closed_orders(
-                offset=offset, start=start, end=end, close_time="close", include_trades=True
+                offset=0, start=start, end=end, close_time="close",
+                include_trades=True, with_cursor=True, cursor=request_cursor,
             )
             items = _result_items(response.get("closed"))
-        count = _count(response.get("count"))
-        if items is None or count is None:
-            state["last_error"] = "HISTORY_RESPONSE_SHAPE_OR_COUNT_INVALID"
+
+        # Kraken's cursor-mode ClosedOrders response deliberately reports count=0.
+        # Cursor-bearing endpoints are therefore completed by cursor.next, not by ofs/count.
+        if items is None:
+            state["last_error"] = "HISTORY_RESPONSE_SHAPE_INVALID"
             persistence.save_history_sync_state(state)
             break
-        expected = state["expected_count"]
-        if expected is not None and int(expected) != count:
-            # A fixed time window should have a stable count. Restart the window next cycle
-            # rather than skipping or silently declaring an incomplete page range complete.
-            state["end_epoch"] = now
-            state["next_offset"] = 0
-            state["expected_count"] = None
-            state["last_error"] = "HISTORY_COUNT_CHANGED_RESTART_REQUIRED"
-            persistence.save_history_sync_state(state)
-            break
-        state["expected_count"] = count
-        if not items and offset < count:
-            state["last_error"] = "HISTORY_EMPTY_PAGE_BEFORE_REPORTED_COUNT"
-            persistence.save_history_sync_state(state)
-            break
+
+        next_cursor: str | None = None
+        if cursor_source:
+            cursor_payload = response.get("cursor")
+            if cursor_payload is not None:
+                if not isinstance(cursor_payload, dict):
+                    state["last_error"] = "HISTORY_CURSOR_SHAPE_INVALID"
+                    persistence.save_history_sync_state(state)
+                    break
+                raw_next = cursor_payload.get("next")
+                if raw_next is not None:
+                    if not isinstance(raw_next, str) or not raw_next.strip() or raw_next == request_cursor:
+                        state["last_error"] = "HISTORY_CURSOR_INVALID_OR_REPEATED"
+                        persistence.save_history_sync_state(state)
+                        break
+                    next_cursor = raw_next
+            if next_cursor is not None and not items:
+                state["last_error"] = "HISTORY_EMPTY_PAGE_WITH_NEXT_CURSOR"
+                persistence.save_history_sync_state(state)
+                break
+        else:
+            count = _count(response.get("count"))
+            if count is None:
+                state["last_error"] = "HISTORY_RESPONSE_SHAPE_OR_COUNT_INVALID"
+                persistence.save_history_sync_state(state)
+                break
+            expected = state["expected_count"]
+            if expected is not None and int(expected) != count:
+                # Offset-based ledger pagination needs a stable count in a fixed window.
+                state["end_epoch"] = now
+                state["next_offset"] = 0
+                state["expected_count"] = None
+                state["last_error"] = "HISTORY_COUNT_CHANGED_RESTART_REQUIRED"
+                persistence.save_history_sync_state(state)
+                break
+            state["expected_count"] = count
+            if not items and offset < count:
+                state["last_error"] = "HISTORY_EMPTY_PAGE_BEFORE_REPORTED_COUNT"
+                persistence.save_history_sync_state(state)
+                break
+
         for row_id, row in items.items():
             if normalized == "TRADES":
                 valid = _save_trade(row_id, row, persistence)
@@ -238,25 +271,24 @@ def sync_history_source(
                 persistence.save_history_sync_state(state)
                 return {
                     "source": normalized, "pages": pages + 1, "items_saved": saved,
-                    "expected_count": count, "next_offset": state["next_offset"],
+                    "expected_count": state["expected_count"], "next_offset": state["next_offset"],
                     "generation_complete": False,
                     "initial_backfill_complete": bool(state["initial_backfill_complete"]),
                     "cached_until_refresh": False, "last_error": state["last_error"],
                 }
             saved += 1
+
         pages += 1
         state["next_offset"] = offset + len(items)
-        state["generation_complete"] = state["next_offset"] >= count
+        if cursor_source:
+            state["next_cursor"] = next_cursor
+            state["generation_complete"] = next_cursor is None
+        else:
+            state["generation_complete"] = state["next_offset"] >= int(state["expected_count"])
         state["last_error"] = None
         if state["generation_complete"] and int(state["start_epoch"]) == 0:
             state["initial_backfill_complete"] = True
         persistence.save_history_sync_state(state)
-        if count == 0:
-            state["generation_complete"] = True
-            if int(state["start_epoch"]) == 0:
-                state["initial_backfill_complete"] = True
-            persistence.save_history_sync_state(state)
-            break
     return {
         "source": normalized, "pages": pages, "items_saved": saved,
         "expected_count": state["expected_count"], "next_offset": state["next_offset"],
