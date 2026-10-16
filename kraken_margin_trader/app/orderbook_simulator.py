@@ -265,7 +265,7 @@ def simulate_order_book_round_trip(
         return OrderBookRoundTrip(
             direction, "NOT_OPENED", requested_notional_quote, target_quantity,
             D(0), D(0), D(0), entry, None, None, D(0),
-            D(0) if not is_margin else financing_cost_quote,
+            D(0),
             None, False, normalized_quote,
         )
 
