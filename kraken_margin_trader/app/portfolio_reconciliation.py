@@ -393,7 +393,7 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
         mismatches: list[str] = []
         if position_volume is None or position_volume != fill_volume:
             mismatches.append("VOLUME")
-        if position_pairs_invalid := (not position_pair or fill_pairs != {position_pair}):
+        if not position_pair or fill_pairs != {position_pair}:
             mismatches.append("PAIR")
         if position_side not in {"buy", "sell"} or fill_sides != {position_side}:
             mismatches.append("SIDE")
