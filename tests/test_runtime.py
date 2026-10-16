@@ -47,6 +47,8 @@ def test_risk_snapshot_uses_absolute_gross_and_directional_net_exposure():
     assert snapshot.gross_exposure_usd == D("130")
     assert snapshot.net_exposure_usd == D("70")
     assert snapshot.complete
+    assert snapshot.daily_pnl_pct is None
+    assert snapshot.drawdown_pct is None
     assert not snapshot.reconciliation_ok
     audit.close()
     db.close()
