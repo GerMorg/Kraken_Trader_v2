@@ -5,6 +5,7 @@ from decimal import Decimal
 import time
 import uuid
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.audit import AuditLogger
 from app.config import Settings
@@ -39,7 +40,7 @@ class TraderRuntime:
         self.settings,self.persistence,self.audit=settings,persistence,audit
         self.client=KrakenClient(settings.api_key,settings.api_secret,persistence.next_nonce)
         self.tax_reports=AustrianTaxReports()
-        self._last_tax_report_signature: tuple[int, int] | None = None
+        self._last_tax_report_signature: dict[int, tuple[int, tuple[str, ...]]] = {}
 
     def _account_risk_snapshot(self,snapshot: dict[str,Any]) -> RiskSnapshot:
         trade=snapshot["trade_balance"]; rows=_open_position_rows(snapshot["open_positions"])
@@ -62,33 +63,41 @@ class TraderRuntime:
     def _refresh_tax_report(self) -> None:
         if not self.settings.tax_report_enabled:
             return
-        year = datetime.now(timezone.utc).year
-        events = self.persistence.tax_events_for_year(year)
-        signature = (year, len(events))
-        if signature == self._last_tax_report_signature:
-            return
-        try:
-            result = self.tax_reports.generate_year(
-                year,
-                events,
-                source_coverage_complete=False,
+
+        # Austrian tax years follow Europe/Vienna. Imported history can span many years;
+        # producing only the current-year report silently left historical years uneported.
+        current_year = datetime.now(ZoneInfo("Europe/Vienna")).year
+        years = sorted(set(self.persistence.tax_event_years()) | {current_year})
+        for year in years:
+            events = self.persistence.tax_events_for_year(year)
+            signature = (
+                len(events),
+                tuple(str(event.get("event_id", "")) for event in events),
             )
-        except (OSError, ValueError) as exc:
+            if self._last_tax_report_signature.get(year) == signature:
+                continue
+            try:
+                result = self.tax_reports.generate_year(
+                    year,
+                    events,
+                    source_coverage_complete=False,
+                )
+            except (OSError, ValueError) as exc:
+                self.audit.emit(
+                    "TAX_REPORT_FAILED",
+                    year=year,
+                    exception_type=type(exc).__name__,
+                    source_coverage_complete=False,
+                )
+                continue
+            self._last_tax_report_signature[year] = signature
             self.audit.emit(
-                "TAX_REPORT_FAILED",
+                "TAX_REPORT_GENERATED",
                 year=year,
-                exception_type=type(exc).__name__,
+                event_count=result["event_count"],
+                status=result["status"],
                 source_coverage_complete=False,
             )
-            return
-        self._last_tax_report_signature = signature
-        self.audit.emit(
-            "TAX_REPORT_GENERATED",
-            year=year,
-            event_count=result["event_count"],
-            status=result["status"],
-            source_coverage_complete=False,
-        )
 
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
