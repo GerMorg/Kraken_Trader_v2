@@ -11,7 +11,10 @@ from zoneinfo import ZoneInfo
 from app.audit import AuditLogger
 from app.config import Settings
 from app.costs import estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
-from app.kraken import KrakenAPIError, KrakenAmbiguousError, KrakenClient
+from app.kraken import (
+    KrakenAPIError, KrakenAmbiguousError, KrakenClient,
+    api_key_permission_gate_reasons,
+)
 from app.execution import OrderAuthority, OrderIntent
 from app.history_sync import history_sources_ready, sync_history_source
 from app.market import executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
@@ -204,35 +207,46 @@ class TraderRuntime:
                     cycle_id=cycle_id,
                     **key_assessment,
                 )
-                api_permission_gaps = []
-                if not key_assessment["ready_for_account_reconciliation"]:
-                    if key_assessment["missing_required_query_permissions"]:
-                        api_permission_gaps.append("REQUIRED_QUERY_PERMISSION_MISSING")
-                    if key_assessment["withdrawal_permissions_present"]:
-                        api_permission_gaps.append("WITHDRAWAL_PERMISSION_PRESENT")
-                    if key_assessment["api_key_expired_or_expiry_unknown"]:
-                        api_permission_gaps.append("API_KEY_EXPIRED_OR_EXPIRY_UNKNOWN")
-                    if key_assessment["historical_query_window_restricted"]:
-                        api_permission_gaps.append("API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED")
-                    if not api_permission_gaps:
-                        api_permission_gaps.append("API_KEY_METADATA_INCOMPLETE")
-                if self.settings.validate_shadow_orders and (
-                    "modify-trades" not in key_assessment["permissions"]
-                ):
-                    api_permission_gaps.append("SHADOW_ORDER_VALIDATION_PERMISSION_MISSING")
-                if self.settings.live_requested and key_assessment[
-                    "missing_order_write_permissions"
-                ]:
-                    api_permission_gaps.append("LIVE_ORDER_PERMISSIONS_MISSING")
+                api_permission_gaps = api_key_permission_gate_reasons(
+                    key_assessment,
+                    validate_shadow_orders=self.settings.validate_shadow_orders,
+                    live_requested=self.settings.live_requested,
+                )
                 api_permissions_ready = not api_permission_gaps
                 if not api_permissions_ready:
+                    private_read_access_invalid = any(
+                        reason in api_permission_gaps
+                        for reason in (
+                            "REQUIRED_QUERY_PERMISSION_MISSING",
+                            "API_KEY_EXPIRED_OR_EXPIRY_UNKNOWN",
+                            "API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED",
+                            "API_KEY_METADATA_INCOMPLETE",
+                            "API_KEY_PERMISSIONS_UNKNOWN",
+                        )
+                    )
                     self.audit.emit(
                         "API_KEY_PERMISSION_GATE_BLOCKED",
                         cycle_id=cycle_id,
                         reasons=api_permission_gaps,
-                        existing_position_management_continues=True,
-                        operator_action="Correct API key scopes or history window; next cycle rechecks automatically.",
+                        existing_position_management_continues=not private_read_access_invalid,
+                        operator_action=(
+                            "Correct API key scopes or history window; next cycle rechecks automatically."
+                        ),
                     )
+                    if private_read_access_invalid:
+                        # Do not repeatedly call known-forbidden private endpoints and turn a
+                        # recoverable configuration issue into a permanent KRAKEN_API breaker.
+                        # Without reliable private reads, positions cannot be managed safely.
+                        result = {
+                            "cycle_id": cycle_id,
+                            "status": "BLOCKED",
+                            "reason": "API_KEY_PRIVATE_READ_ACCESS_INVALID",
+                            "permission_gaps": api_permission_gaps,
+                            "real_orders_sent": 0,
+                        }
+                        self.persistence.record_event("CYCLE_SUMMARY", result)
+                        self.audit.emit("CYCLE_SUMMARY", **result)
+                        return result
                 history_summaries=[]
                 for history_source in ("TRADES", "LEDGERS", "CLOSED_ORDERS"):
                     history_summary=sync_history_source(
