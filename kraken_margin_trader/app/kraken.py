@@ -62,6 +62,37 @@ def _nonnegative_epoch(value: Any) -> int | None:
     return epoch if epoch >= 0 else None
 
 
+def api_key_permission_gate_reasons(
+    assessment: dict[str, Any],
+    *,
+    validate_shadow_orders: bool = False,
+    live_requested: bool = False,
+) -> list[str]:
+    """Evaluate whether observed key scopes permit this runtime's requested behavior."""
+    reasons: list[str] = []
+    if assessment.get("missing_required_query_permissions"):
+        reasons.append("REQUIRED_QUERY_PERMISSION_MISSING")
+    if assessment.get("withdrawal_permissions_present"):
+        reasons.append("WITHDRAWAL_PERMISSION_PRESENT")
+    if assessment.get("api_key_expired_or_expiry_unknown"):
+        reasons.append("API_KEY_EXPIRED_OR_EXPIRY_UNKNOWN")
+    if assessment.get("historical_query_window_restricted"):
+        reasons.append("API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED")
+    if assessment.get("api_key_metadata_complete") is not True:
+        reasons.append("API_KEY_METADATA_INCOMPLETE")
+    permissions = assessment.get("permissions")
+    if not isinstance(permissions, list):
+        permissions = []
+        reasons.append("API_KEY_PERMISSIONS_UNKNOWN")
+    if validate_shadow_orders and "modify-trades" not in permissions:
+        reasons.append("SHADOW_ORDER_VALIDATION_PERMISSION_MISSING")
+    if live_requested:
+        missing_write = assessment.get("missing_order_write_permissions")
+        if not isinstance(missing_write, list) or missing_write:
+            reasons.append("LIVE_ORDER_PERMISSIONS_MISSING")
+    return list(dict.fromkeys(reasons))
+
+
 def assess_api_key_info(
     response: dict[str, Any], *, now_epoch: int | None = None
 ) -> dict[str, Any]:
