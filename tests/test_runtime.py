@@ -354,7 +354,7 @@ def test_validate_shadow_order_calls_central_authority_with_validate_only(monkey
 
 
 
-def test_runtime_blocks_private_calls_when_key_cannot_query_complete_history(monkeypatch):
+def test_runtime_keeps_current_position_reads_when_key_history_window_is_restricted(monkeypatch):
     import json
 
     import app.runtime as runtime_module
@@ -385,7 +385,7 @@ def test_runtime_blocks_private_calls_when_key_cannot_query_complete_history(mon
     class FakeClient:
         def __init__(self):
             self.permission_checks = 0
-            self.private_snapshot_calls = 0
+            self.snapshot_options = []
 
         def public(self, method, params=None):
             if method == "SystemStatus":
@@ -400,9 +400,14 @@ def test_runtime_blocks_private_calls_when_key_cannot_query_complete_history(mon
             self.permission_checks += 1
             return key_assessment
 
-        def account_snapshot(self):
-            self.private_snapshot_calls += 1
-            raise AssertionError("unsafe account snapshot must not be fetched")
+        def account_snapshot(self, *, include_closed_orders=True):
+            self.snapshot_options.append(include_closed_orders)
+            snapshot = account_snapshot({})
+            snapshot["closed_orders"] = {"closed": {}} if include_closed_orders else None
+            return snapshot
+
+        def trade_volume(self, pairs):
+            raise AssertionError("trade volume must be skipped while history evidence is untrusted")
 
     client = FakeClient()
     runtime.client = client
@@ -411,14 +416,15 @@ def test_runtime_blocks_private_calls_when_key_cannot_query_complete_history(mon
 
     result = runtime.cycle()
 
-    assert result["status"] == "BLOCKED"
-    assert result["reason"] == "API_KEY_PRIVATE_READ_ACCESS_INVALID"
-    assert result["permission_gaps"] == ["API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED"]
+    assert result["status"] == "OK"
     assert client.permission_checks == 1
-    assert client.private_snapshot_calls == 0
+    assert client.snapshot_options == [False]
     assert db.circuit_breakers() == []
     logs = audit.stream.getvalue()
     assert "API_KEY_PERMISSION_GATE_BLOCKED" in logs
+    assert "KRAKEN_HISTORY_SYNC_SKIPPED" in logs
+    assert "ORDER_RECONCILIATION_SKIPPED_HISTORY_UNAVAILABLE" in logs
+    assert "API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED" in logs
     assert "never-log-this" not in logs
     cycle_summaries = [
         json.loads(line) for line in logs.splitlines()
