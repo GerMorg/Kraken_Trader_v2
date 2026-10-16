@@ -235,3 +235,20 @@ def replay_orderbook(data, snapshots, *, leverage, funding=None):
         max_holding_bars=4,
         max_book_age_seconds=60,
     )
+
+
+def test_ohlcv_replay_never_closes_a_trade_on_its_entry_bar():
+    data = bars()
+    costs = BacktestCosts(
+        D("26"),
+        D("8"),
+        D("5"),
+        D("0"),
+        D("0"),
+        holding_hours=4,
+        leverage=1,
+    )
+    trades = simulate_trend_trades(data, costs)
+
+    assert trades
+    assert all(trade.entry_time < trade.exit_time for trade in trades)
