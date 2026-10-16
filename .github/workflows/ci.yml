@@ -62,5 +62,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -f kraken_margin_trader/Dockerfile -t kraken-trader-v2:ci kraken_margin_trader
-      # Verify the actual container entrypoint and app imports, not only that the image builds.
-      - run: docker run --rm --entrypoint /run.sh kraken-trader-v2:ci --healthcheck
+      # Run the image exactly as Home Assistant should: do not override ENTRYPOINT.
+      # This validates the default image startup configuration, wrapper, and import.
+      - run: docker run --rm kraken-trader-v2:ci --healthcheck
