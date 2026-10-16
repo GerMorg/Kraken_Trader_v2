@@ -53,6 +53,24 @@ class Persistence:
                 CREATE TABLE IF NOT EXISTS ledger_events(ledger_id TEXT PRIMARY KEY,asset TEXT,amount TEXT,fee TEXT,event_type TEXT,ts TEXT,verified INTEGER NOT NULL,raw_json TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS tax_events(event_id TEXT PRIMARY KEY,ts TEXT NOT NULL,year INTEGER NOT NULL,event_type TEXT NOT NULL,asset TEXT,quote_asset TEXT,quantity TEXT,value_eur TEXT,fee_amount TEXT,fee_asset TEXT,source_ref TEXT,verified INTEGER NOT NULL,manual_review INTEGER NOT NULL,payload_json TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS tax_year_idx ON tax_events(year);
+                CREATE TABLE IF NOT EXISTS exchange_orders(
+                    order_id TEXT PRIMARY KEY,
+                    client_order_id TEXT,
+                    source TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    pair TEXT,
+                    side TEXT,
+                    order_type TEXT,
+                    volume TEXT,
+                    volume_executed TEXT,
+                    cost TEXT,
+                    fee TEXT,
+                    opened_at TEXT,
+                    closed_at TEXT,
+                    observed_at TEXT NOT NULL,
+                    raw_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS exchange_orders_client_id_idx ON exchange_orders(client_order_id);
                 CREATE TABLE IF NOT EXISTS history_sync_state(
                     source TEXT PRIMARY KEY,
                     start_epoch INTEGER NOT NULL,
@@ -66,7 +84,10 @@ class Persistence:
                 );
                 CREATE TABLE IF NOT EXISTS circuit_breakers(name TEXT PRIMARY KEY,active INTEGER NOT NULL,reason TEXT NOT NULL,ts TEXT NOT NULL,detail_json TEXT NOT NULL);
             """)
-            self.connection.execute("INSERT OR IGNORE INTO schema_meta(key,value) VALUES('schema_version','1')")
+            self.connection.execute(
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','2') "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+            )
 
     def record_event(self, name: str, payload: dict[str, Any] | None = None) -> None:
         with self.lock:
@@ -144,6 +165,73 @@ class Persistence:
         states = ("INTENT_CREATED","PRECHECK_PASSED","VALIDATING","SUBMITTING","ACKNOWLEDGED","OPEN","PARTIALLY_FILLED","UNKNOWN_RECONCILING")
         with self.lock:
             rows = self.connection.execute("SELECT * FROM intents WHERE state IN (?,?,?,?,?,?,?,?) ORDER BY created_at", states).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_exchange_order(
+        self, order_id: str, order: dict[str, Any], *, source: str
+    ) -> bool:
+        """Persist an observed Kraken open/closed order without claiming reconciliation."""
+        normalized_source = source.upper()
+        if normalized_source not in {"OPEN", "CLOSED"}:
+            raise ValueError("EXCHANGE_ORDER_SOURCE_INVALID")
+        normalized_id = str(order_id).strip()
+        if not normalized_id or not isinstance(order, dict):
+            raise ValueError("EXCHANGE_ORDER_ID_OR_PAYLOAD_INVALID")
+        description = order.get("descr")
+        if not isinstance(description, dict):
+            description = {}
+        client_order_id = order.get("cl_ord_id") or description.get("cl_ord_id")
+        status = str(order.get("status", "unknown")).strip().lower() or "unknown"
+        observed_at = _now()
+        with self.lock:
+            self.connection.execute(
+                "INSERT INTO exchange_orders(order_id,client_order_id,source,status,pair,side,"
+                "order_type,volume,volume_executed,cost,fee,opened_at,closed_at,observed_at,raw_json) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(order_id) DO UPDATE SET "
+                "client_order_id=excluded.client_order_id,source=excluded.source,status=excluded.status,"
+                "pair=excluded.pair,side=excluded.side,order_type=excluded.order_type,"
+                "volume=excluded.volume,volume_executed=excluded.volume_executed,cost=excluded.cost,"
+                "fee=excluded.fee,opened_at=excluded.opened_at,closed_at=excluded.closed_at,"
+                "observed_at=excluded.observed_at,raw_json=excluded.raw_json",
+                (
+                    normalized_id,
+                    str(client_order_id) if client_order_id else None,
+                    normalized_source,
+                    status,
+                    description.get("pair") or order.get("pair"),
+                    description.get("type") or order.get("type"),
+                    description.get("ordertype"),
+                    str(order["vol"]) if order.get("vol") is not None else None,
+                    str(order["vol_exec"]) if order.get("vol_exec") is not None else None,
+                    str(order["cost"]) if order.get("cost") is not None else None,
+                    str(order["fee"]) if order.get("fee") is not None else None,
+                    str(order["opentm"]) if order.get("opentm") is not None else None,
+                    str(order["closetm"]) if order.get("closetm") is not None else None,
+                    observed_at,
+                    _json(order),
+                ),
+            )
+            self.connection.execute(
+                "INSERT INTO events(ts,name,payload_json) VALUES(?,?,?)",
+                (
+                    observed_at,
+                    "EXCHANGE_ORDER_OBSERVED",
+                    _json({
+                        "order_id": normalized_id,
+                        "client_order_id": client_order_id,
+                        "source": normalized_source,
+                        "status": status,
+                    }),
+                ),
+            )
+        return True
+
+    def exchange_orders(self) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT * FROM exchange_orders ORDER BY observed_at,order_id"
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def record_fill(self, trade: dict[str, Any]) -> bool:
