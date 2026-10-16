@@ -286,6 +286,35 @@ class Persistence:
                  trade.get("fee_asset"), str(trade.get("ts",_now())), int(bool(trade.get("verified",False))), _json(trade)))
             return cur.rowcount == 1
 
+    def upsert_fill_from_exchange(self, trade: dict[str, Any]) -> bool:
+        """Upsert authoritative Kraken trade fields while keeping duplicate imports idempotent."""
+        trade_id = str(trade.get("trade_id", "")).strip()
+        if not trade_id:
+            raise ValueError("FILL_TRADE_ID_REQUIRED")
+        raw_json = _json(trade)
+        columns = (
+            trade.get("order_id"), str(trade.get("pair", "")), str(trade.get("side", "")),
+            str(trade.get("volume", "0")), str(trade.get("price", "0")), trade.get("fee"),
+            trade.get("fee_asset"), str(trade.get("ts", _now())),
+            int(bool(trade.get("verified", False))), raw_json,
+        )
+        with self.lock:
+            existing = self.connection.execute(
+                "SELECT order_id,pair,side,volume,price,fee,fee_asset,ts,verified,raw_json "
+                "FROM fills WHERE trade_id=?", (trade_id,)
+            ).fetchone()
+            if existing is not None and tuple(existing) == columns:
+                return False
+            self.connection.execute(
+                "INSERT INTO fills(trade_id,order_id,pair,side,volume,price,fee,fee_asset,ts,verified,raw_json) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trade_id) DO UPDATE SET "
+                "order_id=excluded.order_id,pair=excluded.pair,side=excluded.side,"
+                "volume=excluded.volume,price=excluded.price,fee=excluded.fee,fee_asset=excluded.fee_asset,"
+                "ts=excluded.ts,verified=excluded.verified,raw_json=excluded.raw_json",
+                (trade_id, *columns),
+            )
+            return True
+
     def fills(self) -> list[dict[str, Any]]:
         with self.lock:
             rows = self.connection.execute(
@@ -309,6 +338,31 @@ class Persistence:
                 (ledger_id, entry.get("asset"), entry.get("amount"), entry.get("fee"), entry.get("event_type"),
                  entry.get("ts"), int(bool(entry.get("verified",False))), _json(entry)))
             return cur.rowcount == 1
+
+    def upsert_ledger_from_exchange(self, entry: dict[str, Any]) -> bool:
+        """Upsert authoritative Kraken ledger fields and preserve idempotent repeat syncs."""
+        ledger_id = str(entry.get("ledger_id", "")).strip()
+        if not ledger_id:
+            raise ValueError("LEDGER_ID_REQUIRED")
+        columns = (
+            entry.get("asset"), entry.get("amount"), entry.get("fee"), entry.get("event_type"),
+            entry.get("ts"), int(bool(entry.get("verified", False))), _json(entry),
+        )
+        with self.lock:
+            existing = self.connection.execute(
+                "SELECT asset,amount,fee,event_type,ts,verified,raw_json "
+                "FROM ledger_events WHERE ledger_id=?", (ledger_id,)
+            ).fetchone()
+            if existing is not None and tuple(existing) == columns:
+                return False
+            self.connection.execute(
+                "INSERT INTO ledger_events(ledger_id,asset,amount,fee,event_type,ts,verified,raw_json) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(ledger_id) DO UPDATE SET "
+                "asset=excluded.asset,amount=excluded.amount,fee=excluded.fee,event_type=excluded.event_type,"
+                "ts=excluded.ts,verified=excluded.verified,raw_json=excluded.raw_json",
+                (ledger_id, *columns),
+            )
+            return True
 
     def ledger_events(self) -> list[dict[str, Any]]:
         with self.lock:
@@ -335,6 +389,77 @@ class Persistence:
                  event.get("quantity"), event.get("value_eur"), event.get("fee_amount"), event.get("fee_asset"),
                  event.get("source_ref"), int(bool(event.get("verified",False))), int(bool(event.get("manual_review",True))), _json(event)))
             return cur.rowcount == 1
+
+    def upsert_imported_tax_event(self, event: dict[str, Any]) -> bool:
+        """Refresh exchange-owned tax evidence without blindly erasing prior enrichment.
+
+        If the economic facts change, prior EUR valuation and verification are invalidated.
+        If the exchange facts are unchanged, established FX/review enrichment is preserved.
+        """
+        event_id = str(event.get("event_id", "")).strip()
+        if not event_id:
+            raise ValueError("TAX_EVENT_ID_REQUIRED")
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT * FROM tax_events WHERE event_id=?", (event_id,)
+            ).fetchone()
+            if row is None:
+                return self.record_tax_event(event)
+
+            stored = dict(row)
+            existing_event = json.loads(str(stored["payload_json"]))
+            existing_payload = existing_event.get("payload", {})
+            incoming_payload = event.get("payload", {})
+            if not isinstance(existing_payload, dict):
+                existing_payload = {}
+            if not isinstance(incoming_payload, dict):
+                incoming_payload = {}
+
+            source_columns = (
+                "ts", "year", "event_type", "asset", "quote_asset", "quantity",
+                "fee_amount", "fee_asset", "source_ref",
+            )
+            source_changed = any(
+                str(stored.get(column)) != str(event.get(column))
+                for column in source_columns
+            )
+            economic_payload_keys = (
+                "pair", "side", "price", "margin_amount", "product_type", "related_ledger_ids",
+            )
+            source_changed = source_changed or any(
+                existing_payload.get(key) != incoming_payload.get(key)
+                for key in economic_payload_keys
+                if key in existing_payload or key in incoming_payload
+            )
+            merged = {**existing_event, **event}
+            merged["payload"] = {**existing_payload, **incoming_payload}
+            if source_changed:
+                merged["value_eur"] = None
+                merged["verified"] = False
+                merged["manual_review"] = True
+            else:
+                merged["value_eur"] = stored["value_eur"]
+                merged["verified"] = bool(stored["verified"])
+                merged["manual_review"] = bool(stored["manual_review"])
+
+            old_canonical = _json(existing_event)
+            new_canonical = _json(merged)
+            if old_canonical == new_canonical:
+                return False
+            self.connection.execute(
+                "UPDATE tax_events SET ts=?,year=?,event_type=?,asset=?,quote_asset=?,quantity=?,"
+                "value_eur=?,fee_amount=?,fee_asset=?,source_ref=?,verified=?,manual_review=?,payload_json=? "
+                "WHERE event_id=?",
+                (
+                    str(merged.get("ts", _now())), int(merged.get("year", 0)),
+                    str(merged.get("event_type", "UNCLASSIFIED")), merged.get("asset"),
+                    merged.get("quote_asset"), merged.get("quantity"), merged.get("value_eur"),
+                    merged.get("fee_amount"), merged.get("fee_asset"), merged.get("source_ref"),
+                    int(bool(merged.get("verified", False))), int(bool(merged.get("manual_review", True))),
+                    new_canonical, event_id,
+                ),
+            )
+            return True
 
     def update_tax_event(self, event: dict[str, Any]) -> bool:
         """Update a previously imported tax event after authoritative enrichment.
