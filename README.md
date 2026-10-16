@@ -2,7 +2,7 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.4
+## Aktueller Status — 0.1.5
 
 **Nur Shadow-/Research-Grundlage. Kein unbeaufsichtigter Live-Handel.** Die Ausführungsfreigabe ist zusätzlich zu den UI-Konfigurationsschaltern in Python fest auf `False` gesetzt. Das ist beabsichtigt: Kontenabgleich, tatsächliche Margin-Gebühren-/Fundingzuordnung, robuste Recovery, historischer Out-of-Sample-Backtest und Forward-Shadow-Test sind noch nicht vollständig nachgewiesen.
 
@@ -15,6 +15,12 @@ Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repos
 5. App starten und das App-Protokoll ansehen. Dauerhafte Ereignisse liegen unter `/data/logs/events.jsonl`; Datenbank unter `/data/kraken_trader.sqlite3`.
 
 Die Anwendung verwendet keine HA-Sensoren und kein Dashboard. Alle Zeitpunkte im Log sind UTC.
+
+## Position Management (v0.1.5)
+
+Der Shadow-Pfad wertet vorhandene, einzelne Kraken-Margin-Positionen jetzt pro Positions-ID aus. Standardmäßig wird bei einer **Brutto-Kursbewegung** von +3,5 % ein Teilverkauf von 50 % der **verbleibenden offenen Menge** vorgeschlagen; bei −3,0 % wird eine Risikoreduktion über die gesamte verbleibende Menge vorgeschlagen. Der Ausstiegskurs verwendet die relevante Ticker-Seite (Bid für Long-Exits, Ask für Short-Exits); Lotpräzision und Mindestmenge werden ohne Aufrunden eingehalten.
+
+Das sind zunächst protokollierte Shadow-Vorschläge, **keine** automatisch gesendeten Orders. Gebühren, Margin-Open-/Rollover-Finanzierung, Slippage jenseits der verwendeten Bid/Ask-Seite und Steuer-PnL sind nicht Teil dieser einfachen Kursbewegungs-Schwelle. Es gibt keine bestätigte exchange-native Stop-Order; bei HA-/Netzausfall wird daher kein Schutz durch diesen lokalen Plan garantiert. Das interne Live-Order-Gate bleibt geschlossen.
 
 ## Produktumfang
 
