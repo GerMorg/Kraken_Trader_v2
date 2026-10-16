@@ -124,3 +124,14 @@ def test_ticker_parser_rejects_missing_or_zero_24h_quote_turnover():
         },
     }
     assert parse_tickers(raw, [instrument]) == {}
+
+
+def test_quote_freshness_rejects_missing_future_nonfinite_and_stale_timestamps():
+    from app.market import quote_is_fresh
+
+    assert quote_is_fresh(100.0, 115.0, 15)
+    assert not quote_is_fresh(100.0, 115.1, 15)
+    assert not quote_is_fresh(None, 115.0, 15)
+    assert not quote_is_fresh(116.0, 115.0, 15)
+    assert not quote_is_fresh(float("nan"), 115.0, 15)
+    assert not quote_is_fresh(100.0, 115.0, 0)
