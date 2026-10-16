@@ -351,3 +351,79 @@ def test_validate_shadow_order_calls_central_authority_with_validate_only(monkey
     assert validate_only is True
     audit.close()
     db.close()
+
+
+
+def test_runtime_blocks_private_calls_when_key_cannot_query_complete_history(monkeypatch):
+    import json
+
+    import app.runtime as runtime_module
+    from app.kraken import assess_api_key_info
+    from app.models import Instrument
+
+    runtime, db, audit = make_runtime()
+    runtime.settings = Settings.from_mapping({
+        "kraken_api_key": "test-key",
+        "kraken_api_secret": "test-secret",
+        "tax_report_enabled": False,
+    })
+    key_assessment = assess_api_key_info({
+        "apiKey": "never-log-this",
+        "permissions": [
+            "query-funds", "query-open-trades", "query-closed-trades", "query-ledger",
+        ],
+        "validUntil": "0",
+        "queryFrom": "100",
+        "queryTo": "0",
+    }, now_epoch=200)
+
+    instrument = Instrument(
+        "XXBTZUSD", "XBTUSD", "XBT/USD", "XBT", "USD", "online",
+        D("0.0001"), 8, 1, (2, 3), (2, 3),
+    )
+
+    class FakeClient:
+        def __init__(self):
+            self.permission_checks = 0
+            self.private_snapshot_calls = 0
+
+        def public(self, method, params=None):
+            if method == "SystemStatus":
+                return {"status": "online"}
+            if method == "AssetPairs":
+                return {}
+            if method == "Ticker":
+                return {}
+            raise AssertionError(f"unexpected public endpoint: {method}")
+
+        def api_key_permission_assessment(self):
+            self.permission_checks += 1
+            return key_assessment
+
+        def account_snapshot(self):
+            self.private_snapshot_calls += 1
+            raise AssertionError("unsafe account snapshot must not be fetched")
+
+    client = FakeClient()
+    runtime.client = client
+    monkeypatch.setattr(runtime_module, "usd_crypto_universe", lambda _raw: [instrument])
+    monkeypatch.setattr(runtime_module, "parse_tickers", lambda *_args: {})
+
+    result = runtime.cycle()
+
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "API_KEY_PRIVATE_READ_ACCESS_INVALID"
+    assert result["permission_gaps"] == ["API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED"]
+    assert client.permission_checks == 1
+    assert client.private_snapshot_calls == 0
+    assert db.circuit_breakers() == []
+    logs = audit.stream.getvalue()
+    assert "API_KEY_PERMISSION_GATE_BLOCKED" in logs
+    assert "never-log-this" not in logs
+    cycle_summaries = [
+        json.loads(line) for line in logs.splitlines()
+        if line.strip() and '"name":"CYCLE_SUMMARY"' in line
+    ]
+    assert cycle_summaries
+    audit.close()
+    db.close()
