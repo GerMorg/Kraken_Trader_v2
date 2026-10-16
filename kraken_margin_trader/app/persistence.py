@@ -286,6 +286,19 @@ class Persistence:
                  trade.get("fee_asset"), str(trade.get("ts",_now())), int(bool(trade.get("verified",False))), _json(trade)))
             return cur.rowcount == 1
 
+    def fills(self) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT * FROM fills ORDER BY ts,trade_id"
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["raw"] = json.loads(str(item.pop("raw_json")))
+            item["verified"] = bool(item["verified"])
+            result.append(item)
+        return result
+
     def record_ledger(self, entry: dict[str, Any]) -> bool:
         ledger_id = str(entry.get("ledger_id", ""))
         if not ledger_id:
@@ -296,6 +309,19 @@ class Persistence:
                 (ledger_id, entry.get("asset"), entry.get("amount"), entry.get("fee"), entry.get("event_type"),
                  entry.get("ts"), int(bool(entry.get("verified",False))), _json(entry)))
             return cur.rowcount == 1
+
+    def ledger_events(self) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT * FROM ledger_events ORDER BY ts,ledger_id"
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["raw"] = json.loads(str(item.pop("raw_json")))
+            item["verified"] = bool(item["verified"])
+            result.append(item)
+        return result
 
     def record_tax_event(self, event: dict[str, Any]) -> bool:
         event_id = str(event.get("event_id", ""))
