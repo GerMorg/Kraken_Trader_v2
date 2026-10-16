@@ -13,6 +13,45 @@ REFRESH_OVERLAP_SECONDS = 3600
 REFRESH_INTERVAL_SECONDS = 300
 
 
+REQUIRED_HISTORY_SOURCES = ("TRADES", "LEDGERS", "CLOSED_ORDERS")
+
+
+def history_sources_ready(summaries: list[dict[str, Any]]) -> tuple[bool, list[str]]:
+    """Return whether all required exchange histories are fully imported for this cycle.
+
+    A successful API call or an initially completed backfill is insufficient while a
+    subsequent refresh is still incomplete. Unknown, duplicate, missing, or errored
+    sources fail closed. This gate is for new-risk decisions; existing positions still
+    require their independent risk-reduction and recovery handling.
+    """
+    by_source: dict[str, dict[str, Any]] = {}
+    gaps: list[str] = []
+    for summary in summaries:
+        source = str(summary.get("source", "")).strip().upper()
+        if source not in REQUIRED_HISTORY_SOURCES:
+            gaps.append("UNEXPECTED_HISTORY_SOURCE:" + (source or "EMPTY"))
+            continue
+        if source in by_source:
+            gaps.append("DUPLICATE_HISTORY_SOURCE:" + source)
+            continue
+        by_source[source] = summary
+
+    for source in REQUIRED_HISTORY_SOURCES:
+        summary = by_source.get(source)
+        if summary is None:
+            gaps.append("HISTORY_SOURCE_MISSING:" + source)
+            continue
+        if summary.get("initial_backfill_complete") is not True:
+            gaps.append("INITIAL_BACKFILL_INCOMPLETE:" + source)
+        if summary.get("generation_complete") is not True:
+            gaps.append("CURRENT_SYNC_INCOMPLETE:" + source)
+        error = summary.get("last_error")
+        if error:
+            gaps.append("HISTORY_SOURCE_ERROR:" + source + ":" + str(error)[:120])
+
+    return not gaps, gaps
+
+
 def _count(value: Any) -> int | None:
     try:
         result = int(value)
