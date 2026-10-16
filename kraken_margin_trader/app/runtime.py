@@ -173,6 +173,8 @@ class TraderRuntime:
         counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0}
         history_ready_for_entries = False
         history_evidence_gaps = ["ACCOUNT_HISTORY_NOT_CHECKED"]
+        api_permissions_ready = False
+        api_permission_gaps: list[str] = ["API_KEY_PERMISSION_CHECK_NOT_COMPLETED"]
         self.audit.emit("CYCLE_START",cycle_id=cycle_id,mode=self.settings.mode)
         try:
             self._refresh_tax_report()
@@ -202,56 +204,34 @@ class TraderRuntime:
                     cycle_id=cycle_id,
                     **key_assessment,
                 )
+                api_permission_gaps = []
                 if not key_assessment["ready_for_account_reconciliation"]:
                     if key_assessment["missing_required_query_permissions"]:
-                        permission_failure = "REQUIRED_QUERY_PERMISSION_MISSING"
-                    elif key_assessment["withdrawal_permissions_present"]:
-                        permission_failure = "WITHDRAWAL_PERMISSION_PRESENT"
-                    elif key_assessment["api_key_expired_or_expiry_unknown"]:
-                        permission_failure = "API_KEY_EXPIRED_OR_EXPIRY_UNKNOWN"
-                    elif key_assessment["historical_query_window_restricted"]:
-                        permission_failure = "API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED"
-                    else:
-                        permission_failure = "API_KEY_METADATA_INCOMPLETE"
-                    self.persistence.trip_circuit_breaker(
-                        "KRAKEN_API_KEY_PERMISSIONS",
-                        permission_failure,
-                        {
-                            "cycle_id": cycle_id,
-                            "missing_required_query_permissions": key_assessment[
-                                "missing_required_query_permissions"
-                            ],
-                            "withdrawal_permissions_present": key_assessment[
-                                "withdrawal_permissions_present"
-                            ],
-                            "api_key_expired_or_expiry_unknown": key_assessment[
-                                "api_key_expired_or_expiry_unknown"
-                            ],
-                            "historical_query_window_restricted": key_assessment[
-                                "historical_query_window_restricted"
-                            ],
-                        },
-                    )
+                        api_permission_gaps.append("REQUIRED_QUERY_PERMISSION_MISSING")
+                    if key_assessment["withdrawal_permissions_present"]:
+                        api_permission_gaps.append("WITHDRAWAL_PERMISSION_PRESENT")
+                    if key_assessment["api_key_expired_or_expiry_unknown"]:
+                        api_permission_gaps.append("API_KEY_EXPIRED_OR_EXPIRY_UNKNOWN")
+                    if key_assessment["historical_query_window_restricted"]:
+                        api_permission_gaps.append("API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED")
+                    if not api_permission_gaps:
+                        api_permission_gaps.append("API_KEY_METADATA_INCOMPLETE")
                 if self.settings.validate_shadow_orders and (
                     "modify-trades" not in key_assessment["permissions"]
                 ):
-                    self.persistence.trip_circuit_breaker(
-                        "KRAKEN_API_KEY_PERMISSIONS",
-                        "SHADOW_ORDER_VALIDATION_PERMISSION_MISSING",
-                        {"cycle_id": cycle_id},
-                    )
+                    api_permission_gaps.append("SHADOW_ORDER_VALIDATION_PERMISSION_MISSING")
                 if self.settings.live_requested and key_assessment[
                     "missing_order_write_permissions"
                 ]:
-                    self.persistence.trip_circuit_breaker(
-                        "KRAKEN_API_KEY_PERMISSIONS",
-                        "LIVE_ORDER_PERMISSIONS_MISSING",
-                        {
-                            "cycle_id": cycle_id,
-                            "missing_order_write_permissions": key_assessment[
-                                "missing_order_write_permissions"
-                            ],
-                        },
+                    api_permission_gaps.append("LIVE_ORDER_PERMISSIONS_MISSING")
+                api_permissions_ready = not api_permission_gaps
+                if not api_permissions_ready:
+                    self.audit.emit(
+                        "API_KEY_PERMISSION_GATE_BLOCKED",
+                        cycle_id=cycle_id,
+                        reasons=api_permission_gaps,
+                        existing_position_management_continues=True,
+                        operator_action="Correct API key scopes or history window; next cycle rechecks automatically.",
                     )
                 history_summaries=[]
                 for history_source in ("TRADES", "LEDGERS", "CLOSED_ORDERS"):
@@ -528,6 +508,18 @@ class TraderRuntime:
                     spread_bps=ticker.spread_bps)
                 if not signal.has_direction: continue
                 counts["signals"]+=1
+                if account is not None and not api_permissions_ready:
+                    counts["blocked"] += 1
+                    self.audit.emit(
+                        "NO_TRADE",
+                        cycle_id=cycle_id,
+                        pair=instrument.wsname,
+                        direction=signal.direction,
+                        reason="API_KEY_PERMISSION_GATE_BLOCKED",
+                        evidence_gaps=api_permission_gaps,
+                        no_new_position_risk=True,
+                    )
+                    continue
                 if account is not None and not history_ready_for_entries:
                     counts["blocked"] += 1
                     self.audit.emit(
