@@ -48,7 +48,10 @@ def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
         volume = D(str(row["vol"]))
         price = D(str(row["price"]))
         fee = D(str(row["fee"]))
+        margin_amount = D(str(row["margin"]))
     except (KeyError, ArithmeticError, TypeError, ValueError):
+        # The margin field is required to distinguish a cash-spot fill from
+        # a margin fill. Missing data must never be silently classified as spot.
         return False
     side = str(row.get("type", "")).lower()
     pair = str(row.get("pair", "")).strip()
@@ -56,6 +59,7 @@ def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
         stamp is None or not volume.is_finite() or volume <= 0
         or not price.is_finite() or price <= 0
         or not fee.is_finite() or fee < 0
+        or not margin_amount.is_finite() or margin_amount < 0
         or side not in {"buy", "sell"} or not pair or not row_id
     ):
         return False
@@ -68,11 +72,18 @@ def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
     })
     persistence.record_tax_event({
         "event_id": "TRADE:" + row_id, "ts": ts_iso, "year": year,
-        "event_type": "SPOT_TRADE_FILL", "asset": None, "quote_asset": None,
+        "event_type": "MARGIN_TRADE_FILL" if margin_amount > 0 else "SPOT_TRADE_FILL",
+        "asset": None, "quote_asset": None,
         "quantity": str(volume), "value_eur": None, "fee_amount": str(fee),
         "fee_asset": None, "source_ref": row_id, "verified": False,
         "manual_review": True,
-        "payload": {"pair": pair, "side": side, "price": str(price), "raw": row},
+        "payload": {
+            "pair": pair, "side": side, "price": str(price),
+            "margin_amount": str(margin_amount),
+            "product_type": "SPOT_MARGIN" if margin_amount > 0 else "CASH_SPOT",
+            "related_ledger_ids": row.get("ledgers", []),
+            "raw": row,
+        },
     })
     return True
 
