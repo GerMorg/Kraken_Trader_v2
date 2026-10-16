@@ -422,7 +422,7 @@ def test_runtime_blocks_private_calls_when_key_cannot_query_complete_history(mon
     assert "never-log-this" not in logs
     cycle_summaries = [
         json.loads(line) for line in logs.splitlines()
-        if line.strip() and '"name":"CYCLE_SUMMARY"' in line
+        if line.strip() and '"event":"CYCLE_SUMMARY"' in line
     ]
     assert cycle_summaries
     audit.close()
