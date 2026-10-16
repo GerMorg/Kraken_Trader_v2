@@ -17,7 +17,7 @@
 - Beobachtete offene und geschlossene Exchange-Orders werden anhand der Kraken-Order-ID mit Status, Client-ID, Menge, Kostenfeldern und Rohantwort persistent gespeichert und bei Folgeabfrage aktualisiert; dies ersetzt noch keine vollständige Order-/Fill-/Ledger-Reconciliation.
 - Malformed Order-Snapshot-Strukturen aktivieren einen persistenten Circuit Breaker und blockieren Risikoerhöhungen.
 - Eindeutige Ordermatches werden fail-closed gegen Status und ausgeführte Menge abgeglichen; fehlende abgesendete Orders, mehrdeutige Matches, Mengenwidersprüche und unbekannte offene Orders lösen einen Circuit Breaker aus. Der Mechanismus setzt die Gesamtportfolio-Reconciliation nicht auf erfolgreich.
-- ClosedOrders wird zusätzlich als eigenständige Historienquelle mit persistiertem Offset, festem Abfragefenster, Count-/Shape-Prüfung und Wiederaufnahme über begrenzte Seitenbudgets synchronisiert; ein fehlgeschlagener Backfill wird nicht als vollständig ausgewiesen.
+- TradesHistory und ClosedOrders wurden auf die offizielle Kraken-Cursor-Paginierung (`with_cursor`/`cursor.next`) umgestellt; opake Cursor werden persistent gespeichert und nach Neustart fortgesetzt. Cursor-Snapshots verlassen sich nicht auf den in Cursor-Modus nicht aussagekräftigen ClosedOrders-Count. Ledgers bleiben offsetbasiert; unvollständige Backfills werden nicht als vollständig ausgewiesen.
 - Trades-History-Fills werden anhand des Kraken-`margin`-Felds technisch zwischen Margin und Cash Spot getrennt. Fehlende oder ungültige Produktdaten lassen den History-Backfill fehlschlagen; verwandte Ledger-IDs bleiben im Roh-Payload erhalten.
 
 ## 0.1.3 — Mehrjährige Steuerexporte und Versionskonsistenz
@@ -32,7 +32,7 @@
 ## 0.1.2 — Historienimport und HA-Versionkonsistenz
 
 - Kraken Trades History und Ledgers werden mit persistierten Seiten-Cursorn schrittweise importiert und idempotent gespeichert.
-- Festes Zeitfenster je Sync-Generation, Offset-Fortsetzung und überlappendes inkrementelles Aktualisierungsfenster.
+- Festes Zeitfenster je Sync-Generation, Cursor-Fortsetzung für TradesHistory/ClosedOrders, Offset-Fortsetzung für Ledgers und überlappendes inkrementelles Aktualisierungsfenster.
 - Fehlerhafte Daten, fehlende Counts, unerwartete leere Seiten und veränderte Counts halten den Import explizit unvollständig.
 - Die Steuerbelegdateien werden nach dem Import aktualisiert; fehlende EUR-Bewertungen und vollständige Quellreconciliation bleiben als offene Punkte markiert.
 - HA-Manifest, Python-Paketversion und `pyproject.toml` werden im Validator dynamisch auf Übereinstimmung geprüft.
