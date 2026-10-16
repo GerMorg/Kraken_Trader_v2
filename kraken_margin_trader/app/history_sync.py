@@ -70,13 +70,13 @@ def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
     ):
         return False
     _, ts_iso, year = stamp
-    persistence.record_fill({
+    persistence.upsert_fill_from_exchange({
         "trade_id": row_id, "order_id": row.get("ordertxid"), "pair": pair,
         "side": side, "volume": str(volume), "price": str(price), "fee": str(fee),
         # Kraken trade history does not always identify the fee asset here; do not guess it.
         "fee_asset": None, "ts": ts_iso, "verified": True, "raw": row,
     })
-    persistence.record_tax_event({
+    persistence.upsert_imported_tax_event({
         "event_id": "TRADE:" + row_id, "ts": ts_iso, "year": year,
         "event_type": "MARGIN_TRADE_FILL" if margin_amount > 0 else "SPOT_TRADE_FILL",
         "asset": None, "quote_asset": None,
@@ -109,12 +109,12 @@ def _save_ledger(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
     ):
         return False
     _, ts_iso, year = stamp
-    persistence.record_ledger({
+    persistence.upsert_ledger_from_exchange({
         "ledger_id": row_id, "asset": asset, "amount": str(amount),
         "fee": str(fee), "event_type": ledger_type, "ts": ts_iso,
         "verified": True, "raw": row,
     })
-    persistence.record_tax_event({
+    persistence.upsert_imported_tax_event({
         "event_id": "LEDGER:" + row_id, "ts": ts_iso, "year": year,
         "event_type": "LEDGER_" + ledger_type.upper(), "asset": asset,
         "quote_asset": None, "quantity": str(amount), "value_eur": None,
