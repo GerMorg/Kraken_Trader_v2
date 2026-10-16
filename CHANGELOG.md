@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5 — Positions-Recovery und Shadow-Exit-Planung
+
+- Einzelne Kraken-OpenPositions-Lots werden ohne `consolidation=market` abgefragt, gespeichert und strenger auf Status, Mengen, Margin-, Bewertungs- und Zeitfelder validiert.
+- Persistente Account-/Positions-Snapshots werden mit Rohantworten gespeichert; das Snapshot-Alter stammt vom tatsächlichen Exchange-Abfragezeitpunkt.
+- Historienfills werden mit Order- und Ledger-Evidenz auf konkrete offene Positionen abgeglichen. Fehlende/mismatched Fill-/Order-/Ledger-Verknüpfungen erzeugen einen persistenten Circuit Breaker; der Gesamtportfolio-Abgleich bleibt ausdrücklich unvollständig.
+- Eine pro Position getrennte Shadow-Exit-Policy protokolliert +3,5-%-Teilgewinn auf 50 % der verbleibenden Menge und −3-%-Stop zur Risikoreduktion. Ausführung, echte Netto-PnL, Finanzierung und börsenseitiger Stop sind nicht freigegeben.
+- Positionsmanagement-Einstellungen sind begrenzt und über HA-Schema/Konfiguration getestet.
+- Settlement-Intents verlangen passende Position-, Währungs-, Mengen-, Snapshot- und Ledger-Evidenz.
+- Margin-Kosten, Reconciliation und kalibrierter Netto-Edge bleiben Freigabebedingungen; `LIVE_EXECUTION_RELEASED=False` bleibt unverändert.
+
 ## 0.1.4 — Margin-Gebührenbasis und Fail-Closed-Korrekturen
 
 - Margin-Eröffnungs- und Rollover-Kosten werden konservativ auf den vollen erweiterten Positionswert bezogen; die Hebelstufe reduziert die Gebührenbasis nicht künstlich.
