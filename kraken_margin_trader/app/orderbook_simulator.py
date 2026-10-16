@@ -252,9 +252,9 @@ class MarginCostEvidence:
 class OrderBookRoundTrip:
     """Realized quote-currency accounting for a book-walk entry and exit.
 
-    Net PnL is deliberately unknown for margin unless an evidenced financing
-    cost in the same quote currency is supplied. This avoids silently treating
-    an EEA USDC liability as USD or treating an unknown rollover cost as zero.
+    Net PnL is deliberately unknown for margin unless opening and rollover
+    costs have traceable evidence in the same quote currency. Evidence metadata
+    is retained; synthetic provenance labels are not authentication.
     """
 
     direction: Literal["LONG", "SHORT"]
