@@ -15,7 +15,7 @@ from app.kraken import (
     KrakenAPIError, KrakenAmbiguousError, KrakenClient,
     api_key_permission_gate_reasons,
 )
-from app.execution import OrderAuthority, OrderIntent
+from app.execution import LiveExecutionBlocked, OrderAuthority, OrderIntent
 from app.history_sync import history_sources_ready, sync_history_source
 from app.market import executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
 from app.models import Action, RiskSnapshot
@@ -62,9 +62,10 @@ class TraderRuntime:
         self.tax_reports=AustrianTaxReports()
         self._last_tax_report_signature: dict[int, tuple[str, ...]] = {}
 
-    def _validate_shadow_order(self, intent: dict[str, Any], instrument: Any) -> dict[str, Any]:
-        """Ask Kraken to validate a proposed order without placing a live order."""
-        order = OrderIntent(
+    @staticmethod
+    def _order_intent_from_mapping(intent: dict[str, Any]) -> OrderIntent:
+        """Convert an audited runtime intent into the typed execution contract."""
+        return OrderIntent(
             intent_id=str(intent["intent_id"]),
             decision_id=str(intent["decision_id"]),
             client_order_id=str(intent["client_order_id"]),
@@ -76,9 +77,12 @@ class TraderRuntime:
             leverage=int(intent["leverage"]) if intent.get("leverage") is not None else None,
             decision_evidence=dict(intent.get("decision_evidence", {})),
         )
+
+    def _validate_shadow_order(self, intent: dict[str, Any], instrument: Any) -> dict[str, Any]:
+        """Ask Kraken to validate a proposed order without placing a live order."""
         authority = OrderAuthority(self.client, self.persistence, self.settings, self.audit)
         return authority.execute(
-            order,
+            self._order_intent_from_mapping(intent),
             instrument,
             prechecks_passed=True,
             validate_only=True,
@@ -173,7 +177,7 @@ class TraderRuntime:
 
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
-        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0}
+        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0}
         history_ready_for_entries = False
         history_evidence_gaps = ["ACCOUNT_HISTORY_NOT_CHECKED"]
         api_permissions_ready = False
@@ -664,7 +668,43 @@ class TraderRuntime:
                     "product_type":"SPOT_MARGIN" if is_margin else "CASH_SPOT",
                     "decision_evidence":{"cycle_id":cycle_id,"net_edge_is_uncalibrated_proxy":True,
                     "estimated_cost_bps":str(cost.total_round_trip_bps),"margin_fee_source":"UNCONFIRMED" if is_margin else "NOT_APPLICABLE"}}
-                if self.settings.validate_shadow_orders:
+                if self.settings.live_requested:
+                    authority = OrderAuthority(
+                        self.client, self.persistence, self.settings, self.audit
+                    )
+                    try:
+                        submission = authority.execute(
+                            self._order_intent_from_mapping(intent),
+                            instrument,
+                            prechecks_passed=gate.allowed,
+                            validate_only=False,
+                        )
+                    except (LiveExecutionBlocked, ValueError) as exc:
+                        counts["blocked"] += 1
+                        self.audit.emit(
+                            "LIVE_ORDER_REJECTED_PRE_SUBMIT",
+                            cycle_id=cycle_id,
+                            pair=instrument.wsname,
+                            intent_id=intent["intent_id"],
+                            exception_type=type(exc).__name__,
+                            code=str(exc)[:200],
+                            real_order_submitted=False,
+                        )
+                        continue
+                    counts["intents"] += 1
+                    if submission.get("state") == "ACKNOWLEDGED":
+                        counts["real_orders_sent"] += 1
+                    self.audit.emit(
+                        "LIVE_ORDER_SUBMISSION_RESULT",
+                        cycle_id=cycle_id,
+                        pair=instrument.wsname,
+                        intent_id=intent["intent_id"],
+                        order_state=submission.get("state"),
+                        real_order_submitted=submission.get("state") == "ACKNOWLEDGED",
+                        fill_confirmed=False,
+                        result=submission.get("result", {}),
+                    )
+                elif self.settings.validate_shadow_orders:
                     try:
                         validation = self._validate_shadow_order(intent, instrument)
                     except KrakenAmbiguousError as exc:
