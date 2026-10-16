@@ -1,21 +1,53 @@
+# Least-privilege AppArmor profile for the Kraken Trader HA app.
+# Keep this profile name aligned with the active Home Assistant app slug.
 #include <tunables/global>
 profile hassio-addon-kraken_margin_trader flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
-  network inet stream,
-  network inet6 stream,
+  #include <abstractions/nameservice>
+
+  # Python executable and runtime libraries.
   /usr/local/bin/python rix,
   /usr/local/bin/python3* rix,
   /usr/** mr,
   /bin/** rix,
   /lib/** mr,
+
+  # Name resolution and CA trust.
   /etc/hosts r,
   /etc/resolv.conf r,
   /etc/ssl/certs/** r,
+
+  # Runtime pseudo-filesystems.
   /dev/null rw,
   /dev/urandom r,
   /proc/** r,
   /sys/** r,
+  /run/** rwk,
   /run.sh rix,
-  /data/** rwk,
   /tmp/** rwk,
+
+  # Application source is read-only at runtime. Explicitly allow directory
+  # traversal/listing and file reads: Unix mode bits alone cannot override
+  # AppArmor's mandatory access-control decisions.
+  /opt/ r,
+  /opt/ x,
+  /opt/kraken-trader/ r,
+  /opt/kraken-trader/ x,
+  /opt/kraken-trader/app/ r,
+  /opt/kraken-trader/app/ x,
+  /opt/kraken-trader/app/** r,
+
+  # Writable state and tax-report output are limited to declared HA mounts.
+  /data/** rwk,
+  /config/ rw,
+  /config/** rwk,
+
+  # Kraken HTTPS and DNS (IPv4/IPv6). No raw or packet sockets are granted.
+  network inet stream,
+  network inet dgram,
+  network inet6 stream,
+  network inet6 dgram,
+
+  # Permit the process lifecycle signals used for a clean supervisor shutdown.
+  signal,
 }
