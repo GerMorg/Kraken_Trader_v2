@@ -227,3 +227,48 @@ def test_position_snapshot_requires_finite_quantities_and_consistent_closed_volu
         assert stored["positions_shape_complete"] is False
         assert stored["reconciliation_complete"] is False
     db.close()
+
+
+def test_tax_event_can_be_explicitly_enriched_without_breaking_import_idempotency():
+    db = Persistence(":memory:")
+    source = {
+        "event_id": "TAX-ENRICH",
+        "ts": "2026-01-01T00:00:00+00:00",
+        "year": 2026,
+        "event_type": "SPOT_TRADE_FILL",
+        "asset": "XBT",
+        "quote_asset": "USD",
+        "quantity": "0.1",
+        "value_eur": None,
+        "fee_amount": "0.0001",
+        "fee_asset": "XBT",
+        "source_ref": "T1",
+        "verified": False,
+        "manual_review": True,
+        "payload": {"price_usd": "100000"},
+    }
+    assert db.record_tax_event(source)
+    assert not db.record_tax_event(source)
+
+    enriched = {
+        **source,
+        "value_eur": "9200.00",
+        "verified": True,
+        "manual_review": False,
+        "payload": {"price_usd": "100000", "fx_rate_source": "verified-test-fixture"},
+    }
+    assert db.update_tax_event(enriched)
+    assert not db.update_tax_event({**enriched, "event_id": "DOES-NOT-EXIST"})
+
+    row = db.tax_events_for_year(2026)[0]
+    assert row["event_id"] == "TAX-ENRICH"
+    assert row["value_eur"] == "9200.00"
+    assert bool(row["verified"]) is True
+    assert bool(row["manual_review"]) is False
+    assert row["payload"]["fx_rate_source"] == "verified-test-fixture"
+    # Re-importing the immutable raw source must not erase the enrichment.
+    assert not db.record_tax_event(source)
+    row_after_reimport = db.tax_events_for_year(2026)[0]
+    assert row_after_reimport["value_eur"] == "9200.00"
+    assert bool(row_after_reimport["verified"]) is True
+    db.close()
