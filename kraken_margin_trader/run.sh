@@ -5,7 +5,7 @@ APP_ROOT="/opt/kraken-trader"
 APP_MAIN="${APP_ROOT}/app/main.py"
 APP_INIT="${APP_ROOT}/app/__init__.py"
 
-echo "Kraken Trader container entrypoint: root=${APP_ROOT} cwd=$(pwd) python=$(command -v python || echo MISSING)" >&2
+echo "Kraken Trader container entrypoint: version=${APP_VERSION:-unknown} root=${APP_ROOT} cwd=$(pwd) python=$(command -v python || echo MISSING)" >&2
 
 # Give a clear diagnostic if an app image was built from the wrong context or
 # a stale/incomplete image was installed instead of failing with a vague import error.
