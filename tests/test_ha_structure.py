@@ -49,3 +49,17 @@ def test_manifest_uses_writable_app_config_and_docker_supervisor_labels():
     assert 'io.hass.version="${BUILD_VERSION}"' in dockerfile
     assert 'io.hass.type="app"' in dockerfile
     assert 'io.hass.arch="${BUILD_ARCH}"' in dockerfile
+
+
+
+def test_container_startup_has_explicit_module_path_and_build_smoke_test():
+    root = Path(__file__).resolve().parents[1]
+    dockerfile = (root / "kraken_margin_trader" / "Dockerfile").read_text(encoding="utf-8")
+    run_script = (root / "kraken_margin_trader" / "run.sh").read_text(encoding="utf-8")
+
+    assert "COPY app/ /opt/kraken-trader/app/" in dockerfile
+    assert "test -f /opt/kraken-trader/app/main.py" in dockerfile
+    assert "import app.main" in dockerfile
+    assert "APP_MAIN=" in run_script and "app/main.py" in run_script
+    assert "PYTHONPATH=" in run_script
+    assert 'exec python -m app.main "$@"' in run_script

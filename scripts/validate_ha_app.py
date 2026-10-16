@@ -29,6 +29,7 @@ try:
     package_tree = ast.parse(package_path.read_text(encoding="utf-8"))
     readme = readme_path.read_text(encoding="utf-8")
     dockerfile = docker_path.read_text(encoding="utf-8")
+    run_script = run_path.read_text(encoding="utf-8")
 except (OSError, yaml.YAMLError, tomllib.TOMLDecodeError, SyntaxError) as exc:
     print(f"manifest or package metadata parse failed: {type(exc).__name__}", file=sys.stderr)
     raise SystemExit(1)
@@ -98,6 +99,17 @@ else:
         errors.append("Dockerfile BUILD_VERSION default must match config.yaml version")
     if not re.search(r"(?m)^ARG BUILD_ARCH=\S+\s*$", dockerfile):
         errors.append("Dockerfile BUILD_ARCH argument is required")
+
+    if "COPY app/ /opt/kraken-trader/app/" not in dockerfile:
+        errors.append("Dockerfile must copy the Python package into the configured app root")
+    if "import app.main" not in dockerfile:
+        errors.append("Dockerfile must smoke-test importing app.main during image build")
+    if "APP_MAIN=" not in run_script or "app/main.py" not in run_script:
+        errors.append("run.sh must validate the expected app.main path before startup")
+    if "PYTHONPATH=" not in run_script:
+        errors.append("run.sh must explicitly configure the Python package search path")
+    if 'exec python -m app.main "$@"' not in run_script:
+        errors.append("run.sh must execute app.main and forward command-line arguments")
 
 if not isinstance(repo, dict) or not repo.get("url"):
     errors.append("repository.yaml URL missing")
