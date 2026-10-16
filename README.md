@@ -2,9 +2,9 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.18
+## Aktueller Status — 0.1.19
 
-**Version 0.1.18 ergänzt gezielte AppArmor-Freigaben für den schreibgeschützten Anwendungscode, Python-Dateizugriffe, DNS/HTTPS und den schreibbaren Steuerreport-Pfad. CI kompiliert das Profil und testet den regulären Start unter einer unprivilegierten UID. Sicherer SHADOW-/Datenprüfungsmodus; nicht für Live-Handel freigegeben.** Es gibt keinen zusätzlichen Compile-Time-Freigabeschalter: `mode: LIVE`, `live_enabled: true` und `kill_switch: false` erlauben der zentralen Order Authority nur dann eine Übermittlung, wenn sämtliche Laufzeit-Gates bestanden sind. In dieser Version verhindern der unkalibrierte Strategie-Edge, unbekannte tägliche PnL-/Drawdown-Baselines, die noch unvollständige Gesamtportfolio-Reconciliation und unbestätigte Margin-Kosten weiterhin neue Risikoerhöhungen. Das bloße Umschalten der HA-Optionen wird daher derzeit keine reguläre Entry-Order freigeben. Die Installation dient zuerst dem sicheren Import und der Prüfung realer Account-/History-Daten; das ist keine Profitabilitäts- oder Live-Sicherheitsfreigabe.
+**Version 0.1.19 trennt aktuelle Kontostands-/Positionsabfragen von historischen Abfragen: unbekannte Ablauf-/History-Metadaten blockieren weiterhin neue Risikoerhöhungen und den Backfill, verhindern aber nicht mehr automatisch die aktuelle Positionsüberwachung. Historische Endpunkte werden bei unzuverlässigem Metadatenstatus übersprungen. Sicherer SHADOW-/Datenprüfungsmodus; nicht für Live-Handel freigegeben.** Es gibt keinen zusätzlichen Compile-Time-Freigabeschalter: `mode: LIVE`, `live_enabled: true` und `kill_switch: false` erlauben der zentralen Order Authority nur dann eine Übermittlung, wenn sämtliche Laufzeit-Gates bestanden sind. In dieser Version verhindern der unkalibrierte Strategie-Edge, unbekannte tägliche PnL-/Drawdown-Baselines, die noch unvollständige Gesamtportfolio-Reconciliation und unbestätigte Margin-Kosten weiterhin neue Risikoerhöhungen. Das bloße Umschalten der HA-Optionen wird daher derzeit keine reguläre Entry-Order freigeben. Die Installation dient zuerst dem sicheren Import und der Prüfung realer Account-/History-Daten; das ist keine Profitabilitäts- oder Live-Sicherheitsfreigabe.
 
 ## Installation in Home Assistant OS
 
@@ -16,7 +16,7 @@ Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repos
 
 Die Anwendung verwendet keine HA-Sensoren und kein Dashboard. Alle Zeitpunkte im Log sind UTC.
 
-## Daten- und Ausführungsintegrität (v0.1.18)
+## Daten- und Ausführungsintegrität (v0.1.19)
 
 Neue Risikoerhöhungen werden zusätzlich ausgesetzt, solange Trades-, Ledger- oder Closed-Orders-Historie fehlt, ein Backfill unvollständig ist oder ein Quellfehler vorliegt. Die bestehende Positionsüberwachung läuft weiter. Vor dem Backfill prüft `GetApiKeyInfo` die erforderlichen privaten Leserechte, Ablaufzeit und History-Zeitfenster, ohne API-Key-Werte zu protokollieren; bekannte Konfigurationsfehler werden zyklisch neu bewertet. Die öffentliche REST-API wird gedrosselt; frische Ask-/Bid-Quotes, valide Marktumsätze und unambiguous OHLC-Daten sind Pflicht für neue Kandidaten. Exchange-Order-Reconciliation prüft Richtung, Instrument und Sollmenge; unbekannte AddOrder-Antworten bleiben ungelöst statt als Ablehnung markiert zu werden. Diese Prüfungen ersetzen nicht die dokumentierten offenen Voll-Reconciliation- und Forward-Test-Gates.
 
