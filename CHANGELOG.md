@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.9 — Nachweisbare Margin-Kosten und konservative Teilfüllungsbehandlung
+
+- Margin-Kosten im Orderbuch-Replay werden nicht mehr als anonyme Summenzahl angenommen. Das neue `MarginCostEvidence` hält Eröffnungs- und Rolloverkosten getrennt, einschließlich Quote-Währung, Quelle, Quellen-ID, Zeitstempel und Qualitätskennzeichnung.
+- Eine fehlende Referenz für Rollover-Kosten (auch bei Betrag null), Währungsabweichung oder Rollover nach dem Exit wird zurückgewiesen. Herkunftsmetadaten werden bis zu den Replay-Trade-Ergebnissen weitergereicht; diese Metadaten authentifizieren die Quelle nicht automatisch.
+- Ein Einstieg mit nur teilweiser sichtbarer Ausführung wird im Szenario-Replay nicht als vollständiger Trade ausgegeben, solange der nicht ausgeführte Restauftrag bzw. seine Stornierung nicht simuliert wird.
+- OHLCV-Simulator und Orderbuch-Replay schließen keine Position auf demselben Zeitstempel wie ihren Einstieg; ein Regressionstest schützt diesen zeitlichen Guard.
+- EEA-/Margin-Dokumentation wurde erneut anhand der offiziellen Kraken-Dokumentation geprüft. Tatsächliche Kredit-, Gebühren-, USDC- und Ledger-Zuordnung ist im Runtimepfad weiterhin nicht vollständig integriert/verifiziert. Keine Live-Freigabe.
+
 ## 0.1.8 — Orderbuch-Replay und sicherheitsgerichtete Tests
 
 - Ergänzt einen deterministischen L2-Book-Walk für BUY/SELL mit Preispriorität, Limitpreisgrenzen, sichtbarer Tiefe, Participation-Cap, Teilfüllungen, Restmenge, VWAP, Spread-, Slippage- und Quote-Gebührenberechnung.
