@@ -209,6 +209,7 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
         "positions_checked": 0,
         "positions_matched_to_fills": 0,
         "opening_orders_matched": 0,
+        "opening_fills_aggregated": 0,
         "related_ledgers_checked": 0,
         "unmatched_position_fills": 0,
         "opening_order_mismatches": 0,
@@ -306,38 +307,51 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
                 {"position_txid": position_id, "order_txid": position_order_id, "pair": position_pair},
             )
             continue
-        if len(candidate_fills) != 1:
-            result["unmatched_position_fills"] += 1
-            persistence.trip_circuit_breaker(
-                "POSITION_FILL_RECONCILIATION",
-                "POSITION_OPENING_ORDER_HAS_AMBIGUOUS_FILLS",
-                {
-                    "position_txid": position_id,
-                    "order_txid": position_order_id,
-                    "candidate_trade_ids": [str(item.get("trade_id", "")) for item in candidate_fills],
-                },
+        normalized_fills: list[tuple[dict[str, Any], dict[str, Any], Decimal, Decimal | None]] = []
+        malformed_fill_evidence = False
+        for candidate in candidate_fills:
+            raw_fill_envelope = candidate.get("raw")
+            raw_fill = raw_fill_envelope.get("raw") if isinstance(raw_fill_envelope, dict) else None
+            candidate_volume = _decimal(candidate.get("volume"))
+            if not isinstance(raw_fill, dict):
+                malformed_fill_evidence = True
+                break
+            if candidate_volume is None or candidate_volume <= 0:
+                malformed_fill_evidence = True
+                break
+            normalized_fills.append(
+                (candidate, raw_fill, candidate_volume, _decimal(raw_fill.get("margin")))
             )
-            continue
-        fill = candidate_fills[0]
-
-        raw_fill_envelope = fill.get("raw")
-        raw_fill = raw_fill_envelope.get("raw") if isinstance(raw_fill_envelope, dict) else None
-        if not isinstance(raw_fill, dict):
+        if malformed_fill_evidence or len(normalized_fills) != len(candidate_fills):
             result["fill_field_mismatches"] += 1
             persistence.trip_circuit_breaker(
                 "POSITION_FILL_RECONCILIATION",
-                "FILL_RAW_EVIDENCE_MISSING",
-                {"position_txid": position_id},
+                "OPENING_FILL_EVIDENCE_INVALID",
+                {
+                    "position_txid": position_id,
+                    "trade_ids": [str(item.get("trade_id", "")) for item in candidate_fills],
+                },
             )
             continue
 
-        fill_order_id = str(fill.get("order_id") or "").strip()
-        if (
-            not position_order_id
-            or not fill_order_id
-            or position_order_id != fill_order_id
-            or position_order_id not in orders
-        ):
+        position_volume = _decimal(raw_position.get("vol"))
+        fill_volume = sum((item[2] for item in normalized_fills), D(0))
+        fill_order_ids = {str(item[0].get("order_id") or "").strip() for item in normalized_fills}
+        order_record = orders.get(position_order_id)
+        order_raw: dict[str, Any] = {}
+        if order_record is not None:
+            try:
+                decoded = json.loads(str(order_record.get("raw_json", "{}")))
+                if isinstance(decoded, dict):
+                    order_raw = decoded
+            except (json.JSONDecodeError, TypeError, ValueError):
+                order_raw = {}
+        order_identity_valid = (
+            position_order_id
+            and position_order_id in orders
+            and fill_order_ids == {position_order_id}
+        )
+        if not order_identity_valid:
             result["opening_order_mismatches"] += 1
             persistence.trip_circuit_breaker(
                 "POSITION_FILL_RECONCILIATION",
@@ -345,38 +359,61 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
                 {
                     "position_txid": position_id,
                     "position_order_txid": position_order_id or None,
-                    "fill_order_txid": fill_order_id or None,
+                    "fill_order_ids": sorted(fill_order_ids),
                     "opening_order_known": position_order_id in orders if position_order_id else False,
                 },
             )
         else:
-            result["opening_orders_matched"] += 1
+            order_volume = _decimal(order_raw.get("vol"))
+            order_executed = _decimal(order_raw.get("vol_exec"))
+            if (
+                order_volume is None or order_executed is None
+                or order_volume <= 0 or order_executed < 0
+                or order_executed > order_volume
+                or order_executed != fill_volume
+            ):
+                result["opening_order_mismatches"] += 1
+                persistence.trip_circuit_breaker(
+                    "POSITION_FILL_RECONCILIATION",
+                    "OPENING_ORDER_EXECUTED_VOLUME_MISMATCH",
+                    {
+                        "position_txid": position_id,
+                        "order_txid": position_order_id,
+                        "order_volume": str(order_volume) if order_volume is not None else None,
+                        "order_executed": str(order_executed) if order_executed is not None else None,
+                        "summed_fill_volume": str(fill_volume),
+                    },
+                )
+            else:
+                result["opening_orders_matched"] += 1
 
-        position_volume = _decimal(raw_position.get("vol"))
-        fill_volume = _decimal(fill.get("volume"))
-        fill_pair = str(fill.get("pair", "")).strip()
-        fill_side = str(fill.get("side", "")).strip().lower()
-        margin_value = _decimal(raw_fill.get("margin"))
+        fill_pairs = {str(item[0].get("pair", "")).strip() for item in normalized_fills}
+        fill_sides = {str(item[0].get("side", "")).strip().lower() for item in normalized_fills}
+        margin_values = [item[3] for item in normalized_fills]
         mismatches: list[str] = []
-        if position_volume is None or fill_volume is None or position_volume != fill_volume:
+        if position_volume is None or position_volume != fill_volume:
             mismatches.append("VOLUME")
-        if not position_pair or position_pair != fill_pair:
+        if position_pairs_invalid := (not position_pair or fill_pairs != {position_pair}):
             mismatches.append("PAIR")
-        if position_side not in {"buy", "sell"} or position_side != fill_side:
+        if position_side not in {"buy", "sell"} or fill_sides != {position_side}:
             mismatches.append("SIDE")
-        if margin_value is None or margin_value <= 0:
+        if any(value is None or value <= 0 for value in margin_values):
             mismatches.append("MARGIN_FUNDING_NOT_PROVEN")
         if mismatches:
             result["fill_field_mismatches"] += 1
             persistence.trip_circuit_breaker(
                 "POSITION_FILL_RECONCILIATION",
                 "POSITION_FILL_FIELDS_MISMATCH",
-                {"position_txid": position_id, "mismatches": mismatches},
+                {
+                    "position_txid": position_id,
+                    "mismatches": mismatches,
+                    "candidate_trade_ids": [str(item[0].get("trade_id", "")) for item in normalized_fills],
+                    "summed_fill_volume": str(fill_volume),
+                },
             )
             continue
 
         if position_volume is None:
-            # Explicit narrowing also keeps malformed persisted input fail-closed.
             result["fill_field_mismatches"] += 1
             persistence.trip_circuit_breaker(
                 "POSITION_FILL_RECONCILIATION",
@@ -385,6 +422,7 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
             )
             continue
         result["positions_matched_to_fills"] += 1
+        result["opening_fills_aggregated"] += len(normalized_fills)
         closed_volume = _decimal(raw_position.get("vol_closed"))
         if closed_volume is None or closed_volume < 0:
             result["closing_volume_unmapped"] += 1
@@ -394,9 +432,9 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
                 {"position_txid": position_id},
             )
         elif closed_volume > 0:
-            # Kraken identifies a position and its opening order, but does not
-            # unambiguously attribute every historical reducing fill to one lot
-            # when lots overlap. Never invent a FIFO allocation.
+            # Kraken exposes the position's closed volume but does not always
+            # provide a deterministic opening-lot-to-close-fill allocation. Do
+            # not claim lot-level close reconciliation where lots overlap.
             result["closing_volume_unmapped"] += 1
             persistence.trip_circuit_breaker(
                 "POSITION_FILL_RECONCILIATION",
@@ -408,33 +446,39 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
                     "remaining_volume": str(position_volume - closed_volume),
                 },
             )
-        related_ledgers = raw_fill.get("ledgers", [])
-        if related_ledgers is None:
-            related_ledgers = []
-        if not isinstance(related_ledgers, list):
-            result["missing_related_ledgers"] += 1
-            persistence.trip_circuit_breaker(
-                "POSITION_FILL_RECONCILIATION",
-                "TRADE_LEDGER_REFERENCE_SHAPE_INVALID",
-                {"position_txid": position_id},
-            )
-            continue
-        if margin_value is not None and margin_value > 0 and not related_ledgers:
-            result["missing_related_ledgers"] += 1
-            persistence.trip_circuit_breaker(
-                "POSITION_FILL_RECONCILIATION",
-                "MARGIN_POSITION_WITHOUT_RELATED_LEDGER_REFERENCES",
-                {"position_txid": position_id},
-            )
-        for ledger_id in related_ledgers:
-            result["related_ledgers_checked"] += 1
-            if str(ledger_id) not in ledgers:
+
+        for candidate, raw_fill, _candidate_volume, margin_value in normalized_fills:
+            related_ledgers = raw_fill.get("ledgers", [])
+            if related_ledgers is None:
+                related_ledgers = []
+            if not isinstance(related_ledgers, list):
                 result["missing_related_ledgers"] += 1
                 persistence.trip_circuit_breaker(
                     "POSITION_FILL_RECONCILIATION",
-                    "TRADE_REFERENCES_MISSING_LEDGER",
-                    {"position_txid": position_id, "trade_id": position_id, "ledger_id": str(ledger_id)},
+                    "TRADE_LEDGER_REFERENCE_SHAPE_INVALID",
+                    {"position_txid": position_id, "trade_id": candidate.get("trade_id")},
                 )
+                continue
+            if margin_value is not None and margin_value > 0 and not related_ledgers:
+                result["missing_related_ledgers"] += 1
+                persistence.trip_circuit_breaker(
+                    "POSITION_FILL_RECONCILIATION",
+                    "MARGIN_POSITION_WITHOUT_RELATED_LEDGER_REFERENCES",
+                    {"position_txid": position_id, "trade_id": candidate.get("trade_id")},
+                )
+            for ledger_id in related_ledgers:
+                result["related_ledgers_checked"] += 1
+                if str(ledger_id) not in ledgers:
+                    result["missing_related_ledgers"] += 1
+                    persistence.trip_circuit_breaker(
+                        "POSITION_FILL_RECONCILIATION",
+                        "TRADE_REFERENCES_MISSING_LEDGER",
+                        {
+                            "position_txid": position_id,
+                            "trade_id": str(candidate.get("trade_id", "")),
+                            "ledger_id": str(ledger_id),
+                        },
+                    )
 
     result["close_fill_reconciliation_complete"] = result["closing_volume_unmapped"] == 0
     complete = (
