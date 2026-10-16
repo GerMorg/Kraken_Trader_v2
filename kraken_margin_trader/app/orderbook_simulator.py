@@ -7,6 +7,7 @@ from typing import Literal
 D = Decimal
 OrderSide = Literal["BUY", "SELL"]
 ExecutionStatus = Literal["FILLED", "PARTIALLY_FILLED", "UNFILLED"]
+MarginCostQuality = Literal["EXCHANGE_VERIFIED", "HISTORICAL_SIMULATION", "RESEARCH_ESTIMATE"]
 
 
 @dataclass(frozen=True)
@@ -194,6 +195,60 @@ def simulate_order_book_execution(
 
 
 @dataclass(frozen=True)
+class MarginCostEvidence:
+    """Traceable opening and rollover costs for one simulated margin lot.
+
+    Zero rollover cost requires an explicit source record too; it must never
+    mean "not checked". This records provenance but does not itself prove that
+    an external source was authentic or complete.
+    """
+
+    quote_currency: str
+    opening_fee_quote: Decimal
+    opening_fee_source: str
+    opening_fee_evidence_id: str
+    opening_fee_timestamp: int
+    rollover_fee_quote: Decimal
+    rollover_fee_source: str
+    rollover_fee_evidence_id: str
+    rollover_fee_timestamp: int
+    quality: MarginCostQuality
+
+    def __post_init__(self) -> None:
+        if not self.quote_currency.strip():
+            raise ValueError("MARGIN_COST_QUOTE_CURRENCY_REQUIRED")
+        if (
+            not self.opening_fee_quote.is_finite()
+            or self.opening_fee_quote < 0
+            or not self.rollover_fee_quote.is_finite()
+            or self.rollover_fee_quote < 0
+        ):
+            raise ValueError("MARGIN_COST_AMOUNT_INVALID")
+        if (
+            not self.opening_fee_source.strip()
+            or not self.opening_fee_evidence_id.strip()
+            or not self.rollover_fee_source.strip()
+            or not self.rollover_fee_evidence_id.strip()
+        ):
+            raise ValueError("MARGIN_COST_EVIDENCE_REFERENCE_REQUIRED")
+        if (
+            self.opening_fee_timestamp <= 0
+            or self.rollover_fee_timestamp < self.opening_fee_timestamp
+        ):
+            raise ValueError("MARGIN_COST_EVIDENCE_TIME_INVALID")
+        if self.quality not in {
+            "EXCHANGE_VERIFIED",
+            "HISTORICAL_SIMULATION",
+            "RESEARCH_ESTIMATE",
+        }:
+            raise ValueError("MARGIN_COST_QUALITY_INVALID")
+
+    @property
+    def total_cost_quote(self) -> Decimal:
+        return self.opening_fee_quote + self.rollover_fee_quote
+
+
+@dataclass(frozen=True)
 class OrderBookRoundTrip:
     """Realized quote-currency accounting for a book-walk entry and exit.
 
@@ -215,7 +270,8 @@ class OrderBookRoundTrip:
     exit: OrderBookExecution | None
     gross_realized_pnl_quote: Decimal | None
     trading_fees_quote: Decimal
-    financing_cost_quote: Decimal | None
+    margin_cost_quote: Decimal | None
+    margin_cost_evidence_quality: MarginCostQuality | None
     net_realized_pnl_quote: Decimal | None
     entry_target_filled: bool
     quote_currency: str
@@ -231,15 +287,15 @@ def simulate_order_book_round_trip(
     exit_fee_bps: Decimal,
     quote_currency: str,
     is_margin: bool = False,
-    financing_cost_quote: Decimal | None = None,
+    margin_cost_evidence: MarginCostEvidence | None = None,
     max_level_participation: Decimal = D("1"),
 ) -> OrderBookRoundTrip:
     """Replay a long/short round trip against two chronological L2 snapshots.
 
-    financing_cost_quote must be an evidenced amount already expressed in
-    quote_currency. For margin, omitting it prevents net PnL from being
-    reported. EEA USDC financing must therefore be valued explicitly before
-    it can be combined with a USD quote PnL.
+    Margin positions require explicit opening-fee and rollover-fee evidence
+    denominated in the same quote currency. A missing record prevents net PnL
+    from being reported. The evidence IDs and quality are carried forward so
+    downstream research cannot mistake an estimate for a verified ledger cost.
     """
     if direction not in ("LONG", "SHORT"):
         raise ValueError("ROUND_TRIP_DIRECTION_INVALID")
@@ -250,12 +306,15 @@ def simulate_order_book_round_trip(
     normalized_quote = quote_currency.strip().upper()
     if not normalized_quote:
         raise ValueError("ROUND_TRIP_QUOTE_CURRENCY_REQUIRED")
-    if financing_cost_quote is not None and (
-        not financing_cost_quote.is_finite() or financing_cost_quote < 0
-    ):
-        raise ValueError("ROUND_TRIP_FINANCING_COST_INVALID")
-    if not is_margin and financing_cost_quote not in (None, D(0)):
+    if not is_margin and margin_cost_evidence is not None:
         raise ValueError("SPOT_ROUND_TRIP_CANNOT_HAVE_MARGIN_FINANCING")
+    if is_margin and margin_cost_evidence is not None:
+        if margin_cost_evidence.quote_currency.strip().upper() != normalized_quote:
+            raise ValueError("MARGIN_COST_QUOTE_CURRENCY_MISMATCH")
+        if margin_cost_evidence.opening_fee_timestamp < entry_book.timestamp:
+            raise ValueError("MARGIN_OPEN_FEE_PRECEDES_ENTRY")
+        if margin_cost_evidence.rollover_fee_timestamp > exit_book.timestamp:
+            raise ValueError("MARGIN_ROLLOVER_FEE_AFTER_EXIT")
 
     midpoint = (entry_book.bids[0].price + entry_book.asks[0].price) / D(2)
     target_quantity = requested_notional_quote / midpoint
@@ -272,8 +331,7 @@ def simulate_order_book_round_trip(
         return OrderBookRoundTrip(
             direction, "NOT_OPENED", requested_notional_quote, target_quantity,
             D(0), D(0), D(0), entry, None, None, D(0),
-            D(0),
-            None, False, normalized_quote,
+            D(0), None, None, False, normalized_quote,
         )
 
     exit_result = simulate_order_book_execution(
@@ -287,7 +345,8 @@ def simulate_order_book_round_trip(
     remaining_quantity = entry.filled_quantity - closed_quantity
     gross_pnl: Decimal | None = None
     trading_fees = D(0)
-    allocated_financing: Decimal | None = D(0)
+    allocated_margin_cost: Decimal | None = D(0)
+    margin_quality: MarginCostQuality | None = None
     net_pnl: Decimal | None = None
 
     if closed_quantity > 0 and entry.average_price is not None:
@@ -299,22 +358,25 @@ def simulate_order_book_round_trip(
         entry_fee_allocated = entry.fee_quote * closed_quantity / entry.filled_quantity
         trading_fees = entry_fee_allocated + exit_result.fee_quote
         if is_margin:
-            if financing_cost_quote is None:
-                allocated_financing = None
+            if margin_cost_evidence is None:
+                allocated_margin_cost = None
             else:
-                allocated_financing = (
-                    financing_cost_quote * closed_quantity / entry.filled_quantity
+                allocated_margin_cost = (
+                    margin_cost_evidence.total_cost_quote
+                    * closed_quantity
+                    / entry.filled_quantity
                 )
+                margin_quality = margin_cost_evidence.quality
         else:
-            allocated_financing = D(0)
-        if allocated_financing is not None:
-            net_pnl = gross_pnl - trading_fees - allocated_financing
+            allocated_margin_cost = D(0)
+        if allocated_margin_cost is not None:
+            net_pnl = gross_pnl - trading_fees - allocated_margin_cost
 
     if remaining_quantity > 0:
         status: Literal[
             "NOT_OPENED", "OPEN", "PARTIALLY_CLOSED", "CLOSED", "CLOSED_COST_INCOMPLETE"
         ] = "PARTIALLY_CLOSED" if closed_quantity > 0 else "OPEN"
-    elif is_margin and financing_cost_quote is None:
+    elif is_margin and margin_cost_evidence is None:
         status = "CLOSED_COST_INCOMPLETE"
     else:
         status = "CLOSED"
@@ -331,7 +393,8 @@ def simulate_order_book_round_trip(
         exit=exit_result,
         gross_realized_pnl_quote=gross_pnl,
         trading_fees_quote=trading_fees,
-        financing_cost_quote=allocated_financing,
+        margin_cost_quote=allocated_margin_cost,
+        margin_cost_evidence_quality=margin_quality,
         net_realized_pnl_quote=net_pnl,
         entry_target_filled=entry.complete,
         quote_currency=normalized_quote,
