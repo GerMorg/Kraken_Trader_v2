@@ -145,3 +145,21 @@ def test_add_order_invalid_json_response_is_marked_ambiguous(monkeypatch):
     )
     with pytest.raises(KrakenAmbiguousError, match="ADD_ORDER_RESPONSE_PARSE_OUTCOME_UNKNOWN"):
         client.private("AddOrder", {"pair": "XBTUSD", "type": "buy", "volume": "0.1"})
+
+
+def test_add_order_network_timeout_is_ambiguous(monkeypatch):
+    import base64
+    import pytest
+    from app.kraken import KrakenAmbiguousError, KrakenClient
+
+    def timeout(*args, **kwargs):
+        raise TimeoutError("simulated read timeout")
+
+    monkeypatch.setattr("app.kraken.urlopen", timeout)
+    client = KrakenClient(
+        "test-key",
+        base64.b64encode(b"test-secret").decode("ascii"),
+        nonce_provider=lambda: 123,
+    )
+    with pytest.raises(KrakenAmbiguousError, match="ADD_ORDER_NETWORK_OUTCOME_UNKNOWN"):
+        client.private("AddOrder", {"pair": "XBTUSD", "type": "buy", "volume": "0.1"})
