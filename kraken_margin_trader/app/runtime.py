@@ -182,6 +182,7 @@ class TraderRuntime:
         history_evidence_gaps = ["ACCOUNT_HISTORY_NOT_CHECKED"]
         api_permissions_ready = False
         api_permission_gaps: list[str] = ["API_KEY_PERMISSION_CHECK_NOT_COMPLETED"]
+        history_metadata_untrusted = False
         self.audit.emit("CYCLE_START",cycle_id=cycle_id,mode=self.settings.mode)
         try:
             self._refresh_tax_report()
@@ -246,10 +247,16 @@ class TraderRuntime:
                         reason in api_permission_gaps
                         for reason in (
                             "REQUIRED_QUERY_PERMISSION_MISSING",
+                            "API_KEY_PERMISSIONS_UNKNOWN",
+                            "API_KEY_ASSESSMENT_NOT_READY",
+                        )
+                    )
+                    history_metadata_untrusted = any(
+                        reason in api_permission_gaps
+                        for reason in (
                             "API_KEY_EXPIRED_OR_EXPIRY_UNKNOWN",
                             "API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED",
                             "API_KEY_METADATA_INCOMPLETE",
-                            "API_KEY_PERMISSIONS_UNKNOWN",
                         )
                     )
                     self.audit.emit(
@@ -276,21 +283,34 @@ class TraderRuntime:
                         self.audit.emit("CYCLE_SUMMARY", **result)
                         return result
                 history_summaries=[]
-                for history_source in ("TRADES", "LEDGERS", "CLOSED_ORDERS"):
-                    history_summary=sync_history_source(
-                        client=self.client,
-                        persistence=self.persistence,
-                        source=history_source,
-                    )
-                    history_summaries.append(history_summary)
+                if history_metadata_untrusted:
+                    history_ready_for_entries = False
+                    history_evidence_gaps = list(api_permission_gaps)
+                    history_evidence_gaps.append("ACCOUNT_HISTORY_SYNC_SKIPPED_UNTRUSTED_KEY_METADATA")
                     self.audit.emit(
-                        "KRAKEN_HISTORY_SYNC",
+                        "KRAKEN_HISTORY_SYNC_SKIPPED",
                         cycle_id=cycle_id,
-                        **history_summary,
+                        sources=["TRADES", "LEDGERS", "CLOSED_ORDERS"],
+                        reasons=api_permission_gaps,
+                        existing_position_monitoring_continues=True,
+                        new_risk_allowed=False,
                     )
-                history_ready_for_entries, history_evidence_gaps = history_sources_ready(
-                    history_summaries
-                )
+                else:
+                    for history_source in ("TRADES", "LEDGERS", "CLOSED_ORDERS"):
+                        history_summary=sync_history_source(
+                            client=self.client,
+                            persistence=self.persistence,
+                            source=history_source,
+                        )
+                        history_summaries.append(history_summary)
+                        self.audit.emit(
+                            "KRAKEN_HISTORY_SYNC",
+                            cycle_id=cycle_id,
+                            **history_summary,
+                        )
+                    history_ready_for_entries, history_evidence_gaps = history_sources_ready(
+                        history_summaries
+                    )
                 if not history_ready_for_entries:
                     self.audit.emit(
                         "NEW_RISK_BLOCKED_HISTORY_INCOMPLETE",
@@ -312,7 +332,9 @@ class TraderRuntime:
                 previous_account_snapshot = self.persistence.latest_account_snapshot()
                 # Fetch the account/position snapshot after history network calls so
                 # the risk gate uses a genuinely recent snapshot.
-                account = self.client.account_snapshot()
+                account = self.client.account_snapshot(
+                    include_closed_orders=not history_metadata_untrusted
+                )
                 persisted_snapshot = self.persistence.record_account_snapshot(account)
                 self.audit.emit(
                     "ACCOUNT_SNAPSHOT_PERSISTED",
@@ -338,6 +360,16 @@ class TraderRuntime:
                         "evidence_gaps": ["PREVIOUS_SNAPSHOT_TIMESTAMP_INVALID"],
                         "asset_results": [],
                     }
+                elif history_metadata_untrusted:
+                    # Do not call historical endpoints while queryFrom/queryTo or expiry
+                    # metadata is unknown. Use already imported ledger events but keep
+                    # reconciliation explicitly incomplete, which blocks new risk.
+                    wallet_reconciliation = reconcile_wallet_balance_deltas(
+                        previous_account_snapshot,
+                        account,
+                        self.persistence.ledger_events(),
+                        ledger_history_complete=False,
+                    )
                 else:
                     # A second, bounded ledger query after Balance() is needed: a
                     # pre-snapshot ledger query alone cannot cover movements that
@@ -392,7 +424,9 @@ class TraderRuntime:
                         "POSITION_SNAPSHOT_SHAPE_INVALID",
                         {"cycle_id": cycle_id, "snapshot_id": persisted_snapshot["snapshot_id"]},
                     )
-                if not all(item["initial_backfill_complete"] for item in history_summaries):
+                if not history_ready_for_entries or not all(
+                    item["initial_backfill_complete"] for item in history_summaries
+                ):
                     self.audit.emit(
                         "KRAKEN_HISTORY_BACKFILL_INCOMPLETE",
                         cycle_id=cycle_id,
@@ -426,8 +460,12 @@ class TraderRuntime:
                     )
                 rows = _open_position_rows(account["open_positions"])
                 open_orders = _exchange_order_rows(account.get("open_orders"), "open")
-                closed_orders = _exchange_order_rows(account.get("closed_orders"), "closed")
-                if open_orders is None or closed_orders is None:
+                closed_history_included = account.get("closed_orders") is not None
+                closed_orders = (
+                    _exchange_order_rows(account.get("closed_orders"), "closed")
+                    if closed_history_included else None
+                )
+                if open_orders is None or (closed_history_included and closed_orders is None):
                     self.persistence.trip_circuit_breaker(
                         "ORDER_SNAPSHOT", "ORDER_RESPONSE_SHAPE_INVALID",
                         {"cycle_id": cycle_id},
@@ -436,25 +474,38 @@ class TraderRuntime:
                         "EXCHANGE_ORDER_SNAPSHOT_INVALID",
                         cycle_id=cycle_id,
                         open_orders_valid=open_orders is not None,
-                        closed_orders_valid=closed_orders is not None,
+                        closed_orders_valid=(
+                            closed_orders is not None if closed_history_included else None
+                        ),
+                        closed_history_included=closed_history_included,
                     )
                 else:
                     for order_id, order in open_orders.items():
                         self.persistence.record_exchange_order(order_id, order, source="OPEN")
-                    for order_id, order in closed_orders.items():
-                        self.persistence.record_exchange_order(order_id, order, source="CLOSED")
-                    reconciliation = reconcile_order_intents(self.persistence)
-                    self.audit.emit(
-                        "ORDER_RECONCILIATION_SUMMARY",
-                        cycle_id=cycle_id,
-                        **reconciliation,
-                    )
-                    position_reconciliation = reconcile_positions_to_fills(self.persistence)
-                    self.audit.emit(
-                        "POSITION_FILL_RECONCILIATION_SUMMARY",
-                        cycle_id=cycle_id,
-                        **position_reconciliation,
-                    )
+                    if closed_history_included and closed_orders is not None:
+                        for order_id, order in closed_orders.items():
+                            self.persistence.record_exchange_order(order_id, order, source="CLOSED")
+                        reconciliation = reconcile_order_intents(self.persistence)
+                        self.audit.emit(
+                            "ORDER_RECONCILIATION_SUMMARY",
+                            cycle_id=cycle_id,
+                            **reconciliation,
+                        )
+                        position_reconciliation = reconcile_positions_to_fills(self.persistence)
+                        self.audit.emit(
+                            "POSITION_FILL_RECONCILIATION_SUMMARY",
+                            cycle_id=cycle_id,
+                            **position_reconciliation,
+                        )
+                    else:
+                        self.audit.emit(
+                            "ORDER_RECONCILIATION_SKIPPED_HISTORY_UNAVAILABLE",
+                            cycle_id=cycle_id,
+                            open_orders_recorded=True,
+                            closed_orders_included=False,
+                            existing_position_monitoring_continues=True,
+                            new_risk_allowed=False,
+                        )
                 self.persistence.record_event("ACCOUNT_SNAPSHOT_CAPTURED", {
                     "open_positions": len(rows),
                     "open_orders": len(open_orders) if open_orders is not None else None,
@@ -486,7 +537,10 @@ class TraderRuntime:
                         cycle_id=cycle_id,
                         **decision,
                     )
-                trade_volume=self.client.trade_volume([i.altname for i in candidates])
+                trade_volume = (
+                    self.client.trade_volume([i.altname for i in candidates])
+                    if api_permissions_ready and history_ready_for_entries else {}
+                )
             else:
                 self.audit.emit("ACCOUNT_UNAVAILABLE_PUBLIC_ONLY",reason="API_CREDENTIALS_NOT_CONFIGURED")
             for instrument in candidates:
