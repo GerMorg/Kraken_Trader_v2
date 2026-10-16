@@ -98,7 +98,6 @@ class Persistence:
                     margin TEXT,
                     value TEXT,
                     net TEXT,
-                    pnl TEXT,
                     opened_at TEXT,
                     rollover_time TEXT,
                     terms TEXT,
@@ -382,8 +381,8 @@ class Persistence:
                 for txid, row in normalized:
                     self.connection.execute(
                         "INSERT OR REPLACE INTO exchange_position_snapshots(snapshot_id,position_txid,pair,side,"
-                        "position_status,volume,volume_closed,cost,fee,margin,value,net,pnl,opened_at,"
-                        "rollover_time,terms,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "position_status,volume,volume_closed,cost,fee,margin,value,net,opened_at,"
+                        "rollover_time,terms,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             snapshot_id, txid, row.get("pair"), row.get("type"),
                             row.get("posstatus"), str(row["vol"]) if row.get("vol") is not None else None,
@@ -392,7 +391,6 @@ class Persistence:
                             str(row["fee"]) if row.get("fee") is not None else None,
                             str(row["margin"]) if row.get("margin") is not None else None,
                             str(row["value"]) if row.get("value") is not None else None,
-                            str(row["net"]) if row.get("net") is not None else None,
                             str(row["net"]) if row.get("net") is not None else None,
                             str(row["time"]) if row.get("time") is not None else None,
                             str(row["rollovertm"]) if row.get("rollovertm") is not None else None,
