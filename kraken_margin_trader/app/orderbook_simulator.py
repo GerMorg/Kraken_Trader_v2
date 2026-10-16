@@ -272,6 +272,8 @@ class OrderBookRoundTrip:
     trading_fees_quote: Decimal
     margin_cost_quote: Decimal | None
     margin_cost_evidence_quality: MarginCostQuality | None
+    margin_cost_evidence_ids: tuple[str, ...]
+    margin_cost_sources: tuple[str, ...]
     net_realized_pnl_quote: Decimal | None
     entry_target_filled: bool
     quote_currency: str
@@ -331,7 +333,7 @@ def simulate_order_book_round_trip(
         return OrderBookRoundTrip(
             direction, "NOT_OPENED", requested_notional_quote, target_quantity,
             D(0), D(0), D(0), entry, None, None, D(0),
-            D(0), None, None, False, normalized_quote,
+            D(0), None, (), (), None, False, normalized_quote,
         )
 
     exit_result = simulate_order_book_execution(
@@ -395,6 +397,22 @@ def simulate_order_book_round_trip(
         trading_fees_quote=trading_fees,
         margin_cost_quote=allocated_margin_cost,
         margin_cost_evidence_quality=margin_quality,
+        margin_cost_evidence_ids=(
+            (
+                margin_cost_evidence.opening_fee_evidence_id,
+                margin_cost_evidence.rollover_fee_evidence_id,
+            )
+            if margin_cost_evidence is not None
+            else ()
+        ),
+        margin_cost_sources=(
+            (
+                margin_cost_evidence.opening_fee_source,
+                margin_cost_evidence.rollover_fee_source,
+            )
+            if margin_cost_evidence is not None
+            else ()
+        ),
         net_realized_pnl_quote=net_pnl,
         entry_target_filled=entry.complete,
         quote_currency=normalized_quote,
