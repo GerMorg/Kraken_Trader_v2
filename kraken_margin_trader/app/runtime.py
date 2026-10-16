@@ -273,9 +273,13 @@ class TraderRuntime:
                     "product_type":"SPOT_MARGIN" if is_margin else "CASH_SPOT",
                     "decision_evidence":{"cycle_id":cycle_id,"net_edge_is_uncalibrated_proxy":True,
                     "estimated_cost_bps":str(cost.total_round_trip_bps),"margin_fee_source":"UNCONFIRMED" if is_margin else "NOT_APPLICABLE"}}
-                if self.persistence.create_intent(intent):
-                    counts["intents"]+=1
-                    self.audit.emit("SHADOW_INTENT_PERSISTED_NO_ORDER_SENT",**intent)
+                if self.persistence.create_intent(intent, initial_state="SHADOW_ONLY"):
+                    counts["intents"] += 1
+                    self.audit.emit(
+                        "SHADOW_INTENT_PERSISTED_NO_ORDER_SENT",
+                        state="SHADOW_ONLY",
+                        **intent,
+                    )
             result={"cycle_id":cycle_id,"status":"OK","duration_seconds":round(time.time()-started,3),
                 **counts,"mode":self.settings.mode,"real_orders_sent":0,
                 "note":"No live execution; account reconciliation and dynamic margin costs remain gates."}
