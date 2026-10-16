@@ -20,6 +20,10 @@ Das Profil erlaubt ausdrücklich Margin und Short-Handel als Designziel. Hebel e
 
 Konfigurationswerte dürfen diese Caps nur reduzieren, nicht vergrößern. Der 300-%-Entry-Floor ist eine interne Sicherheitsregel und **keine Aussage über Kr akens Liquidationsschwelle**. Werte für Equity, Tagesverlust und Drawdown müssen aus einem lückenlos rekonstruierten Kontostand samt externen Transfers stammen; die Basis dafür ist derzeit nicht vollständig implementiert, daher bleiben Entries gesperrt.
 
+## Verifizierte PnL-Baselines
+
+Tages-PnL und Drawdown werden nicht aus einem einzelnen TradeBalance-Snapshot abgeleitet. Sie benötigen eine abgestimmte Equity-Zeitreihe mit Trades, Gebühren, Margin-Finanzierung sowie Ein- und Auszahlungen. Solange diese Historie nicht nachgewiesen ist, sind beide Werte **unbekannt** und das Entry-Gate weist Risikoerhöhungen mit `DAILY_PNL_BASELINE_UNKNOWN` beziehungsweise `DRAWDOWN_BASELINE_UNKNOWN` zurück. Unbekannt wird niemals als 0 % interpretiert.
+
 ## Positionsgröße
 
 Die Implementierung schätzt das Risiko aus Stopabstand, Kurslückenpuffer und Kostenpuffer:
