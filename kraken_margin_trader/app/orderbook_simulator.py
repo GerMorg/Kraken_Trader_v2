@@ -378,7 +378,9 @@ def simulate_order_book_round_trip(
     margin_quality: MarginCostQuality | None = None
     net_pnl: Decimal | None = None
 
-    if closed_quantity > 0 and entry.average_price is not None:
+    if closed_quantity > 0:
+        if entry.average_price is None or exit_result.average_price is None:
+            raise ValueError("ROUND_TRIP_AVERAGE_PRICE_MISSING")
         entry_quote_for_closed = entry.average_price * closed_quantity
         if direction == "LONG":
             gross_pnl = exit_result.quote_amount - entry_quote_for_closed
