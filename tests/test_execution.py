@@ -4,7 +4,7 @@ import pytest
 
 from app.audit import AuditLogger
 from app.config import Settings
-from app.execution import LIVE_EXECUTION_RELEASED,LiveExecutionBlocked,OrderAuthority,OrderIntent,build_add_order_params
+from app.execution import LiveExecutionBlocked,OrderAuthority,OrderIntent,build_add_order_params
 from app.kraken import KrakenClient
 from app.models import Action,Instrument
 from app.persistence import Persistence
@@ -37,18 +37,72 @@ def test_settlement_requires_verified_currency_and_obligation():
     with pytest.raises(ValueError,match="SETTLEMENT_AMOUNT_NOT_VERIFIED"):
         build_add_order_params(intent,instrument(),validate_only=True)
 
-def test_live_submission_is_blocked_by_source_owned_gate():
-    assert LIVE_EXECUTION_RELEASED is False
-    db=Persistence(":memory:")
-    audit=AuditLogger(path="/definitely-invalid-root/events.jsonl",stream=io.StringIO())
-    intent=OrderIntent.create(decision_id="live-d",pair="XBTUSD",action=Action.OPEN_MARGIN_LONG,
-      side="LONG",volume=D("0.1"),product_type="SPOT_MARGIN",leverage=2)
-    authority=OrderAuthority(KrakenClient(),db,Settings.from_mapping({
-      "mode":"LIVE","live_enabled":True,"kill_switch":False}),audit)
-    with pytest.raises(LiveExecutionBlocked,match="INTERNAL_LIVE_RELEASE_GATE_CLOSED"):
-        authority.execute(intent,instrument(),prechecks_passed=True,validate_only=False)
-    assert db.intent_state(intent.intent_id)=="BLOCKED"
-    audit.close(); db.close()
+def test_live_submission_uses_explicit_operator_switches_without_hidden_release_constant():
+    db = Persistence(":memory:")
+    audit = AuditLogger(path="/definitely-invalid-root/events.jsonl", stream=io.StringIO())
+    client = KrakenClient()
+    calls = []
+    client.private = lambda method, params=None: calls.append((method, params)) or {"txid": ["O-LIVE-1"]}
+    intent = OrderIntent.create(
+        decision_id="live-d",
+        pair="XBTUSD",
+        action=Action.OPEN_MARGIN_LONG,
+        side="LONG",
+        volume=D("0.1"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+    )
+    authority = OrderAuthority(
+        client,
+        db,
+        Settings.from_mapping({"mode": "LIVE", "live_enabled": True, "kill_switch": False}),
+        audit,
+    )
+
+    result = authority.execute(intent, instrument(), prechecks_passed=True, validate_only=False)
+
+    assert result["state"] == "ACKNOWLEDGED"
+    assert db.intent_state(intent.intent_id) == "ACKNOWLEDGED"
+    assert calls == [("AddOrder", {
+        "ordertype": "market",
+        "type": "buy",
+        "volume": "0.1",
+        "pair": "XBTUSD",
+        "cl_ord_id": intent.client_order_id,
+        "validate": False,
+        "leverage": "2",
+    })]
+    audit.close()
+    db.close()
+
+
+def test_live_submission_still_respects_visible_kill_switch():
+    db = Persistence(":memory:")
+    audit = AuditLogger(path="/definitely-invalid-root/events.jsonl", stream=io.StringIO())
+    client = KrakenClient()
+    calls = []
+    client.private = lambda method, params=None: calls.append((method, params)) or {"txid": ["O-LIVE-2"]}
+    intent = OrderIntent.create(
+        decision_id="live-kill-switch",
+        pair="XBTUSD",
+        action=Action.OPEN_MARGIN_LONG,
+        side="LONG",
+        volume=D("0.1"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+    )
+    authority = OrderAuthority(
+        client,
+        db,
+        Settings.from_mapping({"mode": "LIVE", "live_enabled": True, "kill_switch": True}),
+        audit,
+    )
+    with pytest.raises(LiveExecutionBlocked, match="LIVE_SWITCH_OR_KILL_SWITCH"):
+        authority.execute(intent, instrument(), prechecks_passed=True, validate_only=False)
+    assert calls == []
+    assert db.intent_state(intent.intent_id) == "BLOCKED"
+    audit.close()
+    db.close()
 
 def test_validation_flag_is_not_an_execution_permission():
     intent=OrderIntent.create(decision_id="validate-d",pair="XBTUSD",action=Action.OPEN_SPOT_LONG,
