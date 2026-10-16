@@ -15,6 +15,7 @@ from app.history_sync import sync_history_source
 from app.market import parse_ohlc_rows, parse_tickers, usd_crypto_universe, volume_for_notional_usd
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
+from app.position_management import evaluate_position_exits
 from app.portfolio import aggregate_position_exposure
 from app.portfolio_reconciliation import reconcile_positions_to_fills
 from app.reconciliation import reconcile_order_intents
@@ -130,7 +131,7 @@ class TraderRuntime:
 
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
-        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0}
+        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0}
         self.audit.emit("CYCLE_START",cycle_id=cycle_id,mode=self.settings.mode)
         try:
             self._refresh_tax_report()
@@ -233,7 +234,28 @@ class TraderRuntime:
                     "reconciliation_complete": False,
                     "complete_for_entries": False,
                 })
-                snapshot=self._account_risk_snapshot(account)
+                snapshot = self._account_risk_snapshot(account)
+                exit_decisions = evaluate_position_exits(
+                    account["open_positions"],
+                    tickers,
+                    {item.pair_id: item for item in instruments},
+                    take_profit_pct=self.settings.position_take_profit_pct,
+                    take_profit_fraction=self.settings.position_take_profit_fraction,
+                    stop_loss_pct=self.settings.position_stop_loss_pct,
+                )
+                counts["position_exits_checked"] = len(exit_decisions)
+                for decision in exit_decisions:
+                    if decision.get("action") in {"REDUCE_LONG", "REDUCE_SHORT", "CLOSE_LONG", "CLOSE_SHORT"}:
+                        counts["position_reductions_recommended"] += 1
+                    self.persistence.record_event("POSITION_MANAGEMENT_DECISION", {
+                        "cycle_id": cycle_id,
+                        **decision,
+                    })
+                    self.audit.emit(
+                        "POSITION_MANAGEMENT_DECISION",
+                        cycle_id=cycle_id,
+                        **decision,
+                    )
                 trade_volume=self.client.trade_volume([i.altname for i in candidates])
             else:
                 self.audit.emit("ACCOUNT_UNAVAILABLE_PUBLIC_ONLY",reason="API_CREDENTIALS_NOT_CONFIGURED")
