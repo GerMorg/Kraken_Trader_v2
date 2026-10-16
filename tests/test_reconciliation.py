@@ -234,3 +234,26 @@ def test_reconciliation_rejects_exchange_order_volume_mismatch():
         for item in db.circuit_breakers()
     )
     db.close()
+
+
+def test_expected_order_side_mapping_covers_open_reduce_close_and_settlement_actions():
+    from app.reconciliation import _expected_order_side
+
+    cases = [
+        ("OPEN_SPOT_LONG", "LONG", "buy"),
+        ("OPEN_MARGIN_LONG", "LONG", "buy"),
+        ("OPEN_MARGIN_SHORT", "SHORT", "sell"),
+        ("INCREASE_LONG", "LONG", "buy"),
+        ("INCREASE_SHORT", "SHORT", "sell"),
+        ("REDUCE_LONG", "LONG", "sell"),
+        ("CLOSE_LONG", "LONG", "sell"),
+        ("REDUCE_SHORT", "SHORT", "buy"),
+        ("CLOSE_SHORT", "SHORT", "buy"),
+        ("SETTLE_MARGIN_POSITION", "LONG", "buy"),
+        ("SETTLE_MARGIN_POSITION", "SHORT", "sell"),
+    ]
+    for action, direction, expected in cases:
+        assert _expected_order_side({"action": action, "side": direction}) == expected
+
+    assert _expected_order_side({"action": "OPEN_MARGIN_LONG", "side": "SHORT"}) is None
+    assert _expected_order_side({"action": "UNKNOWN", "side": "LONG"}) is None
