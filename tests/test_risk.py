@@ -68,3 +68,14 @@ def test_position_size_rejects_non_finite_or_invalid_limits():
         gap_buffer_pct=D("1"),cost_bps=D("10"))==D(0)
     assert size_position_usd(equity_usd=D("1000"),stop_distance_pct=D("2"),
         gap_buffer_pct=D("1"),cost_bps=D("10"),leverage=0)==D(0)
+
+
+def test_unknown_daily_pnl_and_drawdown_baselines_fail_closed():
+    result = evaluate(
+        "LONG",
+        snapshot(daily_pnl_pct=None, drawdown_pct=None),
+        D("100"),
+    )
+    assert not result.allowed
+    assert "DAILY_PNL_BASELINE_UNKNOWN" in result.reasons
+    assert "DRAWDOWN_BASELINE_UNKNOWN" in result.reasons
