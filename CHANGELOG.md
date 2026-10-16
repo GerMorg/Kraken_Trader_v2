@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.16 — Paketdateien direkt bootstrappen und beim Build starten
+
+- Die Home-Assistant-Logs von 0.1.15 zeigten weiterhin `ModuleNotFoundError: No module named 'app'`, obwohl Python `/opt/kraken-trader` als `sys.path[0]` ausgab.
+- Der Entrypoint lädt `app` jetzt direkt über eine Python-Modulspezifikation aus `app/__init__.py`, legt dessen Paketpfad fest und lädt `app.main` aus der konkreten Datei. Dadurch wird die fehlschlagende Top-Level-Paketauflösung umgangen.
+- Der Bootstrap protokolliert Dateiexistenz, Verzeichnisinhalt und Lesbarkeit bei Fehlern.
+- Das Dockerfile führt `/run.sh --healthcheck` bereits während des Image-Builds aus. Der genaue Anwendungseinstieg wird damit nicht nur importiert, sondern tatsächlich gestartet.
+
 ## 0.1.15 — Python-Modulpfad im Prozess explizit setzen
 
 - Reagiert auf den bestätigten HA-Log von 0.1.14: Die Dateien wurden vom Shell-Wrapper gefunden, aber `python -m app.main` konnte `app` zur Laufzeit weiterhin nicht auflösen.
