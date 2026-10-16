@@ -76,7 +76,13 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
         persistence.record_event("POSITION_FILL_RECONCILIATION_SUMMARY", result)
         return result
 
-    fills = {str(item.get("trade_id", "")): item for item in persistence.fills()}
+    all_fills = persistence.fills()
+    fills_by_trade_id = {str(item.get("trade_id", "")): item for item in all_fills}
+    fills_by_order: dict[str, list[dict[str, Any]]] = {}
+    for fill_item in all_fills:
+        fill_order_id = str(fill_item.get("order_id") or "").strip()
+        if fill_order_id:
+            fills_by_order.setdefault(fill_order_id, []).append(fill_item)
     orders = {str(item.get("order_id", "")): item for item in persistence.exchange_orders()}
     ledgers = {str(item.get("ledger_id", "")) for item in persistence.ledger_events()}
 
@@ -93,15 +99,53 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
             )
             continue
 
-        fill = fills.get(position_id)
-        if fill is None:
+        position_order_id = str(raw_position.get("ordertxid", "")).strip()
+        position_pair = str(raw_position.get("pair", "")).strip()
+        position_side = str(raw_position.get("type", "")).strip().lower()
+
+        # The OpenPositions map key is a position transaction ID; Kraken exposes
+        # the originating order separately as ordertxid. Never assume the position
+        # key is a TradesHistory trade ID. Prefer a direct ID match only when the
+        # related order, pair and side independently confirm it.
+        direct_fill = fills_by_trade_id.get(position_id)
+        if direct_fill is not None and str(direct_fill.get("order_id") or "").strip() == position_order_id:
+            candidate_fills = [direct_fill]
+        else:
+            candidate_fills = [
+                item for item in fills_by_order.get(position_order_id, [])
+                if str(item.get("pair", "")).strip() == position_pair
+                and str(item.get("side", "")).strip().lower() == position_side
+            ]
+
+        if not position_order_id or not position_pair or position_side not in {"buy", "sell"}:
+            result["unmatched_position_fills"] += 1
+            persistence.trip_circuit_breaker(
+                "POSITION_FILL_RECONCILIATION",
+                "POSITION_OPENING_IDENTITY_INVALID",
+                {"position_txid": position_id, "order_txid": position_order_id or None},
+            )
+            continue
+        if not candidate_fills:
             result["unmatched_position_fills"] += 1
             persistence.trip_circuit_breaker(
                 "POSITION_FILL_RECONCILIATION",
                 "OPEN_POSITION_WITHOUT_MATCHING_TRADE_FILL",
-                {"position_txid": position_id, "pair": position.get("pair")},
+                {"position_txid": position_id, "order_txid": position_order_id, "pair": position_pair},
             )
             continue
+        if len(candidate_fills) != 1:
+            result["unmatched_position_fills"] += 1
+            persistence.trip_circuit_breaker(
+                "POSITION_FILL_RECONCILIATION",
+                "POSITION_OPENING_ORDER_HAS_AMBIGUOUS_FILLS",
+                {
+                    "position_txid": position_id,
+                    "order_txid": position_order_id,
+                    "candidate_trade_ids": [str(item.get("trade_id", "")) for item in candidate_fills],
+                },
+            )
+            continue
+        fill = candidate_fills[0]
 
         raw_fill_envelope = fill.get("raw")
         raw_fill = raw_fill_envelope.get("raw") if isinstance(raw_fill_envelope, dict) else None
@@ -114,7 +158,6 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
             )
             continue
 
-        position_order_id = str(raw_position.get("ordertxid", "")).strip()
         fill_order_id = str(fill.get("order_id") or "").strip()
         if (
             not position_order_id
@@ -138,9 +181,7 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
 
         position_volume = _decimal(raw_position.get("vol"))
         fill_volume = _decimal(fill.get("volume"))
-        position_pair = str(raw_position.get("pair", "")).strip()
         fill_pair = str(fill.get("pair", "")).strip()
-        position_side = str(raw_position.get("type", "")).strip().lower()
         fill_side = str(fill.get("side", "")).strip().lower()
         margin_value = _decimal(raw_fill.get("margin"))
         mismatches: list[str] = []
