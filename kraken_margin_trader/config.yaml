@@ -1,0 +1,72 @@
+name: Kraken Margin Trader
+version: 0.1.12
+slug: kraken_margin_trader
+description: >-
+  Eigenständiger Kraken Spot- und Spot-Margin-Trader mit Auditspur.
+  Shadow-first; echte Orderübermittlung bleibt bis zur nachgewiesenen Freigabe gesperrt.
+url: https://github.com/GerMorg/Kraken_Trader_v2
+arch: [amd64, aarch64]
+startup: application
+boot: auto
+init: false
+homeassistant: "2026.4.0"
+hassio_api: false
+hassio_role: default
+apparmor: true
+map:
+  - type: app_config
+    read_only: false
+options:
+  kraken_api_key: ""
+  kraken_api_secret: ""
+  mode: SHADOW
+  live_enabled: false
+  kill_switch: true
+  validate_shadow_orders: false
+  cycle_interval_seconds: 300
+  max_market_candidates: 12
+  market_max_age_seconds: 120
+  expected_holding_hours: 8
+  strategy_fast_bps: 120
+  strategy_slow_bps: 180
+  position_take_profit_pct: 3.5
+  position_take_profit_fraction: 0.5
+  position_stop_loss_pct: 3.0
+  risk_per_trade_pct: 0.5
+  risk_max_position_pct: 20
+  risk_max_gross_pct: 80
+  risk_max_net_pct: 50
+  risk_max_margin_pct: 25
+  risk_max_leverage: 3
+  risk_max_open_positions: 4
+  risk_daily_loss_pct: 3
+  risk_max_drawdown_pct: 8
+  risk_cash_reserve_pct: 20
+  tax_report_enabled: true
+schema:
+  kraken_api_key: password
+  kraken_api_secret: password
+  mode: list(SHADOW|PAPER|LIVE)
+  live_enabled: bool
+  kill_switch: bool
+  validate_shadow_orders: bool
+  cycle_interval_seconds: int(60,3600)
+  max_market_candidates: int(1,30)
+  market_max_age_seconds: int(15,600)
+  expected_holding_hours: int(1,168)
+  strategy_fast_bps: int(25,1000)
+  strategy_slow_bps: int(50,2000)
+  position_take_profit_pct: float(0.5,20)
+  position_take_profit_fraction: float(0.1,0.9)
+  position_stop_loss_pct: float(0.5,20)
+  risk_per_trade_pct: float(0.1,0.5)
+  risk_max_position_pct: float(1,20)
+  risk_max_gross_pct: float(5,80)
+  risk_max_net_pct: float(5,50)
+  risk_max_margin_pct: float(5,25)
+  risk_max_leverage: int(1,3)
+  risk_max_open_positions: int(1,4)
+  risk_daily_loss_pct: float(0.5,3)
+  risk_max_drawdown_pct: float(1,8)
+  risk_cash_reserve_pct: float(20,80)
+  tax_report_enabled: bool
