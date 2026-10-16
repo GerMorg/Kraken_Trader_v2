@@ -21,6 +21,18 @@ def test_open_positions_parser_accepts_wrapped_shape_and_ignores_metadata():
     assert list(rows)==["TX1"]
 
 
+def test_exchange_order_parser_requires_valid_order_mapping():
+    from app.runtime import _exchange_order_rows
+
+    parsed = _exchange_order_rows({
+        "open": {"O1": {"status": "open"}, "O2": {"status": "pending"}},
+    }, "open")
+    assert parsed == {"O1": {"status": "open"}, "O2": {"status": "pending"}}
+    assert _exchange_order_rows({"open": []}, "open") is None
+    assert _exchange_order_rows({"open": {"": {"status": "open"}}}, "open") is None
+    assert _exchange_order_rows({"open": {"O1": None}}, "open") is None
+
+
 def make_runtime():
     db = Persistence(":memory:")
     audit = AuditLogger(path="/unwritable-test-path/events.jsonl", stream=io.StringIO())
