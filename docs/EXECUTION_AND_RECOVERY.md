@@ -13,7 +13,7 @@ Strategielogik darf nur Entscheidungen/Intents erstellen. Die zentrale `OrderAut
 - Danach erst nach Reconciliation: `OPEN`, `PARTIALLY_FILLED`, `FILLED`, `CANCELED` oder `EXPIRED`
 - `REJECTED`, `BLOCKED` und `UNKNOWN_RECONCILING` für Fehler-/Sperrzustände.
 
-Nicht alle Exchangezustände werden derzeit bereits automatisch aus Trades History, ClosedOrders und Ledgers in diese State Machine überführt. Es ist deshalb keine Behauptung einer vollständigen automatischen Recovery.
+Die aktuelle ClosedOrders-Abfrage umfasst nur den vom Standardaufruf gelieferten jüngsten Ausschnitt; vollständige ClosedOrders-Paginierung und automatische Zuordnung von Exchange-Orders/Trades zu lokalen Intents fehlen noch. Persistierte Order-Rohantworten sind Auditdaten, nicht der Nachweis eines vollständigen Kontenabgleichs. Nicht alle Exchangezustände werden automatisch aus Trades History, ClosedOrders und Ledgers in diese State Machine überführt.
 
 ## Submit-Timeout und Wiederholungen
 
@@ -21,7 +21,7 @@ Ein Netzwerkfehler bei `AddOrder` kann eintreten, nachdem Kraken die Order berei
 
 ## Persistenz
 
-SQLite mit WAL und `synchronous=FULL` speichert Nonce, Events, Kerzen, eindeutige Intent-/Decision-/Client-Order-IDs, Fill-IDs, Ledger-IDs, Steuerereignisse und Circuit Breaker. Die Tabellen machen Daten nicht automatisch vollständig oder korrekt: tatsächliche API-Reconciliation, atomare Reservierung über Prozesse, External-Trades und Crashfenster müssen separat getestet werden.
+SQLite mit WAL und `synchronous=FULL` speichert Nonce, Events, Kerzen, eindeutige Intent-/Decision-/Client-Order-IDs, beobachtete Börsenorders (`exchange_orders`, einschließlich Rohantwort und letzter Open-/Closed-Beobachtung), Fill-IDs, Ledger-IDs, Steuerereignisse und Circuit Breaker. Beobachtete Exchange-Orders werden bei erneutem Abruf anhand der Order-ID aktualisiert. Die Tabellen machen Daten nicht automatisch vollständig oder korrekt: tatsächliche API-Reconciliation, atomare Reservierung über Prozesse, External-Trades und Crashfenster müssen separat getestet werden.
 
 ## Recovery- und Integrationsnachweise vor Live
 
