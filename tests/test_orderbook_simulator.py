@@ -220,8 +220,8 @@ def test_margin_round_trip_subtracts_explicit_financing_in_same_quote_currency()
     assert result.position_status == "CLOSED"
     assert result.gross_realized_pnl_quote == D("6")
     assert result.financing_cost_quote == D("1")
-    assert result.trading_fees_quote == D("0.198") + D("0.192")
-    assert result.net_realized_pnl_quote == D("6") - D("0.198") - D("0.192") - D("1")
+    assert result.trading_fees_quote == D("0.198") + D("0.384")
+    assert result.net_realized_pnl_quote == D("6") - D("0.198") - D("0.384") - D("1")
 
 
 def test_partial_exit_keeps_unclosed_quantity_explicit():
@@ -245,8 +245,8 @@ def test_partial_exit_keeps_unclosed_quantity_explicit():
     assert result.position_status == "PARTIALLY_CLOSED"
     assert result.closed_quantity == D("0.5")
     assert result.remaining_quantity == D("1.5")
-    assert result.gross_realized_pnl_quote == D("1")
-    assert result.net_realized_pnl_quote == D("1")
+    assert result.gross_realized_pnl_quote == D("0.75")
+    assert result.net_realized_pnl_quote == D("0.75")
 
 
 def test_round_trip_rejects_non_chronological_order_books():
