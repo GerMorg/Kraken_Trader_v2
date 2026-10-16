@@ -13,7 +13,7 @@ from app.config import Settings
 from app.costs import estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
 from app.kraken import KrakenAPIError, KrakenClient
 from app.history_sync import sync_history_source
-from app.market import parse_ohlc_rows, parse_tickers, usd_crypto_universe, volume_for_notional_usd
+from app.market import executable_reference_price, parse_ohlc_rows, parse_tickers, usd_crypto_universe, volume_for_notional_usd
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.position_management import evaluate_position_exits
@@ -358,7 +358,18 @@ class TraderRuntime:
                     self.audit.emit("RISK_GATE_REJECTED",cycle_id=cycle_id,pair=instrument.wsname,
                                     direction=signal.direction,reasons=list(gate.reasons))
                     continue
-                volume=volume_for_notional_usd(proposed,ticker.last,instrument.lot_decimals)
+                execution_reference_price = executable_reference_price(ticker, signal.direction)
+                volume=volume_for_notional_usd(
+                    proposed, execution_reference_price, instrument.lot_decimals
+                )
+                if execution_reference_price <= 0:
+                    counts["blocked"]+=1
+                    self.audit.emit(
+                        "NO_TRADE", cycle_id=cycle_id, pair=instrument.wsname,
+                        reason="EXECUTABLE_REFERENCE_PRICE_INVALID",
+                        direction=signal.direction,
+                    )
+                    continue
                 if volume < instrument.order_min or volume <= 0:
                     counts["blocked"]+=1
                     self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,
