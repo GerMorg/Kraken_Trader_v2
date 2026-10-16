@@ -201,7 +201,31 @@ class TraderRuntime:
                 # GetApiKeyInfo is explicitly permissioned for none of the data scopes.
                 # Use an allowlisted assessment: the API response includes the API key
                 # itself and must never be copied to an audit event.
-                key_assessment = self.client.api_key_permission_assessment()
+                try:
+                    key_assessment = self.client.api_key_permission_assessment()
+                except KrakenAPIError as exc:
+                    # This preflight runs before any account/history endpoint and no order
+                    # can be sent. Keep known key/network preflight failures retryable:
+                    # a corrected key or recovered API must not be trapped by a stale
+                    # persistent generic API circuit breaker.
+                    result = {
+                        "cycle_id": cycle_id,
+                        "status": "BLOCKED",
+                        "reason": "API_KEY_PERMISSION_CHECK_FAILED",
+                        "permission_error_code": exc.code,
+                        "real_orders_sent": 0,
+                    }
+                    self.audit.emit(
+                        "API_KEY_PERMISSION_CHECK_FAILED",
+                        cycle_id=cycle_id,
+                        code=exc.code,
+                        entries_blocked=True,
+                        existing_position_management_continues=False,
+                        next_cycle_retries_preflight=True,
+                    )
+                    self.persistence.record_event("CYCLE_SUMMARY", result)
+                    self.audit.emit("CYCLE_SUMMARY", **result)
+                    return result
                 self.audit.emit(
                     "KRAKEN_API_KEY_PERMISSION_CHECK",
                     cycle_id=cycle_id,
