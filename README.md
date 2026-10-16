@@ -2,7 +2,7 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.8
+## Aktueller Status — 0.1.9
 
 **Nur Shadow-/Research-Grundlage. Kein unbeaufsichtigter Live-Handel.** Die Ausführungsfreigabe ist zusätzlich zu den UI-Konfigurationsschaltern in Python fest auf `False` gesetzt. Das ist beabsichtigt: Kontenabgleich, tatsächliche Margin-Gebühren-/Fundingzuordnung, robuste Recovery, historischer Out-of-Sample-Backtest und Forward-Shadow-Test sind noch nicht vollständig nachgewiesen.
 
@@ -16,7 +16,7 @@ Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repos
 
 Die Anwendung verwendet keine HA-Sensoren und kein Dashboard. Alle Zeitpunkte im Log sind UTC.
 
-## Daten- und Ausführungsintegrität (v0.1.8)
+## Daten- und Ausführungsintegrität (v0.1.9)
 
 Die öffentliche REST-API wird gedrosselt; frische Ask-/Bid-Quotes, valide Marktumsätze und unambiguous OHLC-Daten sind Pflicht für neue Kandidaten. Exchange-Order-Reconciliation prüft Richtung, Instrument und Sollmenge; unbekannte AddOrder-Antworten bleiben ungelöst statt als Ablehnung markiert zu werden. Diese Prüfungen ersetzen nicht die dokumentierten offenen Voll-Reconciliation- und Forward-Test-Gates.
 
@@ -37,6 +37,6 @@ Das sind zunächst protokollierte Shadow-Vorschläge, **keine** automatisch gese
 
 ## Wichtige Einschränkungen
 
-Die vorhandenen Signale sind Hypothesen, keine kalibrierten Wahrscheinlichkeiten. Kosten und geschätzte Marktrendite sind nicht als bewiesener Nettovorteil zu verstehen; eine positive unkalibrierte Edge-Schätzung kann die Risikofreigabe nicht passieren. Shadow-Kandidaten bleiben getrennt von ausführbaren Order-Intents. Unbekannte Gebühren, unvollständige Account-Snapshots oder ungeklärte Reconciliation müssen Trades blockieren. Zusätzlich zum OHLCV-Szenario-Modell existiert ein zeitgestempelter L2-Orderbuch-Replay für sichtbare Tiefe, VWAP, Teilfüllungen, Gebühren und explizite Margin-Finanzierung. Er ist weiter ein deterministisches Szenario-Modell: Es liegen keine validierten historischen L2-Daten vor, und Queue-Priorität, Börsenlatenz, Cancel-/Reject-Semantik sowie konto-/instrumentbezogene Funding-Ledger sind nicht vollständig abgebildet. Deshalb gibt es noch keinen belastbaren Out-of-Sample- oder Forward-Shadow-Nachweis. CI-Grün allein belegt keine Profitabilität und keine Sicherheit bei Ausfall.
+Die vorhandenen Signale sind Hypothesen, keine kalibrierten Wahrscheinlichkeiten. Kosten und geschätzte Marktrendite sind nicht als bewiesener Nettovorteil zu verstehen; eine positive unkalibrierte Edge-Schätzung kann die Risikofreigabe nicht passieren. Shadow-Kandidaten bleiben getrennt von ausführbaren Order-Intents. Unbekannte Gebühren, unvollständige Account-Snapshots oder ungeklärte Reconciliation müssen Trades blockieren. Der L2-Replay benötigt getrennte, nach Quellen-ID, Zeitstempel, Quote-Währung und Evidenzqualität dokumentierte Margin-Eröffnungs- und Rolloverkosten; ein teilweise gefüllter Einstieg ohne modellierte Stornierung des Restauftrags bleibt ungelöst. Zusätzlich zum OHLCV-Szenario-Modell existiert ein zeitgestempelter L2-Orderbuch-Replay für sichtbare Tiefe, VWAP, Teilfüllungen, Gebühren und explizite Margin-Finanzierung. Er ist weiter ein deterministisches Szenario-Modell: Es liegen keine validierten historischen L2-Daten vor, und Queue-Priorität, Börsenlatenz, Cancel-/Reject-Semantik sowie konto-/instrumentbezogene Funding-Ledger sind nicht vollständig abgebildet. Deshalb gibt es noch keinen belastbaren Out-of-Sample- oder Forward-Shadow-Nachweis. CI-Grün allein belegt keine Profitabilität und keine Sicherheit bei Ausfall.
 
 Siehe [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/MARGIN_OPERATIONS.md](docs/MARGIN_OPERATIONS.md) und [docs/EXECUTION_AND_RECOVERY.md](docs/EXECUTION_AND_RECOVERY.md).
