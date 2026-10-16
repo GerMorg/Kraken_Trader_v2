@@ -23,6 +23,60 @@ def _number(value: Any) -> Decimal | None:
     return result if result.is_finite() else None
 
 
+def _expected_order_side(intent: dict[str, Any]) -> str | None:
+    action = str(intent.get("action", "")).strip().upper()
+    direction = str(intent.get("side", "")).strip().upper()
+    if action in {"OPEN_SPOT_LONG", "OPEN_MARGIN_LONG", "INCREASE_LONG"}:
+        return "buy" if direction == "LONG" else None
+    if action in {"OPEN_MARGIN_SHORT", "INCREASE_SHORT"}:
+        return "sell" if direction == "SHORT" else None
+    if action in {"REDUCE_LONG", "CLOSE_LONG"}:
+        return "sell" if direction == "LONG" else None
+    if action in {"REDUCE_SHORT", "CLOSE_SHORT"}:
+        return "buy" if direction == "SHORT" else None
+    if action == "SETTLE_MARGIN_POSITION":
+        return "buy" if direction == "LONG" else "sell" if direction == "SHORT" else None
+    return None
+
+
+def _order_matches_intent(intent: dict[str, Any], raw_order: dict[str, Any],
+                          payload: dict[str, Any]) -> tuple[bool, str | None]:
+    """Verify exchange order identity before accepting its status transition."""
+    description = raw_order.get("descr")
+    description = description if isinstance(description, dict) else {}
+
+    expected_side = _expected_order_side(intent)
+    observed_side = str(description.get("type") or raw_order.get("type") or "").strip().lower()
+    if expected_side is None or observed_side != expected_side:
+        return False, "SIDE"
+
+    evidence = payload.get("decision_evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    aliases = evidence.get("instrument_pair_aliases")
+    if not isinstance(aliases, list) or not aliases:
+        aliases = [intent.get("pair")]
+    accepted_pairs = {
+        str(alias).strip().casefold()
+        for alias in aliases
+        if isinstance(alias, str) and alias.strip()
+    }
+    observed_pair = str(description.get("pair") or raw_order.get("pair") or "").strip().casefold()
+    if not observed_pair or observed_pair not in accepted_pairs:
+        return False, "PAIR"
+
+    expected_volume = _number(intent.get("volume"))
+    observed_volume = _number(raw_order.get("vol"))
+    if (
+        expected_volume is None
+        or expected_volume <= 0
+        or observed_volume is None
+        or observed_volume <= 0
+        or observed_volume != expected_volume
+    ):
+        return False, "ORDER_VOLUME"
+    return True, None
+
+
 def _target_state(order: dict[str, Any]) -> str | None:
     status = str(order.get("status", "")).strip().lower()
     if status not in {"open", "closed", "canceled", "expired", "rejected"}:
@@ -145,6 +199,28 @@ def reconcile_order_intents(persistence: Any) -> dict[str, Any]:
             raw_order = {}
         if not isinstance(raw_order, dict):
             raw_order = {}
+        identity_matches, identity_mismatch = _order_matches_intent(intent, raw_order, payload)
+        if not identity_matches:
+            stats["invalid_exchange_states"] += 1
+            persistence.trip_circuit_breaker(
+                "ORDER_RECONCILIATION",
+                "EXCHANGE_ORDER_DOES_NOT_MATCH_LOCAL_INTENT",
+                {
+                    "intent_id": intent.get("intent_id"),
+                    "order_id": order.get("order_id"),
+                    "mismatch": identity_mismatch,
+                    "expected_pair": intent.get("pair"),
+                    "expected_side": _expected_order_side(intent),
+                    "expected_volume": intent.get("volume"),
+                    "observed_pair": (raw_order.get("descr") or {}).get("pair")
+                        if isinstance(raw_order.get("descr"), dict) else raw_order.get("pair"),
+                    "observed_side": (raw_order.get("descr") or {}).get("type")
+                        if isinstance(raw_order.get("descr"), dict) else raw_order.get("type"),
+                    "observed_volume": raw_order.get("vol"),
+                },
+            )
+            continue
+
         target = _target_state(raw_order)
         if target is None:
             stats["invalid_exchange_states"] += 1
