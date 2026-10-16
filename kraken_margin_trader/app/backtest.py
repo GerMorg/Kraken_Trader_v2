@@ -257,12 +257,15 @@ def summary_metrics(trades: Sequence[SimTrade]) -> dict[str,Decimal|int|str]:
     all_in_costs = trading_fees + spread_costs + slippage_costs + margin_costs
     gross_mid_market = sum(
         (
-            t.gross_mid_market_pnl_usd
-            if t.gross_mid_market_pnl_usd is not None
-            else t.gross_pnl_usd
-        )
-        for t in trades
-    , start=D(0))
+            (
+                t.gross_mid_market_pnl_usd
+                if t.gross_mid_market_pnl_usd is not None
+                else t.gross_pnl_usd
+            )
+            for t in trades
+        ),
+        start=D(0),
+    )
     cost_share = (
         total_costs / abs(gross_pnl) * D(100) if gross_pnl != 0
         else (D(100) if total_costs > 0 else D(0))
