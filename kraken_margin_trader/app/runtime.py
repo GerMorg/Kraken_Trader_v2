@@ -746,9 +746,19 @@ class TraderRuntime:
                         state="SHADOW_ONLY",
                         **intent,
                     )
-            result={"cycle_id":cycle_id,"status":"OK","duration_seconds":round(time.time()-started,3),
-                **counts,"mode":self.settings.mode,"real_orders_sent":0,
-                "note":"No live execution; account reconciliation and dynamic margin costs remain gates."}
+            result = {
+                "cycle_id": cycle_id,
+                "status": "OK",
+                "duration_seconds": round(time.time() - started, 3),
+                **counts,
+                "mode": self.settings.mode,
+                "live_requested": self.settings.live_requested,
+                "note": (
+                    "Approved LIVE intents are routed to OrderAuthority when operator switches are active; "
+                    "no fill is assumed from an acknowledged submission. Explicit history, cost, edge and "
+                    "risk gates can still reject a candidate."
+                ),
+            }
             self.persistence.record_event("CYCLE_SUMMARY",result); self.audit.emit("CYCLE_SUMMARY",**result)
             return result
         except KrakenAPIError as exc:
