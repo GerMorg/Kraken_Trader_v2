@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.13 — Container-Start und Import-Smoke-Tests
+
+- Behebt den Startfehler `ModuleNotFoundError: No module named 'app'`, indem `run.sh` den erwarteten Paketpfad explizit prüft, `PYTHONPATH` setzt, in das Application-Root wechselt und Argumente an Python weitergibt.
+- Das Dockerfile bricht schon beim Image-Build ab, wenn `app/main.py` oder `app/__init__.py` fehlt oder `app.main` nicht importierbar ist.
+- CI führt nach dem Build nun tatsächlich `/run.sh --healthcheck` im Container aus. Damit werden Imports, Settings-/Datenbank-Initialisierung und die Runtime-Entrypointkette getestet; der Healthcheck ruft keine Kraken-API auf und sendet keine Orders.
+- Die Strukturprüfung und Regressionstests prüfen Paket-Copy-Pfad, Entrypoint, Python-Suchpfad und Argumentweitergabe.
+- Versionen in HA-Manifest, Python-Paket, Projektmetadaten, README und Docker-Build-Argumenten synchron auf `0.1.13` erhöht.
+
+
 ## 0.1.12 — Installations- und Datenprüfungs-Vorabversion
 
 - Home-Assistant-App-Mapping auf den App-Konfigurationstyp `app_config` umgestellt; Docker-Build ergänzt um die Supervisor-Metadaten `io.hass.version`, `io.hass.type` und `io.hass.arch`.

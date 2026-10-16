@@ -1,9 +1,9 @@
 name: Kraken Margin Trader
-version: 0.1.12
+version: 0.1.13
 slug: kraken_margin_trader
 description: >-
   Eigenständiger Kraken Spot- und Spot-Margin-Trader mit Auditspur.
-  Shadow-first; echte Orderübermittlung bleibt bis zur nachgewiesenen Freigabe gesperrt.
+  Shadow-first; Start- und Container-Smoke-Tests; echte Orderübermittlung bleibt bis zur nachgewiesenen Freigabe gesperrt.
 url: https://github.com/GerMorg/Kraken_Trader_v2
 arch: [amd64, aarch64]
 startup: application

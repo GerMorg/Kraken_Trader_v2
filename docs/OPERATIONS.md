@@ -4,9 +4,13 @@
 
 1. In Home Assistant **Einstellungen → Apps → App-Repository hinzufügen** öffnen.
 2. `https://github.com/GerMorg/Kraken_Trader_v2` als benutzerdefiniertes Repository hinzufügen und den Store aktualisieren.
-3. `Kraken Margin Trader` installieren. Anschließend starten und das App-Protokoll prüfen.
+3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.13` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version: 0.1.13` zeigen; andernfalls läuft noch nicht das neue Image. Anschließend starten und das App-Protokoll prüfen.
 4. `mode: SHADOW`, `live_enabled: false` und `kill_switch: true` beibehalten.
 5. Für die erste Datenerfassung einen Kraken-API-Key mit den erforderlichen **Lese-Rechten** konfigurieren. Keine Auszahlungsrechte und zunächst keine Handelsrechte aktivieren.
+
+## Containerstart in Version 0.1.13
+
+Das Image prüft beim Build, ob `app/main.py` vorhanden und `app.main` importierbar ist. Zusätzlich startet CI das fertige Image über `/run.sh --healthcheck`. Diese Prüfung darf keine Kraken-API-Aufrufe oder Orders auslösen. Der Entrypoint setzt den Python-Suchpfad explizit und meldet einen klaren Dateipfadfehler, falls das Paket beim Installieren fehlt.
 
 ## Zweck dieser Vorabversion
 
