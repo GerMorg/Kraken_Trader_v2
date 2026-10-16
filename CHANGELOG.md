@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.6 — Datenintegrität und Steuerreport-Invalidierung
+
+- Steuerberichte werden anhand des vollständigen kanonisierten Ereignisinhalts invalidiert; nachträgliche Korrekturen vorhandener Ereignisse (EUR-Bewertung, Gebühren, Verifikations- und Review-Status) aktualisieren bestehende Jahresreports.
+- OHLC-Antworten mit unbekanntem Alias werden nur akzeptiert, wenn genau ein möglicher Markt-Datensatz vorhanden ist. Mehrdeutige Antworten werden geschlossen verworfen, statt versehentlich Preise eines anderen Markts zuzuordnen.
+- Regressionstests ergänzen beide Datenintegritätsfälle. Erneute vollständige CI-Prüfung nach Versionsbump erforderlich.
+
 ## 0.1.5 — Positions-Recovery und Shadow-Exit-Planung
 
 - Einzelne Kraken-OpenPositions-Lots werden ohne `consolidation=market` abgefragt, gespeichert und strenger auf Status, Mengen, Margin-, Bewertungs- und Zeitfelder validiert.
