@@ -58,6 +58,7 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     run_script = (root / "kraken_margin_trader" / "run.sh").read_text(encoding="utf-8")
 
     assert "COPY app/ /opt/kraken-trader/app/" in dockerfile
+    assert "chmod -R a+rX /opt/kraken-trader/app" in dockerfile
     assert "test -f /opt/kraken-trader/app/main.py" in dockerfile
     assert "import app.main" in dockerfile
     assert 'ENTRYPOINT ["/run.sh"]' in dockerfile
@@ -72,8 +73,10 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "sys.exit(main_module.main())" in run_script
     assert "app_dir_entries=" in run_script
     assert "main_readable=" in run_script
+    assert "def safe_entries(path):" in run_script
+    assert "except OSError as exc:" in run_script
 
     workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "docker run --rm kraken-trader-v2:ci --healthcheck" in workflow
+    assert "docker run --rm --user 10001:10001 --tmpfs /data:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" in workflow
     assert "docker run --rm --entrypoint /run.sh" not in workflow
     assert "&& /run.sh --healthcheck" in dockerfile

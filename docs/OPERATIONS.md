@@ -4,13 +4,13 @@
 
 1. In Home Assistant **Einstellungen → Apps → App-Repository hinzufügen** öffnen.
 2. `https://github.com/GerMorg/Kraken_Trader_v2` als benutzerdefiniertes Repository hinzufügen und den Store aktualisieren.
-3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.16` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.16` zeigen; andernfalls läuft noch nicht das neue Image. Anschließend starten und das App-Protokoll prüfen.
+3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.17` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.17` zeigen; andernfalls läuft noch nicht das neue Image. Anschließend starten und das App-Protokoll prüfen.
 4. `mode: SHADOW`, `live_enabled: false` und `kill_switch: true` beibehalten.
 5. Für die erste Datenerfassung einen Kraken-API-Key mit den erforderlichen **Lese-Rechten** konfigurieren. Keine Auszahlungsrechte und zunächst keine Handelsrechte aktivieren.
 
-## Containerstart in Version 0.1.16
+## Containerstart in Version 0.1.17
 
-Das Image prüft beim Build, ob `app/main.py` vorhanden und `app.main` importierbar ist. `run.sh` ist nun der Docker-`ENTRYPOINT`, nicht nur ein Standard-`CMD`; so bleibt die geprüfte Startlogik auch bei überschriebenen Container-Kommandos vorgeschaltet. CI startet das fertige Image ohne `--entrypoint`-Override mit `--healthcheck`, sodass die tatsächliche Image-Startkonfiguration getestet wird. Der Python-Bootstrap lädt das Paket über `spec_from_file_location` direkt aus `/opt/kraken-trader/app/__init__.py` und setzt dabei den Paket-Suchpfad ausdrücklich. So umgeht er die bislang fehlschlagende automatische Top-Level-Auflösung. Bereits beim Image-Build führt `/run.sh --healthcheck` genau diesen Bootstrap aus; bei einem Fehler werden Verzeichnisinhalt, Dateiverfügbarkeit, Lesbarkeit und `sys.path` protokolliert. Der Healthcheck ruft keine Kraken-API auf und sendet keine Orders.
+Das Image prüft beim Build, ob `app/main.py` vorhanden und `app.main` importierbar ist. `run.sh` ist nun der Docker-`ENTRYPOINT`, nicht nur ein Standard-`CMD`; so bleibt die geprüfte Startlogik auch bei überschriebenen Container-Kommandos vorgeschaltet. CI startet das fertige Image ohne `--entrypoint`-Override mit `--healthcheck`, sodass die tatsächliche Image-Startkonfiguration getestet wird. Der Image-Build setzt die Paketverzeichnisse mit `chmod -R a+rX` lesbar und durchsuchbar. CI führt den regulären `ENTRYPOINT` zusätzlich mit UID/GID `10001:10001` und einem temporären schreibbaren `/data` aus, damit Datei-/Verzeichnisrechte nicht nur unter Root getestet werden. Bei Fehlern bleibt die Diagnose robust und protokolliert UID/GID, Verzeichnis-/Dateimodi und einen sicheren Fehlerstatus, ohne dass das Auflisten eines unlesbaren Verzeichnisses die eigentliche Fehlermeldung verdeckt. Der Python-Bootstrap lädt das Paket weiter aus den expliziten Dateipfaden. Der Healthcheck ruft keine Kraken-API auf und sendet keine Orders.
 
 ## Zweck dieser Vorabversion
 

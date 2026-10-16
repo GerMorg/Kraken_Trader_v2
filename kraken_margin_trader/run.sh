@@ -41,12 +41,29 @@ app_dir = app_root / "app"
 package_file = app_dir / "__init__.py"
 main_file = app_dir / "main.py"
 
+def safe_entries(path):
+    try:
+        return sorted(os.listdir(path))
+    except OSError as exc:
+        return [f"<unavailable:{type(exc).__name__}:errno={exc.errno}>"]
+
+
+def safe_mode(path):
+    try:
+        return oct(path.stat().st_mode & 0o777)
+    except OSError as exc:
+        return f"<unavailable:{type(exc).__name__}:errno={exc.errno}>"
+
+
 print(
     "Kraken Trader Python bootstrap: "
     f"executable={sys.executable} cwd={os.getcwd()} "
+    f"uid={os.getuid()} gid={os.getgid()} "
     f"root_exists={app_root.is_dir()} app_dir_exists={app_dir.is_dir()} "
-    f"init_exists={package_file.is_file()} main_exists={main_file.is_file()} "
-    f"app_dir_entries={sorted(p.name for p in app_dir.iterdir()) if app_dir.is_dir() else []}",
+    f"app_dir_mode={safe_mode(app_dir)} "
+    f"init_exists={package_file.is_file()} init_mode={safe_mode(package_file)} "
+    f"main_exists={main_file.is_file()} main_mode={safe_mode(main_file)} "
+    f"app_dir_entries={safe_entries(app_dir)}",
     file=sys.stderr,
     flush=True,
 )
