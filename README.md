@@ -4,7 +4,7 @@ Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repos
 
 ## Aktueller Status — 0.1.11
 
-**Nur Shadow-/Research-Grundlage. Kein unbeaufsichtigter Live-Handel.** Die Ausführungsfreigabe ist zusätzlich zu den UI-Konfigurationsschaltern in Python fest auf `False` gesetzt. Das ist beabsichtigt: Kontenabgleich, tatsächliche Margin-Gebühren-/Fundingzuordnung, robuste Recovery, historischer Out-of-Sample-Backtest und Forward-Shadow-Test sind noch nicht vollständig nachgewiesen.
+**Nur Shadow-/Research-Grundlage. Kein unbeaufsichtigter Live-Handel.** Die zentrale Order Authority respektiert die sichtbaren Schalter `mode: LIVE`, `live_enabled: true` und `kill_switch: false`; es gibt keinen zusätzlichen unveränderlichen Source-Code-Freigabeschalter. Das bedeutet jedoch nicht, dass eine Order ungeprüft gesendet wird: unvollständige Konto-/Ledger-Abstimmung, unbestätigte Margin-Kosten und nicht validierte Strategievorteile werden durch ausdrücklich protokollierte Risikoprüfungen weiterhin abgelehnt. Die nachgewiesene Forschungs- und Kontenvalidierung reicht derzeit noch nicht für einen verantwortbaren unbeaufsichtigten Live-Margin-Betrieb.
 
 ## Installation in Home Assistant OS
 
@@ -24,7 +24,7 @@ Neue Risikoerhöhungen werden zusätzlich ausgesetzt, solange Trades-, Ledger- o
 
 Der Shadow-Pfad wertet vorhandene, einzelne Kraken-Margin-Positionen jetzt pro Positions-ID aus. Standardmäßig wird bei einer **Brutto-Kursbewegung** von +3,5 % ein Teilverkauf von 50 % der **verbleibenden offenen Menge** vorgeschlagen; bei −3,0 % wird eine Risikoreduktion über die gesamte verbleibende Menge vorgeschlagen. Der Ausstiegskurs verwendet die relevante Ticker-Seite (Bid für Long-Exits, Ask für Short-Exits); Lotpräzision und Mindestmenge werden ohne Aufrunden eingehalten.
 
-Das sind zunächst protokollierte Shadow-Vorschläge, **keine** automatisch gesendeten Orders. Gebühren, Margin-Open-/Rollover-Finanzierung, Slippage jenseits der verwendeten Bid/Ask-Seite und Steuer-PnL sind nicht Teil dieser einfachen Kursbewegungs-Schwelle. Es gibt keine bestätigte exchange-native Stop-Order; bei HA-/Netzausfall wird daher kein Schutz durch diesen lokalen Plan garantiert. Das interne Live-Order-Gate bleibt geschlossen.
+Das sind zunächst protokollierte Shadow-Vorschläge, **keine** automatisch gesendeten Orders. Gebühren, Margin-Open-/Rollover-Finanzierung, Slippage jenseits der verwendeten Bid/Ask-Seite und Steuer-PnL sind nicht Teil dieser einfachen Kursbewegungs-Schwelle. Es gibt keine bestätigte exchange-native Stop-Order; bei HA-/Netzausfall wird daher kein Schutz durch diesen lokalen Plan garantiert. Die tatsächliche Übermittlung erfolgt nur, wenn die sichtbaren LIVE-Schalter aktiv sind und alle expliziten Daten-, Kosten-, Strategie- und Risikoprüfungen bestanden wurden.
 
 ## Produktumfang
 
