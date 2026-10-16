@@ -4,7 +4,7 @@
 
 - Steuerberichte werden anhand des vollständigen kanonisierten Ereignisinhalts invalidiert; nachträgliche Korrekturen vorhandener Ereignisse (EUR-Bewertung, Gebühren, Verifikations- und Review-Status) aktualisieren bestehende Jahresreports.
 - OHLC-Antworten mit unbekanntem Alias werden nur akzeptiert, wenn genau ein möglicher Markt-Datensatz vorhanden ist. Mehrdeutige Antworten werden geschlossen verworfen, statt versehentlich Preise eines anderen Markts zuzuordnen.
-- Regressionstests ergänzen beide Datenintegritätsfälle. Neue Einstiege werden für die Mengenberechnung mit dem ausführbaren Ask bei Longs beziehungsweise Bid bei Shorts bewertet, nicht mit dem letzten Handelspreis. Ticker ohne valide positive 24-Stunden-Quote-Umsatzdaten werden ausgeschlossen.
+- Regressionstests ergänzen beide Datenintegritätsfälle. Vor Positions-Exit-Auswertung und unmittelbar vor jedem Eintritt werden die betreffenden Ticker erneut von Kraken abgefragt, damit längere History-/Account-Aufrufe keine veralteten Quotes in Entscheidungen tragen. Neue Einstiege werden für die Mengenberechnung mit dem ausführbaren Ask bei Longs beziehungsweise Bid bei Shorts bewertet, nicht mit dem letzten Handelspreis. Ticker ohne valide positive 24-Stunden-Quote-Umsatzdaten werden ausgeschlossen.
 
 ## 0.1.5 — Positions-Recovery und Shadow-Exit-Planung
 
