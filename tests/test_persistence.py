@@ -272,3 +272,83 @@ def test_tax_event_can_be_explicitly_enriched_without_breaking_import_idempotenc
     assert row_after_reimport["value_eur"] == "9200.00"
     assert bool(row_after_reimport["verified"]) is True
     db.close()
+
+
+def test_authoritative_fill_upsert_corrects_changed_exchange_data_and_is_idempotent():
+    db = Persistence(":memory:")
+    original = {
+        "trade_id": "T-UPD", "order_id": "O1", "pair": "XBTUSD", "side": "buy",
+        "volume": "0.1", "price": "90000", "fee": "0.20", "fee_asset": None,
+        "ts": "2026-10-01T00:00:00+00:00", "verified": True,
+        "raw": {"price": "90000", "fee": "0.20"},
+    }
+    assert db.upsert_fill_from_exchange(original)
+    assert not db.upsert_fill_from_exchange(original)
+    corrected = {
+        **original, "price": "91000", "fee": "0.21",
+        "raw": {"price": "91000", "fee": "0.21"},
+    }
+    assert db.upsert_fill_from_exchange(corrected)
+    rows = db.fills()
+    assert len(rows) == 1
+    assert rows[0]["price"] == "91000"
+    assert rows[0]["fee"] == "0.21"
+    assert not db.upsert_fill_from_exchange(corrected)
+    db.close()
+
+
+def test_authoritative_ledger_upsert_corrects_same_id_and_is_idempotent():
+    db = Persistence(":memory:")
+    original = {
+        "ledger_id": "L-UPD", "asset": "USDC", "amount": "-0.15", "fee": "0",
+        "event_type": "rollover", "ts": "2026-10-01T00:00:00+00:00",
+        "verified": True, "raw": {"amount": "-0.15"},
+    }
+    assert db.upsert_ledger_from_exchange(original)
+    assert not db.upsert_ledger_from_exchange(original)
+    corrected = {**original, "amount": "-0.17", "raw": {"amount": "-0.17"}}
+    assert db.upsert_ledger_from_exchange(corrected)
+    rows = db.ledger_events()
+    assert len(rows) == 1
+    assert rows[0]["amount"] == "-0.17"
+    assert not db.upsert_ledger_from_exchange(corrected)
+    db.close()
+
+
+def test_exchange_tax_reimport_preserves_valid_enrichment_but_invalidates_changed_price():
+    db = Persistence(":memory:")
+    raw = {
+        "event_id": "TRADE:T-ENRICH", "ts": "2026-10-01T00:00:00+00:00", "year": 2026,
+        "event_type": "SPOT_TRADE_FILL", "asset": None, "quote_asset": None,
+        "quantity": "0.1", "value_eur": None, "fee_amount": "0.20", "fee_asset": None,
+        "source_ref": "T-ENRICH", "verified": False, "manual_review": True,
+        "payload": {"pair": "XBTUSD", "side": "buy", "price": "90000",
+                    "margin_amount": "0", "product_type": "CASH_SPOT",
+                    "related_ledger_ids": [], "raw": {"price": "90000"}},
+    }
+    assert db.upsert_imported_tax_event(raw)
+    stored = db.tax_events_for_year(2026)[0]
+    enriched = {
+        **stored, "value_eur": "8300.00", "verified": True, "manual_review": False,
+        "payload": {**stored["payload"], "fx_rate_source": "verified-fixture"},
+    }
+    assert db.update_tax_event(enriched)
+
+    assert not db.upsert_imported_tax_event(raw)
+    preserved = db.tax_events_for_year(2026)[0]
+    assert preserved["value_eur"] == "8300.00"
+    assert preserved["verified"] == 1
+    assert preserved["manual_review"] == 0
+    assert preserved["payload"]["fx_rate_source"] == "verified-fixture"
+
+    corrected = {
+        **raw, "payload": {**raw["payload"], "price": "91000",
+                           "raw": {"price": "91000"}},
+    }
+    assert db.upsert_imported_tax_event(corrected)
+    invalidated = db.tax_events_for_year(2026)[0]
+    assert invalidated["value_eur"] is None
+    assert invalidated["verified"] == 0
+    assert invalidated["manual_review"] == 1
+    assert invalidated["payload"]["price"] == "91000"
+    db.close()
