@@ -61,7 +61,8 @@
 - Positionsmanagement-Einstellungen sind begrenzt und über HA-Schema/Konfiguration getestet.
 - Backtest-Rechnung korrigiert: Margin-Kosten werden nicht durch die Hebelquote künstlich reduziert; Trade-PnL basiert auf Brutto-PnL minus Kosten, dynamischer Kontogröße und tatsächlichem Notional. Ergänzt wurden Sortino-/Tail-Loss-/Recovery-/Turnover-/Kostenanteil- und Long-/Short-Kennzahlen sowie Eingabevalidierung.
 - Settlement-Intents verlangen passende Position-, Währungs-, Mengen-, Snapshot- und Ledger-Evidenz.
-- Margin-Kosten, Reconciliation und kalibrierter Netto-Edge bleiben Freigabebedingungen; `LIVE_EXECUTION_RELEASED=False` bleibt unverändert.
+- Margin-Kosten, Reconciliation und kalibrierter Netto-Edge bleiben ausdrückliche Freigabebedingungen.
+- Der unveränderliche `LIVE_EXECUTION_RELEASED=False`-Schalter wurde entfernt. `OrderAuthority` verwendet ausschließlich die sichtbaren LIVE-/Kill-Switch-Konfigurationen für die Ausführungsberechtigung; Runtime-Intents laufen bei aktiviertem LIVE-Modus durch die zentrale Order Authority, nachdem alle vorherigen Risk Gates bestehen.
 
 ## 0.1.4 — Margin-Gebührenbasis und Fail-Closed-Korrekturen
 
