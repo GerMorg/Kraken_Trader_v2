@@ -137,7 +137,6 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
                 exit_index=probe_index; exit_reason="STOP_GAP_CONSERVATIVE"; break
         exit_bar=ordered[exit_index]
         exit_price-=sign*exit_price*costs.slippage_bps_per_side/D(10000)
-        gross=((exit_price/entry)-D(1))*sign*D(100)
         rollovers=max(0,costs.holding_hours//4)
         margin_cost_bps = D(0)
         if costs.leverage > 1:
@@ -156,6 +155,7 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
             + margin_cost_bps
         ) / D(100)
         gross_pnl = quantity * (exit_price - entry) * sign
+        gross = gross_pnl / notional * D(100)
         total_cost_usd = notional * total_cost / D(100)
         net_pnl = gross_pnl - total_cost_usd
         net = net_pnl / notional * D(100)
