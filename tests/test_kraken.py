@@ -21,6 +21,7 @@ def test_account_snapshot_does_not_claim_reconciliation_from_api_success():
         "Balance": {"ZUSD": "10"},
         "TradeBalance": {"e": "10", "mf": "10"},
         "OpenOrders": {"open": {}},
+        "ClosedOrders": {"closed": {}},
         "OpenPositions": {},
     }
     calls = []
@@ -32,7 +33,8 @@ def test_account_snapshot_does_not_claim_reconciliation_from_api_success():
     assert snapshot["api_queries_succeeded"] is True
     assert snapshot["reconciliation_complete"] is False
     assert "verified" not in snapshot
-    assert calls == ["Balance", "TradeBalance", "OpenOrders", "OpenPositions"]
+    assert snapshot["closed_orders"] == {"closed": {}}
+    assert calls == ["Balance", "TradeBalance", "OpenOrders", "ClosedOrders", "OpenPositions"]
 
 
 def test_history_clients_validate_offsets_and_send_pagination_parameters():
