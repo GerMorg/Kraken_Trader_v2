@@ -13,7 +13,7 @@ from app.config import Settings
 from app.costs import estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
 from app.kraken import KrakenAPIError, KrakenAmbiguousError, KrakenClient
 from app.execution import OrderAuthority, OrderIntent
-from app.history_sync import sync_history_source
+from app.history_sync import history_sources_ready, sync_history_source
 from app.market import executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
@@ -171,6 +171,8 @@ class TraderRuntime:
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
         counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0}
+        history_ready_for_entries = False
+        history_evidence_gaps = ["ACCOUNT_HISTORY_NOT_CHECKED"]
         self.audit.emit("CYCLE_START",cycle_id=cycle_id,mode=self.settings.mode)
         try:
             self._refresh_tax_report()
@@ -203,6 +205,25 @@ class TraderRuntime:
                         "KRAKEN_HISTORY_SYNC",
                         cycle_id=cycle_id,
                         **history_summary,
+                    )
+                history_ready_for_entries, history_evidence_gaps = history_sources_ready(
+                    history_summaries
+                )
+                if not history_ready_for_entries:
+                    self.audit.emit(
+                        "NEW_RISK_BLOCKED_HISTORY_INCOMPLETE",
+                        cycle_id=cycle_id,
+                        evidence_gaps=history_evidence_gaps,
+                        source_summaries=[
+                            {
+                                "source": item.get("source"),
+                                "initial_backfill_complete": item.get("initial_backfill_complete"),
+                                "generation_complete": item.get("generation_complete"),
+                                "last_error": item.get("last_error"),
+                            }
+                            for item in history_summaries
+                        ],
+                        existing_position_management_continues=True,
                     )
                 # Keep the previous snapshot as an immutable delta baseline before
                 # persisting the just-fetched account state.
@@ -447,6 +468,18 @@ class TraderRuntime:
                     spread_bps=ticker.spread_bps)
                 if not signal.has_direction: continue
                 counts["signals"]+=1
+                if account is not None and not history_ready_for_entries:
+                    counts["blocked"] += 1
+                    self.audit.emit(
+                        "NO_TRADE",
+                        cycle_id=cycle_id,
+                        pair=instrument.wsname,
+                        direction=signal.direction,
+                        reason="ACCOUNT_HISTORY_EVIDENCE_INCOMPLETE",
+                        evidence_gaps=history_evidence_gaps,
+                        no_new_position_risk=True,
+                    )
+                    continue
                 fee=taker_fee_from_trade_volume(trade_volume,(instrument.pair_id,instrument.altname,instrument.wsname))
                 margin_leverage=choose_trade_leverage(instrument,signal.direction,self.settings)
                 is_margin=signal.direction=="SHORT" or bool(margin_leverage)
