@@ -393,3 +393,38 @@ def test_margin_cost_evidence_rejects_rollover_after_exit():
             is_margin=True,
             margin_cost_evidence=future_cost,
         )
+
+
+def test_round_trip_clamps_only_decimal_noise_below_zero_depth_impact():
+    from app.orderbook_simulator import simulate_order_book_round_trip
+
+    entry_book = OrderBookSnapshot(
+        timestamp=1_800_000_000,
+        bids=(BookLevel(D("100"), D("100")),),
+        asks=(BookLevel(D("101"), D("100")),),
+    )
+    exit_book = OrderBookSnapshot(
+        timestamp=1_800_000_300,
+        bids=(BookLevel(D("102"), D("100")),),
+        asks=(BookLevel(D("103"), D("100")),),
+    )
+    result = simulate_order_book_round_trip(
+        entry_book,
+        exit_book,
+        direction="LONG",
+        requested_notional_quote=D("200"),
+        entry_fee_bps=D("10"),
+        exit_fee_bps=D("10"),
+        quote_currency="USD",
+    )
+
+    assert result.position_status == "CLOSED"
+    assert result.slippage_impact_quote == D(0)
+    assert result.spread_slippage_cost_quote == result.spread_cost_quote
+    assert result.mid_market_gross_pnl_quote is not None
+    assert result.gross_realized_pnl_quote is not None
+    assert abs(
+        result.mid_market_gross_pnl_quote
+        - result.gross_realized_pnl_quote
+        - result.spread_slippage_cost_quote
+    ) < D("1e-12")
