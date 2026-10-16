@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import re
 import sys
 import tomllib
 
@@ -27,6 +28,7 @@ try:
     project = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     package_tree = ast.parse(package_path.read_text(encoding="utf-8"))
     readme = readme_path.read_text(encoding="utf-8")
+    dockerfile = docker_path.read_text(encoding="utf-8")
 except (OSError, yaml.YAMLError, tomllib.TOMLDecodeError, SyntaxError) as exc:
     print(f"manifest or package metadata parse failed: {type(exc).__name__}", file=sys.stderr)
     raise SystemExit(1)
@@ -68,6 +70,34 @@ else:
         errors.append("README current-status version does not match add-on manifest version")
     if "sensors_enabled" in manifest.get("options", {}):
         errors.append("sensors must not be a product option")
+
+    mappings = manifest.get("map", [])
+    if not isinstance(mappings, list):
+        errors.append("manifest map must be a list")
+    else:
+        app_config_maps = [
+            item for item in mappings
+            if isinstance(item, dict) and item.get("type") == "app_config"
+        ]
+        if len(app_config_maps) != 1:
+            errors.append("exactly one app_config mapping is required for user-visible tax exports")
+        elif app_config_maps[0].get("read_only", True) is not False:
+            errors.append("app_config mapping must be writable for tax report exports")
+
+    required_docker_labels = (
+        'io.hass.version="${BUILD_VERSION}"',
+        'io.hass.type="app"',
+        'io.hass.arch="${BUILD_ARCH}"',
+    )
+    for label in required_docker_labels:
+        if label not in dockerfile:
+            errors.append(f"Dockerfile missing Home Assistant app label: {label}")
+
+    build_version_match = re.search(r"(?m)^ARG BUILD_VERSION=(\S+)\s*$", dockerfile)
+    if not build_version_match or build_version_match.group(1) != manifest_version:
+        errors.append("Dockerfile BUILD_VERSION default must match config.yaml version")
+    if not re.search(r"(?m)^ARG BUILD_ARCH=\S+\s*$", dockerfile):
+        errors.append("Dockerfile BUILD_ARCH argument is required")
 
 if not isinstance(repo, dict) or not repo.get("url"):
     errors.append("repository.yaml URL missing")

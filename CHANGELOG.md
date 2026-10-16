@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.12 — Installations- und Datenprüfungs-Vorabversion
+
+- Home-Assistant-App-Mapping auf den App-Konfigurationstyp `app_config` umgestellt; Docker-Build ergänzt um die Supervisor-Metadaten `io.hass.version`, `io.hass.type` und `io.hass.arch`.
+- Österreichische Steuerexporte liegen im beschreibbaren App-Konfigurationsordner unter `/config/reports/tax/AT/<Jahr>/`; SQLite und rotierende Audit-Logs verbleiben im persistenten `/data`-Verzeichnis.
+- Strukturprüfung und Regressionstest decken Mapping, Supervisor-Metadatenlabels und Versionskonsistenz ab.
+- Dokumentation korrigiert, damit der entfernte Compile-Time-Release-Schalter nicht weiter als vorhanden beschrieben wird. Dies ist eine Shadow-/Datenprüfungs-Vorabversion, keine Live-Freigabe: unkalibrierter Edge, fehlende PnL-/Drawdown-Baselines, offene Voll-Reconciliation und unbestätigte Margin-Kosten blockieren weiterhin reguläre Entries.
+- Die echten Account-/History-Daten sollen nach der Installation kontrolliert geprüft werden; CI verwendet ausschließlich simulierte Adapter und führt keine echten Orders aus.
+
+
 ## 0.1.11 — API-Key-Preflight und fail-closed Historienfreigabe
 
 - Jede authentifizierte Runtime prüft über Kraken `GetApiKeyInfo` die tatsächlich erteilten Leserechte, Key-Ablaufzeit und den erlaubten History-Zeitraum.

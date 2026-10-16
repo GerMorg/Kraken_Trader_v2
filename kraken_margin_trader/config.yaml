@@ -1,5 +1,5 @@
 name: Kraken Margin Trader
-version: 0.1.11
+version: 0.1.12
 slug: kraken_margin_trader
 description: >-
   Eigenständiger Kraken Spot- und Spot-Margin-Trader mit Auditspur.
@@ -14,7 +14,7 @@ hassio_api: false
 hassio_role: default
 apparmor: true
 map:
-  - type: addon_config
+  - type: app_config
     read_only: false
 options:
   kraken_api_key: ""

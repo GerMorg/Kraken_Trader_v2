@@ -2,9 +2,9 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.11
+## Aktueller Status — 0.1.12
 
-**Nur Shadow-/Research-Grundlage. Kein unbeaufsichtigter Live-Handel.** Die zentrale Order Authority respektiert die sichtbaren Schalter `mode: LIVE`, `live_enabled: true` und `kill_switch: false`; es gibt keinen zusätzlichen unveränderlichen Source-Code-Freigabeschalter. Das bedeutet jedoch nicht, dass eine Order ungeprüft gesendet wird: unvollständige Konto-/Ledger-Abstimmung, unbestätigte Margin-Kosten und nicht validierte Strategievorteile werden durch ausdrücklich protokollierte Risikoprüfungen weiterhin abgelehnt. Die nachgewiesene Forschungs- und Kontenvalidierung reicht derzeit noch nicht für einen verantwortbaren unbeaufsichtigten Live-Margin-Betrieb.
+**Installierbare Vorabversion zur Prüfung echter Kraken-Kontodaten im sicheren SHADOW-Modus; nicht für Live-Handel freigegeben.** Es gibt keinen zusätzlichen Compile-Time-Freigabeschalter: `mode: LIVE`, `live_enabled: true` und `kill_switch: false` erlauben der zentralen Order Authority nur dann eine Übermittlung, wenn sämtliche Laufzeit-Gates bestanden sind. In dieser Version verhindern der unkalibrierte Strategie-Edge, unbekannte tägliche PnL-/Drawdown-Baselines, die noch unvollständige Gesamtportfolio-Reconciliation und unbestätigte Margin-Kosten weiterhin neue Risikoerhöhungen. Das bloße Umschalten der HA-Optionen wird daher derzeit keine reguläre Entry-Order freigeben. Die Installation dient zuerst dem sicheren Import und der Prüfung realer Account-/History-Daten; das ist keine Profitabilitäts- oder Live-Sicherheitsfreigabe.
 
 ## Installation in Home Assistant OS
 
@@ -12,11 +12,11 @@ Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repos
 2. `Kraken Margin Trader` installieren und Konfiguration speichern.
 3. Zunächst `mode: SHADOW`, `live_enabled: false` und `kill_switch: true` beibehalten.
 4. Zugangsdaten erst nach eigener Prüfung als API-Key mit minimalen benötigten Rechten eintragen. Keine Auszahlungsberechtigung vergeben.
-5. App starten und das App-Protokoll ansehen. Dauerhafte Ereignisse liegen unter `/data/logs/events.jsonl`; Datenbank unter `/data/kraken_trader.sqlite3`.
+5. App starten und das App-Protokoll ansehen. Dauerhafte Ereignisse liegen unter `/data/logs/events.jsonl`; Datenbank unter `/data/kraken_trader.sqlite3`. Die Steuerexporte sind unter `/config/reports/tax/AT/<Jahr>/` über den persistenten App-Konfigurationsordner zugänglich. Zunächst keine Handelsrechte vergeben und keine LIVE-Schalter aktivieren.
 
 Die Anwendung verwendet keine HA-Sensoren und kein Dashboard. Alle Zeitpunkte im Log sind UTC.
 
-## Daten- und Ausführungsintegrität (v0.1.11)
+## Daten- und Ausführungsintegrität (v0.1.12)
 
 Neue Risikoerhöhungen werden zusätzlich ausgesetzt, solange Trades-, Ledger- oder Closed-Orders-Historie fehlt, ein Backfill unvollständig ist oder ein Quellfehler vorliegt. Die bestehende Positionsüberwachung läuft weiter. Vor dem Backfill prüft `GetApiKeyInfo` die erforderlichen privaten Leserechte, Ablaufzeit und History-Zeitfenster, ohne API-Key-Werte zu protokollieren; bekannte Konfigurationsfehler werden zyklisch neu bewertet. Die öffentliche REST-API wird gedrosselt; frische Ask-/Bid-Quotes, valide Marktumsätze und unambiguous OHLC-Daten sind Pflicht für neue Kandidaten. Exchange-Order-Reconciliation prüft Richtung, Instrument und Sollmenge; unbekannte AddOrder-Antworten bleiben ungelöst statt als Ablehnung markiert zu werden. Diese Prüfungen ersetzen nicht die dokumentierten offenen Voll-Reconciliation- und Forward-Test-Gates.
 
@@ -24,7 +24,7 @@ Neue Risikoerhöhungen werden zusätzlich ausgesetzt, solange Trades-, Ledger- o
 
 Der Shadow-Pfad wertet vorhandene, einzelne Kraken-Margin-Positionen jetzt pro Positions-ID aus. Standardmäßig wird bei einer **Brutto-Kursbewegung** von +3,5 % ein Teilverkauf von 50 % der **verbleibenden offenen Menge** vorgeschlagen; bei −3,0 % wird eine Risikoreduktion über die gesamte verbleibende Menge vorgeschlagen. Der Ausstiegskurs verwendet die relevante Ticker-Seite (Bid für Long-Exits, Ask für Short-Exits); Lotpräzision und Mindestmenge werden ohne Aufrunden eingehalten.
 
-Das sind zunächst protokollierte Shadow-Vorschläge, **keine** automatisch gesendeten Orders. Gebühren, Margin-Open-/Rollover-Finanzierung, Slippage jenseits der verwendeten Bid/Ask-Seite und Steuer-PnL sind nicht Teil dieser einfachen Kursbewegungs-Schwelle. Es gibt keine bestätigte exchange-native Stop-Order; bei HA-/Netzausfall wird daher kein Schutz durch diesen lokalen Plan garantiert. Die tatsächliche Übermittlung erfolgt nur, wenn die sichtbaren LIVE-Schalter aktiv sind und alle expliziten Daten-, Kosten-, Strategie- und Risikoprüfungen bestanden wurden.
+Das sind zunächst protokollierte Shadow-Vorschläge, **keine** automatisch gesendeten Orders. Gebühren, Margin-Open-/Rollover-Finanzierung, Slippage jenseits der verwendeten Bid/Ask-Seite und Steuer-PnL sind nicht Teil dieser einfachen Kursbewegungs-Schwelle. Es gibt keine bestätigte exchange-native Stop-Order; bei HA-/Netzausfall wird daher kein Schutz durch diesen lokalen Plan garantiert. Der Runtimepfad dieser Vorabversion sendet keine regulären Entries, weil Strategie-Edge, tägliche PnL-/Drawdown-Baselines, vollständige Gesamtportfolio-Reconciliation und echte Margin-Kostenevidenz noch nicht als erfüllt nachgewiesen sind. Die lokalen Teilgewinn-/Stop-Schwellen bleiben Empfehlungen, keine börsenseitigen Schutzorders.
 
 ## Produktumfang
 

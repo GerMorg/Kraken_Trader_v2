@@ -12,7 +12,7 @@ REPORT_FIELDS = ["event_id","ts","year","event_type","asset","quote_asset","quan
 class AustrianTaxReports:
     """Exports traceable evidence for Austrian tax preparation; not tax advice."""
 
-    def __init__(self, root: str = "/data/reports/tax/AT") -> None:
+    def __init__(self, root: str = "/config/reports/tax/AT") -> None:
         self.root = Path(root)
 
     def generate_year(

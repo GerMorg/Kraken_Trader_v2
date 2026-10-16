@@ -11,7 +11,7 @@
 - `app/backtest.py`: chronologischer OHLCV-Szenario-Simulator mit realistischen Grenzen klar benannt, konservativer voller Margin-Kostenbasis, konto-gewichteter Equitykurve und Drawdown-/Tail-/Kostenkennzahlen.
 - `app/costs.py`: Gesamtkostenmodell; wenn tatsächliche Handels-/Margin-Kosten unbekannt sind, Status `INCOMPLETE`.
 - `app/risk.py`: risikobasierte Notionalgröße und unabhängiges Entry-Gate.
-- `app/execution.py`: Order-Intent, Parametermapping, zentrale Order Authority und intern verriegelte Live-Freigabe.
+- `app/execution.py`: Order-Intent, strikte Parametervalidierung, persistente Order-State-Machine und zentrale Order Authority. Es gibt keinen separaten Compile-Time-Release-Schalter; unabhängige Laufzeit-Gates blockieren aktuell reguläre Entries.
 - `app/portfolio.py`: richtungsgetrennte Brutto-/Nettoexposure-Aggregation, streng geprüfte Margin-Lots, paarbezogene Mengensicherheit und Kennzeichnung erwarteter (nicht kontobestätigter) EWR-Finanzierungswährung.
 - `app/persistence.py`: SQLite/WAL, Bar-/Ereignis-/Intent-/Fill-/Ledger-/Steuerhistorie und persistente Circuit Breaker.
 - `app/audit.py`: JSONL in stdout und rotierender Datei mit Secret-Redaktion.
@@ -37,7 +37,7 @@
 - Freier Walletbestand ist keine Provenienz einer paarbezogenen Strategieposition.
 - Nach unklarem Submit-Status kein blinder Wiederholungsauftrag.
 - Der Status eines Steuerereignisses oder einer PnL-Schätzung wird nicht automatisch als verifiziert betrachtet.
-- Kein Schalter in der Home-Assistant-Konfiguration kann das interne Live-Release-Gate überschreiben.
+- Die LIVE-Operator-Schalter ersetzen keine unabhängigen Daten-, Kosten-, Strategie-, Portfolio- und Risiko-Gates; deren Nachweise müssen im Runtimepfad selbst vollständig sein.
 
 ## Bekannte Lücken
 
