@@ -89,6 +89,7 @@ def evaluate_entry(
     estimated_net_edge_bps: Decimal | None,
     leverage: int,
     proposed_notional_usd: Decimal,
+    edge_calibrated: bool = False,
 ) -> RiskResult:
     reasons: list[str] = []
 
@@ -138,6 +139,8 @@ def evaluate_entry(
         reasons.append("TOTAL_COSTS_UNVERIFIED")
     if estimated_net_edge_bps is None or not estimated_net_edge_bps.is_finite() or estimated_net_edge_bps <= 0:
         reasons.append("NO_POSITIVE_NET_EDGE")
+    if not edge_calibrated:
+        reasons.append("EDGE_NOT_VALIDATED")
     if leverage < 1 or leverage > settings.risk_max_leverage:
         reasons.append("LEVERAGE_OUTSIDE_CODE_CAP")
     if snapshot.open_positions >= settings.risk_max_open_positions:
