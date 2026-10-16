@@ -202,3 +202,102 @@ def test_public_requests_are_rate_limited_without_real_sleep(monkeypatch):
     assert len(calls) == 2
     assert calls[1][1] - calls[0][1] >= 1.0
     assert sleeps == [1.0]
+
+
+
+def _api_key_info_fixture(**overrides):
+    return {
+        "apiKey": "MUST_NEVER_BE_RETURNED_OR_LOGGED",
+        "apiKeyName": "unit-test-key",
+        "permissions": [
+            "query-funds",
+            "query-open-trades",
+            "query-closed-trades",
+            "query-ledger",
+            "modify-trades",
+            "close-trades",
+        ],
+        "validUntil": "0",
+        "queryFrom": "0",
+        "queryTo": "0",
+        **overrides,
+    }
+
+
+def test_api_key_permission_assessment_is_ready_for_complete_read_only_history_scope():
+    from app.kraken import assess_api_key_info
+
+    result = assess_api_key_info(_api_key_info_fixture(), now_epoch=100)
+    assert result["ready_for_account_reconciliation"] is True
+    assert result["missing_required_query_permissions"] == []
+    assert result["withdrawal_permissions_present"] == []
+    assert result["missing_order_write_permissions"] == []
+    assert result["api_key_expired_or_expiry_unknown"] is False
+    assert result["historical_query_window_restricted"] is False
+
+
+def test_api_key_permission_assessment_fails_closed_for_missing_scopes_and_withdrawal_rights():
+    from app.kraken import assess_api_key_info
+
+    result = assess_api_key_info(
+        _api_key_info_fixture(
+            permissions=["query-funds", "withdraw-funds", "add-withdraw-address"]
+        ),
+        now_epoch=100,
+    )
+    assert result["ready_for_account_reconciliation"] is False
+    assert result["missing_required_query_permissions"] == [
+        "query-closed-trades",
+        "query-ledger",
+        "query-open-trades",
+    ]
+    assert result["withdrawal_permissions_present"] == [
+        "add-withdraw-address",
+        "withdraw-funds",
+    ]
+
+
+def test_api_key_permission_assessment_detects_expiry_and_limited_history_window():
+    from app.kraken import assess_api_key_info
+
+    result = assess_api_key_info(
+        _api_key_info_fixture(validUntil="99", queryFrom="50"),
+        now_epoch=100,
+    )
+    assert result["api_key_expired_or_expiry_unknown"] is True
+    assert result["historical_query_window_restricted"] is True
+    assert result["ready_for_account_reconciliation"] is False
+
+
+def test_api_key_permission_assessment_does_not_expose_secret_fields():
+    from app.kraken import assess_api_key_info
+
+    result = assess_api_key_info(_api_key_info_fixture(), now_epoch=100)
+    assert "apiKey" not in result
+    assert "secret" not in result
+    assert "MUST_NEVER_BE_RETURNED_OR_LOGGED" not in repr(result)
+
+
+def test_api_key_permission_assessment_requires_valid_permission_metadata():
+    import pytest
+    from app.kraken import KrakenAPIError, assess_api_key_info
+
+    with pytest.raises(KrakenAPIError, match="KRAKEN_API_KEY_INFO_PERMISSIONS_INVALID"):
+        assess_api_key_info(_api_key_info_fixture(permissions="query-funds"), now_epoch=100)
+
+
+def test_kraken_client_api_key_permission_assessment_calls_get_api_key_info_without_returning_secret():
+    from app.kraken import KrakenClient
+
+    client = KrakenClient("dummy-key", "dummy-secret")
+    calls = []
+
+    def fake_private(method, params=None):
+        calls.append((method, params))
+        return _api_key_info_fixture()
+
+    client.private = fake_private
+    result = client.api_key_permission_assessment(now_epoch=100)
+    assert calls == [("GetApiKeyInfo", None)]
+    assert result["ready_for_account_reconciliation"] is True
+    assert "apiKey" not in result
