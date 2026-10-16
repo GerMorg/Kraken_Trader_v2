@@ -26,15 +26,15 @@ def history_sources_ready(summaries: list[dict[str, Any]]) -> tuple[bool, list[s
     """
     by_source: dict[str, dict[str, Any]] = {}
     gaps: list[str] = []
-    for summary in summaries:
-        source = str(summary.get("source", "")).strip().upper()
+    for item_summary in summaries:
+        source = str(item_summary.get("source", "")).strip().upper()
         if source not in REQUIRED_HISTORY_SOURCES:
             gaps.append("UNEXPECTED_HISTORY_SOURCE:" + (source or "EMPTY"))
             continue
         if source in by_source:
             gaps.append("DUPLICATE_HISTORY_SOURCE:" + source)
             continue
-        by_source[source] = summary
+        by_source[source] = item_summary
 
     for source in REQUIRED_HISTORY_SOURCES:
         summary = by_source.get(source)
