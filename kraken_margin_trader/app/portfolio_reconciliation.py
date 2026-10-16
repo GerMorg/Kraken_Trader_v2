@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -26,6 +27,172 @@ def _history_ready(persistence: Any) -> tuple[bool, list[str]]:
         ):
             pending.append(source)
     return not pending, pending
+
+
+def _snapshot_epoch(snapshot: dict[str, Any]) -> Decimal | None:
+    value = _decimal(snapshot.get("captured_at"))
+    if value is not None:
+        return value
+    raw = snapshot.get("raw")
+    if isinstance(raw, dict):
+        return _decimal(raw.get("captured_at"))
+    return None
+
+
+def _balance_map(snapshot: dict[str, Any]) -> dict[str, Decimal] | None:
+    balances = snapshot.get("balance")
+    if not isinstance(balances, dict):
+        return None
+    normalized: dict[str, Decimal] = {}
+    for asset, raw_amount in balances.items():
+        asset_name = str(asset).strip()
+        amount = _decimal(raw_amount)
+        if not asset_name or amount is None:
+            return None
+        normalized[asset_name] = amount
+    return normalized
+
+
+def _ledger_epoch(entry: dict[str, Any]) -> Decimal | None:
+    envelope = entry.get("raw")
+    source = envelope.get("raw") if isinstance(envelope, dict) else None
+    if isinstance(source, dict):
+        epoch = _decimal(source.get("time"))
+        if epoch is not None:
+            return epoch
+    raw_ts = str(entry.get("ts", "")).strip()
+    try:
+        parsed = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return D(str(parsed.timestamp()))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def reconcile_wallet_balance_deltas(
+    previous_snapshot: dict[str, Any] | None,
+    current_snapshot: dict[str, Any],
+    ledger_events: list[dict[str, Any]],
+    *,
+    ledger_history_complete: bool,
+) -> dict[str, Any]:
+    """Check wallet-balance changes since the prior account snapshot against Kraken ledgers.
+
+    This is one narrow reconciliation component, not proof of margin liabilities or
+    whole-portfolio reconciliation. Missing evidence always produces an incomplete result.
+    """
+    result: dict[str, Any] = {
+        "status": "UNKNOWN",
+        "complete": False,
+        "full_portfolio_reconciliation": False,
+        "assets_checked": 0,
+        "assets_matched_to_latest_ledger_balance": 0,
+        "assets_stable_without_ledger_activity": 0,
+        "mismatches": 0,
+        "evidence_gaps": [],
+        "asset_results": [],
+    }
+    if previous_snapshot is None:
+        result["status"] = "BASELINE_REQUIRED"
+        result["evidence_gaps"] = ["PREVIOUS_ACCOUNT_SNAPSHOT_MISSING"]
+        return result
+    previous_at = _snapshot_epoch(previous_snapshot)
+    current_at = _snapshot_epoch(current_snapshot)
+    previous_balances = _balance_map(previous_snapshot)
+    current_balances = _balance_map(current_snapshot)
+    if (
+        previous_at is None or current_at is None or current_at <= previous_at
+        or previous_balances is None or current_balances is None
+    ):
+        result["status"] = "SNAPSHOT_SHAPE_OR_TIME_INVALID"
+        result["evidence_gaps"] = ["SNAPSHOT_BALANCE_OR_TIMESTAMP_INVALID"]
+        return result
+    if not ledger_history_complete:
+        result["status"] = "LEDGER_WINDOW_INCOMPLETE"
+        result["evidence_gaps"] = ["LEDGER_WINDOW_NOT_COMPLETE"]
+        return result
+
+    latest: dict[str, tuple[Decimal, list[dict[str, Any]]]] = {}
+    for entry in ledger_events:
+        if not isinstance(entry, dict):
+            continue
+        asset = str(entry.get("asset", "")).strip()
+        stamp = _ledger_epoch(entry)
+        if not asset or stamp is None or stamp < previous_at - D(1) or stamp > current_at + D(2):
+            continue
+        if asset not in latest or stamp > latest[asset][0]:
+            latest[asset] = (stamp, [entry])
+        elif stamp == latest[asset][0]:
+            latest[asset][1].append(entry)
+
+    assets = sorted(
+        set(previous_balances) | set(current_balances) | set(latest),
+    )
+    tolerance = D("0.00000001")
+    for asset in assets:
+        previous_amount = previous_balances.get(asset, D(0))
+        current_amount = current_balances.get(asset, D(0))
+        evidence = latest.get(asset)
+        item: dict[str, Any] = {
+            "asset": asset,
+            "previous_balance": str(previous_amount),
+            "current_balance": str(current_amount),
+        }
+        if evidence is None:
+            difference = current_amount - previous_amount
+            item["evidence"] = "NO_LEDGER_ACTIVITY"
+            item["expected_balance"] = str(previous_amount)
+            item["difference"] = str(difference)
+            if abs(difference) <= tolerance:
+                item["status"] = "BALANCE_STABLE"
+                result["assets_stable_without_ledger_activity"] += 1
+            else:
+                item["status"] = "BALANCE_CHANGED_WITHOUT_LEDGER_EVIDENCE"
+                result["mismatches"] += 1
+                result["evidence_gaps"].append(f"{asset}:BALANCE_CHANGED_WITHOUT_LEDGER")
+        else:
+            latest_events = evidence[1]
+            ledger_balances = [
+                _decimal(
+                    (
+                        event.get("raw", {}).get("raw", {})
+                        if isinstance(event.get("raw"), dict) else {}
+                    ).get("balance")
+                )
+                for event in latest_events
+            ]
+            if any(value is None for value in ledger_balances):
+                item["status"] = "LATEST_LEDGER_BALANCE_MISSING_OR_INVALID"
+                result["mismatches"] += 1
+                result["evidence_gaps"].append(f"{asset}:LATEST_LEDGER_BALANCE_INVALID")
+            elif len({str(value) for value in ledger_balances}) > 1:
+                item["status"] = "LATEST_LEDGER_ORDERING_AMBIGUOUS"
+                result["mismatches"] += 1
+                result["evidence_gaps"].append(f"{asset}:SAME_TIMESTAMP_LEDGER_BALANCES_CONFLICT")
+            else:
+                expected = ledger_balances[0]
+                assert expected is not None
+                difference = current_amount - expected
+                item["expected_balance"] = str(expected)
+                item["difference"] = str(difference)
+                item["evidence"] = "LATEST_LEDGER_BALANCE"
+                if abs(difference) <= tolerance:
+                    item["status"] = "MATCHED"
+                    result["assets_matched_to_latest_ledger_balance"] += 1
+                else:
+                    item["status"] = "BALANCE_DIFFERS_FROM_LATEST_LEDGER"
+                    result["mismatches"] += 1
+                    result["evidence_gaps"].append(f"{asset}:BALANCE_DIFFERS_FROM_LEDGER")
+        result["asset_results"].append(item)
+        result["assets_checked"] += 1
+
+    result["complete"] = result["mismatches"] == 0
+    result["status"] = "WALLET_BALANCES_MATCH_LEDGER_WINDOW" if result["complete"] else "WALLET_BALANCE_MISMATCH"
+    # A wallet delta match cannot prove credit balances, margin obligations, position lots,
+    # funding/rollover attribution, external-transfer coverage, or whole-portfolio equality.
+    result["full_portfolio_reconciliation"] = False
+    return result
 
 
 def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
