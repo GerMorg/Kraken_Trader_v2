@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.history_sync import sync_history_source
+from app.history_sync import history_sources_ready, sync_history_source
 from app.persistence import Persistence
 
 
@@ -334,3 +334,54 @@ def test_forced_refresh_does_not_reset_an_incomplete_initial_backfill():
     assert second["initial_backfill_complete"] is False
     assert client.calls[-1] == ("LEDGERS", 1, 0, 1769000000)
     db.close()
+
+
+
+def _history_readiness_summary(source, *, initial=True, generation=True, error=None):
+    return {
+        "source": source,
+        "initial_backfill_complete": initial,
+        "generation_complete": generation,
+        "last_error": error,
+    }
+
+
+def test_new_risk_history_gate_requires_all_sources_and_completed_current_sync():
+    ready, gaps = history_sources_ready([
+        _history_readiness_summary("TRADES"),
+        _history_readiness_summary("LEDGERS"),
+        _history_readiness_summary("CLOSED_ORDERS"),
+    ])
+    assert ready is True
+    assert gaps == []
+
+    ready, gaps = history_sources_ready([
+        _history_readiness_summary("TRADES", generation=False),
+        _history_readiness_summary("LEDGERS"),
+        _history_readiness_summary("CLOSED_ORDERS"),
+    ])
+    assert ready is False
+    assert "CURRENT_SYNC_INCOMPLETE:TRADES" in gaps
+
+
+def test_new_risk_history_gate_fails_closed_for_missing_or_duplicate_sources():
+    ready, gaps = history_sources_ready([
+        _history_readiness_summary("TRADES"),
+        _history_readiness_summary("LEDGERS"),
+        _history_readiness_summary("TRADES"),
+    ])
+    assert ready is False
+    assert "HISTORY_SOURCE_MISSING:CLOSED_ORDERS" in gaps
+    assert "DUPLICATE_HISTORY_SOURCE:TRADES" in gaps
+
+
+def test_new_risk_history_gate_fails_closed_for_errors_and_unexpected_sources():
+    ready, gaps = history_sources_ready([
+        _history_readiness_summary("TRADES", error="HISTORY_PAGE_INVALID"),
+        _history_readiness_summary("LEDGERS"),
+        _history_readiness_summary("CLOSED_ORDERS"),
+        _history_readiness_summary("BALANCES"),
+    ])
+    assert ready is False
+    assert "HISTORY_SOURCE_ERROR:TRADES:HISTORY_PAGE_INVALID" in gaps
+    assert "UNEXPECTED_HISTORY_SOURCE:BALANCES" in gaps
