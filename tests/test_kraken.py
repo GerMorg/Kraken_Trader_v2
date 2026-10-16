@@ -163,3 +163,42 @@ def test_add_order_network_timeout_is_ambiguous(monkeypatch):
     )
     with pytest.raises(KrakenAmbiguousError, match="ADD_ORDER_NETWORK_OUTCOME_UNKNOWN"):
         client.private("AddOrder", {"pair": "XBTUSD", "type": "buy", "volume": "0.1"})
+
+
+def test_public_requests_are_rate_limited_without_real_sleep(monkeypatch):
+    import json
+    from app.kraken import KrakenClient
+
+    current = [100.0]
+    sleeps = []
+
+    def fake_clock():
+        return current[0]
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        current[0] += seconds
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"error": [], "result": {"status": "online"}}).encode("utf-8")
+
+    calls = []
+    def fake_urlopen(request, timeout):
+        calls.append((request.full_url, current[0]))
+        return Response()
+
+    monkeypatch.setattr("app.kraken.urlopen", fake_urlopen)
+    client = KrakenClient(clock=fake_clock, sleeper=fake_sleep)
+
+    assert client.public("SystemStatus") == {"status": "online"}
+    assert client.public("SystemStatus") == {"status": "online"}
+    assert len(calls) == 2
+    assert calls[1][1] - calls[0][1] >= 1.0
+    assert sleeps == [1.0]
