@@ -296,3 +296,58 @@ def test_runtime_fetches_a_fresh_pair_scoped_ticker_for_entry_evaluation():
     assert client.calls == [("Ticker", {"pair": "XBTUSD"})]
     audit.close()
     db.close()
+
+
+def test_validate_shadow_order_calls_central_authority_with_validate_only(monkeypatch):
+    from app.models import Action, Instrument
+    from decimal import Decimal
+    import app.runtime as runtime_module
+
+    runtime, db, audit = make_runtime()
+    runtime.settings = Settings.from_mapping({
+        "mode": "SHADOW", "validate_shadow_orders": True,
+        "kill_switch": True, "live_enabled": False,
+    })
+    instrument = Instrument(
+        "XXBTZUSD", "XBTUSD", "XBT/USD", "XBT", "USD", "online",
+        Decimal("0.0001"), 8, 1, (2, 3), (2, 3),
+    )
+    calls = []
+
+    class FakeAuthority:
+        def __init__(self, client, persistence, settings, audit_logger):
+            assert client is runtime.client
+            assert persistence is db
+            assert settings.validate_shadow_orders is True
+            assert audit_logger is audit
+
+        def execute(self, order, selected_instrument, *, prechecks_passed, validate_only):
+            calls.append((order, selected_instrument, prechecks_passed, validate_only))
+            return {"state": "VALIDATED"}
+
+    monkeypatch.setattr(runtime_module, "OrderAuthority", FakeAuthority)
+    intent = {
+        "intent_id": "shadow-validation-id",
+        "decision_id": "cycle:XXBTZUSD:LONG",
+        "client_order_id": "shadow-client-id",
+        "pair": "XXBTZUSD",
+        "action": Action.OPEN_MARGIN_LONG.value,
+        "side": "LONG",
+        "volume": "0.01",
+        "leverage": 2,
+        "product_type": "SPOT_MARGIN",
+        "decision_evidence": {"net_edge_is_uncalibrated_proxy": True},
+    }
+
+    result = runtime._validate_shadow_order(intent, instrument)
+
+    assert result == {"state": "VALIDATED"}
+    assert len(calls) == 1
+    order, selected, prechecks_passed, validate_only = calls[0]
+    assert order.action == Action.OPEN_MARGIN_LONG
+    assert order.volume == Decimal("0.01")
+    assert selected is instrument
+    assert prechecks_passed is True
+    assert validate_only is True
+    audit.close()
+    db.close()
