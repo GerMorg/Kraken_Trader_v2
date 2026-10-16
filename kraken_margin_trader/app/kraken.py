@@ -99,7 +99,7 @@ class KrakenClient:
         trade = self.private("TradeBalance", {"aclass":"currency","asset":"ZUSD"})
         orders = self.private("OpenOrders", {"trades":True})
         closed = self.closed_orders(include_trades=True)
-        positions = self.private("OpenPositions", {"docalcs":True,"consolidation":"market"})
+        positions = self.private("OpenPositions", {"docalcs": True})
         return {
             "balance": balance,
             "trade_balance": trade,
