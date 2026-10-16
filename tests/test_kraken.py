@@ -350,6 +350,16 @@ def test_api_key_permission_gate_checks_only_requested_order_capabilities():
     ) == ["LIVE_ORDER_PERMISSIONS_MISSING"]
 
 
+def test_api_key_permission_gate_fails_closed_on_inconsistent_assessment():
+    from app.kraken import api_key_permission_gate_reasons, assess_api_key_info
+
+    assessment = assess_api_key_info(_api_key_info_fixture(), now_epoch=100)
+    assessment["ready_for_account_reconciliation"] = False
+    assert api_key_permission_gate_reasons(assessment) == [
+        "API_KEY_ASSESSMENT_NOT_READY"
+    ]
+
+
 def test_api_key_permission_gate_rechecks_recoverable_key_configuration_each_cycle():
     from app.kraken import api_key_permission_gate_reasons, assess_api_key_info
 
