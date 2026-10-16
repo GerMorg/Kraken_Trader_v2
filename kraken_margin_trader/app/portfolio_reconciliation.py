@@ -42,6 +42,8 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
         "unmatched_position_fills": 0,
         "opening_order_mismatches": 0,
         "fill_field_mismatches": 0,
+        "closing_volume_unmapped": 0,
+        "close_fill_reconciliation_complete": False,
         "missing_related_ledgers": 0,
         "history_ready": False,
         "pending_history_sources": [],
@@ -203,6 +205,29 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
             continue
 
         result["positions_matched_to_fills"] += 1
+        closed_volume = _decimal(raw_position.get("vol_closed"))
+        if closed_volume is None or closed_volume < 0:
+            result["closing_volume_unmapped"] += 1
+            persistence.trip_circuit_breaker(
+                "POSITION_FILL_RECONCILIATION",
+                "POSITION_CLOSED_VOLUME_INVALID",
+                {"position_txid": position_id},
+            )
+        elif closed_volume > 0:
+            # Kraken identifies a position and its opening order, but does not
+            # unambiguously attribute every historical reducing fill to one lot
+            # when lots overlap. Never invent a FIFO allocation.
+            result["closing_volume_unmapped"] += 1
+            persistence.trip_circuit_breaker(
+                "POSITION_FILL_RECONCILIATION",
+                "CLOSED_VOLUME_HAS_NO_POSITION_LINKED_CLOSE_FILL",
+                {
+                    "position_txid": position_id,
+                    "volume": str(position_volume),
+                    "volume_closed": str(closed_volume),
+                    "remaining_volume": str(position_volume - closed_volume),
+                },
+            )
         related_ledgers = raw_fill.get("ledgers", [])
         if related_ledgers is None:
             related_ledgers = []
@@ -231,10 +256,12 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
                     {"position_txid": position_id, "trade_id": position_id, "ledger_id": str(ledger_id)},
                 )
 
+    result["close_fill_reconciliation_complete"] = result["closing_volume_unmapped"] == 0
     complete = (
         result["positions_checked"] == result["positions_matched_to_fills"]
         and result["opening_order_mismatches"] == 0
         and result["fill_field_mismatches"] == 0
+        and result["closing_volume_unmapped"] == 0
         and result["missing_related_ledgers"] == 0
     )
     result["position_fill_reconciliation_complete"] = complete
