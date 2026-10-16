@@ -154,10 +154,18 @@ class TraderRuntime:
                         reconciliation_complete=False,
                     )
                 self._refresh_tax_report()
-                rows=_open_position_rows(account["open_positions"])
-                self.persistence.record_event("ACCOUNT_SNAPSHOT_CAPTURED",{
-                    "open_positions":len(rows),"open_orders":len(account["open_orders"].get("open",{})),
-                    "captured_at":account["captured_at"],"complete_for_entries":False})
+                rows = _open_position_rows(account["open_positions"])
+                open_orders = account["open_orders"].get("open", {})
+                closed_orders = account.get("closed_orders", {}).get("closed", {})
+                self.persistence.record_event("ACCOUNT_SNAPSHOT_CAPTURED", {
+                    "open_positions": len(rows),
+                    "open_orders": len(open_orders) if isinstance(open_orders, dict) else None,
+                    "closed_orders": len(closed_orders) if isinstance(closed_orders, dict) else None,
+                    "captured_at": account["captured_at"],
+                    "api_queries_succeeded": True,
+                    "reconciliation_complete": False,
+                    "complete_for_entries": False,
+                })
                 snapshot=self._account_risk_snapshot(account)
                 trade_volume=self.client.trade_volume([i.altname for i in candidates])
             else:
