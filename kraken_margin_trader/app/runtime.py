@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+import json
 import time
 import uuid
 from typing import Any
@@ -55,7 +56,7 @@ class TraderRuntime:
         self.settings,self.persistence,self.audit=settings,persistence,audit
         self.client=KrakenClient(settings.api_key,settings.api_secret,persistence.next_nonce)
         self.tax_reports=AustrianTaxReports()
-        self._last_tax_report_signature: dict[int, tuple[int, tuple[str, ...]]] = {}
+        self._last_tax_report_signature: dict[int, tuple[str, ...]] = {}
 
     def _account_risk_snapshot(self,snapshot: dict[str,Any]) -> RiskSnapshot:
         trade=snapshot["trade_balance"]; rows=_open_position_rows(snapshot["open_positions"])
@@ -100,10 +101,20 @@ class TraderRuntime:
         years = sorted(set(self.persistence.tax_event_years()) | {current_year})
         for year in years:
             events = self.persistence.tax_events_for_year(year)
-            signature = (
-                len(events),
-                tuple(str(event.get("event_id", "")) for event in events),
-            )
+            # Event IDs/counts alone are insufficient: reconciliations may enrich an
+            # existing event with fees, EUR valuation, ledger links, or review status.
+            # Canonical full-record fingerprints ensure those corrections regenerate
+            # the exported files without depending on database row order.
+            signature = tuple(sorted(
+                json.dumps(
+                    dict(event),
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    default=str,
+                    separators=(",", ":"),
+                )
+                for event in events
+            ))
             if self._last_tax_report_signature.get(year) == signature:
                 continue
             try:
