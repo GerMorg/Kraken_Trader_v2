@@ -7,6 +7,7 @@ from statistics import mean, pstdev
 from typing import Sequence
 
 from app.strategy import generate_trend_signal
+from app.orderbook_simulator import OrderBookRoundTrip, OrderBookSnapshot, simulate_order_book_round_trip
 
 D=Decimal
 
@@ -247,3 +248,296 @@ def summary_metrics(trades: Sequence[SimTrade]) -> dict[str,Decimal|int|str]:
         "short_count": sum(t.direction == "SHORT" for t in trades),
         "status": "SCENARIO_ONLY_NOT_LIVE_VALIDATION",
     }
+
+
+
+@dataclass(frozen=True)
+class OrderBookReplayIssue:
+    timestamp: int
+    reason: str
+    direction: str | None = None
+
+
+@dataclass(frozen=True)
+class OrderBookTrendReplay:
+    trades: tuple[SimTrade, ...]
+    issues: tuple[OrderBookReplayIssue, ...]
+    status: str
+
+
+def replay_trend_strategy_on_order_books(
+    bars: Sequence[Bar],
+    costs: BacktestCosts,
+    order_books: Sequence[OrderBookSnapshot],
+    *,
+    financing_cost_quote_by_entry_timestamp: dict[int, Decimal] | None = None,
+    quote_currency: str = "USD",
+    equity_usd: Decimal = D("10000"),
+    position_pct: Decimal = D("10"),
+    fast_threshold_bps: Decimal = D("120"),
+    slow_threshold_bps: Decimal = D("180"),
+    max_holding_bars: int = 8,
+    stop_pct: Decimal = D("3"),
+    max_book_age_seconds: int = 60,
+    max_book_level_participation: Decimal = D("1"),
+) -> OrderBookTrendReplay:
+    """Run TSM decisions with book-walk fills instead of OHLCV price proxies.
+
+    Bars generate decisions and choose stop/time exit events; a book snapshot
+    is selected only if it was captured at or before the event time. Stop
+    events discovered from OHLC bars execute at the next bar's opening snapshot
+    to avoid using a snapshot captured before the stop was observable.
+
+    The replay halts on an unresolved exit or unknown margin financing so
+    remaining risk is not silently treated as a closed, fully costed trade.
+    This models marketable taker execution against displayed depth. It does not
+    model maker queue priority, exchange latency, hidden liquidity, cancel/replace
+    races, or exchange-specific reject behavior; results remain scenario research.
+    """
+    normalized_quote = quote_currency.strip().upper()
+    if normalized_quote != "USD":
+        raise ValueError("ORDERBOOK_REPLAY_REQUIRES_USD_QUOTE")
+    if costs.leverage < 1 or costs.leverage > 3:
+        raise ValueError("LEVERAGE_OUTSIDE_HARD_CAP")
+    if max_book_age_seconds < 0 or max_holding_bars < 1:
+        raise ValueError("INVALID_ORDERBOOK_REPLAY_TIME_LIMIT")
+    if (
+        not max_book_level_participation.is_finite()
+        or max_book_level_participation <= 0
+        or max_book_level_participation > 1
+    ):
+        raise ValueError("INVALID_ORDERBOOK_LEVEL_PARTICIPATION")
+    if (
+        not equity_usd.is_finite()
+        or equity_usd <= 0
+        or not position_pct.is_finite()
+        or position_pct <= 0
+        or position_pct > D("20")
+    ):
+        raise ValueError("INVALID_ORDERBOOK_REPLAY_EQUITY_OR_POSITION_PCT")
+    if not stop_pct.is_finite() or stop_pct <= 0:
+        raise ValueError("INVALID_ORDERBOOK_REPLAY_STOP")
+    if any(
+        not value.is_finite()
+        for value in (
+            fast_threshold_bps,
+            slow_threshold_bps,
+            costs.taker_fee_bps_per_side,
+            costs.max_volume_participation,
+            costs.minimum_order_usd,
+        )
+    ):
+        raise ValueError("NON_FINITE_ORDERBOOK_REPLAY_INPUT")
+    if (
+        costs.taker_fee_bps_per_side < 0
+        or costs.max_volume_participation <= 0
+        or costs.max_volume_participation > 1
+        or costs.minimum_order_usd <= 0
+    ):
+        raise ValueError("INVALID_ORDERBOOK_REPLAY_COST_OR_LIQUIDITY_INPUT")
+    ordered = list(bars)
+    if any(
+        ordered[index].timestamp >= ordered[index + 1].timestamp
+        for index in range(len(ordered) - 1)
+    ):
+        raise ValueError("BARS_MUST_BE_STRICTLY_CHRONOLOGICAL")
+    for bar in ordered:
+        values = (bar.open, bar.high, bar.low, bar.close, bar.base_volume)
+        if any(not value.is_finite() for value in values):
+            raise ValueError("NON_FINITE_OHLCV_DATA")
+        if (
+            min(bar.open, bar.high, bar.low, bar.close) <= 0
+            or bar.base_volume < 0
+            or bar.high < max(bar.open, bar.close, bar.low)
+            or bar.low > min(bar.open, bar.close, bar.high)
+        ):
+            raise ValueError("INVALID_OHLCV_BAR")
+    book_rows = sorted(order_books, key=lambda item: item.timestamp)
+    if any(
+        book_rows[index].timestamp == book_rows[index + 1].timestamp
+        for index in range(len(book_rows) - 1)
+    ):
+        raise ValueError("DUPLICATE_ORDER_BOOK_TIMESTAMPS")
+
+    def book_at(event_timestamp: int) -> OrderBookSnapshot | None:
+        eligible = [item for item in book_rows if item.timestamp <= event_timestamp]
+        if not eligible:
+            return None
+        latest = eligible[-1]
+        if event_timestamp - latest.timestamp > max_book_age_seconds:
+            return None
+        return latest
+
+    trades: list[SimTrade] = []
+    issues: list[OrderBookReplayIssue] = []
+    current_equity = equity_usd
+    index = 72
+    while index + 1 < len(ordered) and current_equity > 0:
+        signal = generate_trend_signal(
+            "SIM",
+            [item.close for item in ordered[: index + 1]],
+            fast_threshold_bps=fast_threshold_bps,
+            slow_threshold_bps=slow_threshold_bps,
+        )
+        if not signal.has_direction:
+            index += 1
+            continue
+
+        entry_bar = ordered[index + 1]
+        if entry_bar.open <= 0 or entry_bar.base_volume <= 0:
+            issues.append(OrderBookReplayIssue(entry_bar.timestamp, "ENTRY_BAR_HAS_NO_VOLUME", signal.direction))
+            index += 1
+            continue
+        entry_book = book_at(entry_bar.timestamp)
+        if entry_book is None:
+            issues.append(OrderBookReplayIssue(entry_bar.timestamp, "ENTRY_BOOK_MISSING_OR_STALE", signal.direction))
+            index += 1
+            continue
+
+        desired_notional = current_equity * position_pct / D(100)
+        candle_volume_notional = entry_bar.open * entry_bar.base_volume * costs.max_volume_participation
+        target_notional = min(desired_notional, candle_volume_notional)
+        if target_notional < costs.minimum_order_usd:
+            issues.append(OrderBookReplayIssue(entry_bar.timestamp, "ORDER_BELOW_MINIMUM", signal.direction))
+            index += 1
+            continue
+
+        last_exit_index = min(len(ordered) - 1, index + max(1, max_holding_bars))
+        exit_index = last_exit_index
+        exit_reason = "TIME_EXIT"
+        entry_reference = (entry_book.bids[0].price + entry_book.asks[0].price) / D(2)
+        stop_without_following_bar = False
+        for probe_index, probe in enumerate(
+            ordered[index + 1 : last_exit_index + 1],
+            start=index + 1,
+        ):
+            adverse_pct = (
+                (probe.low / entry_reference - D(1)) * D(100)
+                if signal.direction == "LONG"
+                else (entry_reference - probe.high) / entry_reference * D(100)
+            )
+            if adverse_pct <= -stop_pct:
+                if probe_index + 1 >= len(ordered):
+                    stop_without_following_bar = True
+                else:
+                    exit_index = probe_index + 1
+                    exit_reason = "STOP_EXECUTED_NEXT_BAR"
+                break
+        if stop_without_following_bar:
+            issues.append(
+                OrderBookReplayIssue(
+                    ordered[-1].timestamp,
+                    "STOP_TRIGGERED_WITHOUT_LATER_EXECUTION_BOOK_POSITION_UNRESOLVED",
+                    signal.direction,
+                )
+            )
+            break
+
+        exit_event_timestamp = ordered[exit_index].timestamp
+        exit_book = book_at(exit_event_timestamp)
+        if exit_book is None:
+            issues.append(
+                OrderBookReplayIssue(
+                    exit_event_timestamp,
+                    "EXIT_BOOK_MISSING_OR_STALE_POSITION_UNRESOLVED",
+                    signal.direction,
+                )
+            )
+            break
+
+        funding = (
+            financing_cost_quote_by_entry_timestamp.get(entry_bar.timestamp)
+            if financing_cost_quote_by_entry_timestamp is not None
+            else None
+        )
+        try:
+            round_trip: OrderBookRoundTrip = simulate_order_book_round_trip(
+                entry_book,
+                exit_book,
+                direction=signal.direction,
+                requested_notional_quote=target_notional,
+                entry_fee_bps=costs.taker_fee_bps_per_side,
+                exit_fee_bps=costs.taker_fee_bps_per_side,
+                quote_currency=normalized_quote,
+                is_margin=costs.leverage > 1,
+                financing_cost_quote=funding,
+                max_level_participation=max_book_level_participation,
+            )
+        except ValueError as exc:
+            issues.append(
+                OrderBookReplayIssue(
+                    entry_bar.timestamp,
+                    f"ORDERBOOK_EXECUTION_REJECTED:{str(exc)}",
+                    signal.direction,
+                )
+            )
+            index += 1
+            continue
+
+        if round_trip.position_status == "NOT_OPENED":
+            issues.append(OrderBookReplayIssue(entry_bar.timestamp, "ENTRY_UNFILLED", signal.direction))
+            index += 1
+            continue
+        if round_trip.remaining_quantity > 0:
+            issues.append(
+                OrderBookReplayIssue(
+                    exit_event_timestamp,
+                    "EXIT_PARTIAL_POSITION_REMAINS_OPEN",
+                    signal.direction,
+                )
+            )
+            break
+        if round_trip.net_realized_pnl_quote is None:
+            issues.append(
+                OrderBookReplayIssue(
+                    exit_event_timestamp,
+                    "NET_PNL_UNVERIFIABLE_MARGIN_FINANCING",
+                    signal.direction,
+                )
+            )
+            break
+        if (
+            round_trip.entry is None
+            or round_trip.exit is None
+            or round_trip.entry.average_price is None
+            or round_trip.exit.average_price is None
+            or round_trip.gross_realized_pnl_quote is None
+            or round_trip.financing_cost_quote is None
+        ):
+            issues.append(OrderBookReplayIssue(exit_event_timestamp, "EXECUTION_ACCOUNTING_INCOMPLETE", signal.direction))
+            break
+
+        trade_notional = round_trip.entry.average_price * round_trip.closed_quantity
+        if trade_notional <= 0:
+            issues.append(OrderBookReplayIssue(exit_event_timestamp, "EXECUTION_NOTIONAL_INVALID", signal.direction))
+            break
+        total_cost_quote = round_trip.trading_fees_quote + round_trip.financing_cost_quote
+        gross_pnl = round_trip.gross_realized_pnl_quote
+        net_pnl = round_trip.net_realized_pnl_quote
+        trades.append(
+            SimTrade(
+                direction=signal.direction,
+                entry_time=entry_book.timestamp,
+                exit_time=exit_book.timestamp,
+                entry=round_trip.entry.average_price,
+                exit=round_trip.exit.average_price,
+                quantity=round_trip.closed_quantity,
+                gross_return_pct=gross_pnl / trade_notional * D(100),
+                total_cost_pct=total_cost_quote / trade_notional * D(100),
+                net_return_pct=net_pnl / trade_notional * D(100),
+                exit_reason=exit_reason,
+                notional_usd=trade_notional,
+                gross_pnl_usd=gross_pnl,
+                total_cost_usd=total_cost_quote,
+                net_pnl_usd=net_pnl,
+                equity_return_pct=net_pnl / current_equity * D(100),
+            )
+        )
+        current_equity += net_pnl
+        index = max(index + 1, exit_index)
+
+    return OrderBookTrendReplay(
+        tuple(trades),
+        tuple(issues),
+        "ORDERBOOK_SCENARIO_ONLY" if not issues else "INCOMPLETE_REQUIRES_REVIEW",
+    )
