@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.10 — Fail-closed Historienfreigabe
+
+- Neue Risikoerhöhungen werden blockiert, solange nicht alle drei erforderlichen Exchange-Historien (Trades, Ledgers und geschlossene Orders) vollständig importiert sind und der aktuelle Sync fehlerfrei abgeschlossen wurde.
+- Fehlende, doppelte, unbekannte oder fehlerhafte History-Quellen haben explizite Blockierungsgründe; ein abgeschlossenes initiales Backfill allein reicht nicht, wenn der aktuelle Refresh noch läuft.
+- Die Sperre gilt für neue Entries; die bestehende Positionsüberwachung und protokollierte Risikoreduktionsentscheidungen werden nicht durch diesen History-Gate ersetzt oder deaktiviert.
+- Regressionstests prüfen vollständige, fehlende, doppelte, unvollständige und fehlerhafte History-Quellen.
+- Diese Ergänzung schließt keine offenen Echtgeld-Konto-, Margin-Funding-, Settlement-, historischen Out-of-Sample-, Forward-Shadow- oder HA-OS-Abnahmekriterien. Live-Ausführung bleibt gesperrt.
+
+
 ## 0.1.9 — Nachweisbare Margin-Kosten und konservative Teilfüllungsbehandlung
 
 - Margin-Kosten im Orderbuch-Replay werden nicht mehr als anonyme Summenzahl angenommen. Das neue `MarginCostEvidence` hält Eröffnungs- und Rolloverkosten getrennt, einschließlich Quote-Währung, Quelle, Quellen-ID, Zeitstempel und Qualitätskennzeichnung.
