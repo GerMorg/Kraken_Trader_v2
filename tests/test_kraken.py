@@ -45,6 +45,32 @@ def test_account_snapshot_does_not_claim_reconciliation_from_api_success():
     ]
 
 
+def test_account_snapshot_can_skip_closed_order_history_but_keeps_current_positions():
+    from app.kraken import KrakenClient
+
+    client = KrakenClient("k", "s")
+    results = {
+        "Balance": {"ZUSD": "10"},
+        "TradeBalance": {"e": "10", "mf": "10"},
+        "OpenOrders": {"open": {}},
+        "OpenPositions": {},
+    }
+    calls = []
+
+    def fake_private(method, params=None):
+        calls.append((method, params))
+        return results[method]
+
+    client.private = fake_private
+    snapshot = client.account_snapshot(include_closed_orders=False)
+
+    assert snapshot["closed_orders"] is None
+    assert snapshot["open_orders"] == {"open": {}}
+    assert snapshot["open_positions"] == {}
+    assert ("ClosedOrders", {"closetime": "both", "trades": True, "ofs": 0}) not in calls
+    assert calls[-1] == ("OpenPositions", {"docalcs": True})
+
+
 def test_history_clients_validate_offsets_and_send_pagination_parameters():
     from app.kraken import KrakenClient
 

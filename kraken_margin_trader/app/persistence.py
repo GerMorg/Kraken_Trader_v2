@@ -531,9 +531,11 @@ class Persistence:
         captured_at = str(snapshot["captured_at"]).strip()
         if not captured_at:
             raise ValueError("ACCOUNT_SNAPSHOT_TIMESTAMP_MISSING")
-        for key in ("balance", "trade_balance", "open_orders", "closed_orders", "open_positions"):
+        for key in ("balance", "trade_balance", "open_orders", "open_positions"):
             if not isinstance(snapshot[key], dict):
                 raise ValueError("ACCOUNT_SNAPSHOT_RESPONSE_SHAPE_INVALID:" + key)
+        if snapshot["closed_orders"] is not None and not isinstance(snapshot["closed_orders"], dict):
+            raise ValueError("ACCOUNT_SNAPSHOT_RESPONSE_SHAPE_INVALID:closed_orders")
 
         raw_positions = snapshot["open_positions"]
         wrapped = raw_positions.get("open")
@@ -589,7 +591,10 @@ class Persistence:
         import hashlib
         snapshot_id = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
         open_orders = snapshot["open_orders"].get("open", {})
-        closed_orders = snapshot["closed_orders"].get("closed", {})
+        closed_orders = (
+            snapshot["closed_orders"].get("closed", {})
+            if isinstance(snapshot["closed_orders"], dict) else None
+        )
         with self.lock:
             self.connection.execute("BEGIN IMMEDIATE")
             try:

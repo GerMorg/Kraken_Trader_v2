@@ -258,11 +258,14 @@ class KrakenClient:
         response = self.private("GetApiKeyInfo")
         return assess_api_key_info(response, now_epoch=now_epoch)
 
-    def account_snapshot(self) -> dict[str, Any]:
+    def account_snapshot(self, *, include_closed_orders: bool = True) -> dict[str, Any]:
+        """Fetch current account state, optionally omitting history-restricted closed orders."""
         balance = self.private("Balance")
         trade = self.private("TradeBalance", {"aclass":"currency","asset":"ZUSD"})
         orders = self.private("OpenOrders", {"trades":True})
-        closed = self.closed_orders(include_trades=True)
+        # ClosedOrders is historical data and may be limited by GetApiKeyInfo queryFrom/queryTo.
+        # Current positions and open orders remain available for risk-reducing monitoring.
+        closed = self.closed_orders(include_trades=True) if include_closed_orders else None
         positions = self.private("OpenPositions", {"docalcs": True})
         return {
             "balance": balance,

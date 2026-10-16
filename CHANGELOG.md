@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.19 — Aktuelle Positionsüberwachung trotz unvollständiger History-Metadaten
+
+- GetApiKeyInfo-Metadatenlücken oder begrenzte historische Abfragefenster sperren weiter neue Risikoerhöhungen und den historischen Backfill, blockieren aber nicht mehr automatisch aktuelle Balance-, OpenOrders- und OpenPositions-Abfragen.
+- ClosedOrders- und Ledger-History-Endpunkte werden nicht angerufen, wenn Ablauf-/History-Metadaten unbekannt oder eingeschränkt sind; die Reconciliation bleibt dabei explizit unvollständig.
+- Regressionstests stellen sicher, dass aktuelle Positionen weiter zur Überwachung gelesen werden und neue Risikoerhöhungen bei fehlendem History-Nachweis blockiert bleiben.
+
+
 ## 0.1.18 — AppArmor-Pfade, DNS und Steuerreportzugriff
 
 - Die v0.1.17-Logs zeigen normale Unix-Modi (`0755`/`0644`) und UID 0, aber `PermissionError` beim Öffnen von `/opt/kraken-trader/app/__init__.py`. Das bestehende AppArmor-Profil erlaubte den Zugriff auf diesen Anwendungsbaum nicht.
