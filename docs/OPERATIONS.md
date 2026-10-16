@@ -11,6 +11,8 @@
 
 Keine Auszahlungsrechte. Für das Lesen benötigt der Schlüssel die in der aktuellen Kraken-Dokumentation aufgeführten Rechte für Kontostand/Trade Balance und offene/geschlossene Orders, Trades und Positionen. Für spätere Orders wären Handelsrechte nötig; kein solcher Orderbetrieb ist derzeit freigegeben. Schlüssel nur über das Home-Assistant-App-Konfigurationsfeld eintragen und nie in Issues oder Logs kopieren.
 
+Vor dem privaten Account-Backfill ruft die App `GetApiKeyInfo` auf und prüft Query-Rechte, Ablaufzeit und den erlaubten historischen Abfragezeitraum. Die Prüfung gibt ausschließlich eine bereinigte Allowlist aus; das von Kraken mitgelieferte Feld `apiKey` wird nicht in Audit-Ereignisse übernommen. Ein fehlendes Leserecht, ein abgelaufener/unklarer Schlüssel oder ein eingeschränkter Zeitraum blockiert den sicheren Account-Read-Pfad. Der Block wird je Zyklus erneut geprüft und nicht als unumkehrbarer Konfigurations-Circuit-Breaker gespeichert. Hat der Schlüssel zwar alle Leserechte, aber eine unerlaubte Auszahlungsberechtigung oder fehlen Rechte für eine angeforderte reine Kraken-Validierung, werden neue Entries blockiert; vorhandene Positionen werden nach Möglichkeit weiter überwacht.
+
 ## Einstellungen
 
 - `mode`: `SHADOW` oder `PAPER` sind die sicheren Modi; `LIVE`-Option ist derzeit durch das interne Source-Gate wirkungslos für echte Ausführung.
