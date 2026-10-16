@@ -77,6 +77,30 @@ def build_add_order_params(intent: OrderIntent, instrument: Instrument, *,
             raise ValueError("SETTLEMENT_POSITION_AND_CURRENCY_REQUIRED")
         if not intent.settlement_amount_verified:
             raise ValueError("SETTLEMENT_AMOUNT_NOT_VERIFIED")
+        settlement_evidence = intent.decision_evidence.get("settlement")
+        if not isinstance(settlement_evidence, dict):
+            raise ValueError("SETTLEMENT_EVIDENCE_REQUIRED")
+        if str(settlement_evidence.get("position_txid", "")) != intent.position_txid:
+            raise ValueError("SETTLEMENT_EVIDENCE_POSITION_MISMATCH")
+        if str(settlement_evidence.get("currency", "")).upper() != intent.settlement_currency.upper():
+            raise ValueError("SETTLEMENT_EVIDENCE_CURRENCY_MISMATCH")
+        try:
+            borrowed_amount = D(str(settlement_evidence["borrowed_amount"]))
+            verified_volume = D(str(settlement_evidence["position_volume"]))
+        except (KeyError, ArithmeticError, TypeError, ValueError) as exc:
+            raise ValueError("SETTLEMENT_EVIDENCE_AMOUNT_INVALID") from exc
+        if (
+            not borrowed_amount.is_finite() or borrowed_amount <= 0
+            or not verified_volume.is_finite() or verified_volume <= 0
+            or verified_volume != intent.volume
+        ):
+            raise ValueError("SETTLEMENT_EVIDENCE_AMOUNT_INVALID")
+        if not str(settlement_evidence.get("snapshot_id", "")).strip():
+            raise ValueError("SETTLEMENT_EVIDENCE_SNAPSHOT_REQUIRED")
+        if not str(settlement_evidence.get("ledger_evidence_id", "")).strip():
+            raise ValueError("SETTLEMENT_EVIDENCE_LEDGER_REQUIRED")
+        if settlement_evidence.get("ledger_reconciled") is not True:
+            raise ValueError("SETTLEMENT_LEDGER_NOT_RECONCILED")
         if intent.leverage is None or intent.leverage < 2:
             raise ValueError("SETTLEMENT_LEVERAGE_NOT_CONFIRMED")
         side = "buy" if intent.side == "LONG" else "sell"
