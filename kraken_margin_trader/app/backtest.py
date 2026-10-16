@@ -503,7 +503,7 @@ def replay_trend_strategy_on_order_books(
             issues.append(
                 OrderBookReplayIssue(
                     exit_event_timestamp,
-                    "NET_PNL_UNVERIFIABLE_MARGIN_FINANCING",
+                    "NET_PNL_UNVERIFIABLE_MARGIN_COSTS",
                     signal.direction,
                 )
             )
