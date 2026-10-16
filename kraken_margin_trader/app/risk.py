@@ -98,18 +98,22 @@ def evaluate_entry(
         snapshot.used_margin_usd,
         snapshot.gross_exposure_usd,
         snapshot.net_exposure_usd,
-        snapshot.daily_pnl_pct,
-        snapshot.drawdown_pct,
         snapshot.snapshot_age_seconds,
         proposed_notional_usd,
     )
     if any(not value.is_finite() for value in finite_values):
         reasons.append("RISK_INPUT_NON_FINITE")
+    for label, value in (
+        ("DAILY_PNL_NON_FINITE", snapshot.daily_pnl_pct),
+        ("DRAWDOWN_NON_FINITE", snapshot.drawdown_pct),
+    ):
+        if value is not None and not value.is_finite():
+            reasons.append(label)
     if snapshot.margin_level_pct is not None and not snapshot.margin_level_pct.is_finite():
         reasons.append("MARGIN_LEVEL_NON_FINITE")
     if reasons:
         # Do not perform Decimal comparisons/arithmetic with NaN or Infinity.
-        return RiskResult(False, tuple(reasons), D(0), leverage, D(0))
+        return RiskResult(False, tuple(dict.fromkeys(reasons)), D(0), leverage, D(0))
     if (
         snapshot.free_collateral_usd < 0
         or snapshot.used_margin_usd < 0
@@ -138,9 +142,13 @@ def evaluate_entry(
         reasons.append("LEVERAGE_OUTSIDE_CODE_CAP")
     if snapshot.open_positions >= settings.risk_max_open_positions:
         reasons.append("OPEN_POSITION_LIMIT")
-    if snapshot.daily_pnl_pct <= -settings.risk_daily_loss_pct:
+    if snapshot.daily_pnl_pct is None:
+        reasons.append("DAILY_PNL_BASELINE_UNKNOWN")
+    elif snapshot.daily_pnl_pct <= -settings.risk_daily_loss_pct:
         reasons.append("DAILY_LOSS_LIMIT")
-    if snapshot.drawdown_pct >= settings.risk_max_drawdown_pct:
+    if snapshot.drawdown_pct is None:
+        reasons.append("DRAWDOWN_BASELINE_UNKNOWN")
+    elif snapshot.drawdown_pct >= settings.risk_max_drawdown_pct:
         reasons.append("DRAWDOWN_LIMIT")
     if signal.direction == "LONG" and leverage > 1 and not instrument.leverage_buy:
         reasons.append("LONG_MARGIN_NOT_SUPPORTED")
