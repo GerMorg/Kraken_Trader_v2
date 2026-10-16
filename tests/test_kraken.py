@@ -301,3 +301,67 @@ def test_kraken_client_api_key_permission_assessment_calls_get_api_key_info_with
     assert calls == [("GetApiKeyInfo", None)]
     assert result["ready_for_account_reconciliation"] is True
     assert "apiKey" not in result
+
+
+
+def test_api_key_permission_gate_requires_all_required_read_permissions():
+    from app.kraken import api_key_permission_gate_reasons, assess_api_key_info
+
+    assessment = assess_api_key_info(
+        _api_key_info_fixture(permissions=["query-funds", "query-open-trades"]),
+        now_epoch=100,
+    )
+    assert api_key_permission_gate_reasons(assessment) == [
+        "REQUIRED_QUERY_PERMISSION_MISSING"
+    ]
+
+
+def test_api_key_permission_gate_blocks_withdrawal_scopes_but_keeps_reason_separate():
+    from app.kraken import api_key_permission_gate_reasons, assess_api_key_info
+
+    assessment = assess_api_key_info(
+        _api_key_info_fixture(permissions=[
+            "query-funds", "query-open-trades", "query-closed-trades", "query-ledger",
+            "modify-trades", "close-trades", "withdraw-funds",
+        ]),
+        now_epoch=100,
+    )
+    reasons = api_key_permission_gate_reasons(assessment)
+    assert reasons == ["WITHDRAWAL_PERMISSION_PRESENT"]
+
+
+def test_api_key_permission_gate_checks_only_requested_order_capabilities():
+    from app.kraken import api_key_permission_gate_reasons, assess_api_key_info
+
+    read_only_assessment = assess_api_key_info(
+        _api_key_info_fixture(permissions=[
+            "query-funds", "query-open-trades", "query-closed-trades", "query-ledger",
+        ]),
+        now_epoch=100,
+    )
+    assert api_key_permission_gate_reasons(read_only_assessment) == []
+    assert api_key_permission_gate_reasons(
+        read_only_assessment,
+        validate_shadow_orders=True,
+    ) == ["SHADOW_ORDER_VALIDATION_PERMISSION_MISSING"]
+    assert api_key_permission_gate_reasons(
+        read_only_assessment,
+        live_requested=True,
+    ) == ["LIVE_ORDER_PERMISSIONS_MISSING"]
+
+
+def test_api_key_permission_gate_rechecks_recoverable_key_configuration_each_cycle():
+    from app.kraken import api_key_permission_gate_reasons, assess_api_key_info
+
+    invalid = assess_api_key_info(
+        _api_key_info_fixture(queryFrom="100"),
+        now_epoch=100,
+    )
+    corrected = assess_api_key_info(
+        _api_key_info_fixture(queryFrom="0"),
+        now_epoch=100,
+    )
+    assert api_key_permission_gate_reasons(invalid) == [
+        "API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED"
+    ]
+    assert api_key_permission_gate_reasons(corrected) == []
