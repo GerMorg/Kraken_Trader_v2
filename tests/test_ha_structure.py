@@ -61,6 +61,8 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "test -f /opt/kraken-trader/app/main.py" in dockerfile
     assert "import app.main" in dockerfile
     assert 'ENTRYPOINT ["/run.sh"]' in dockerfile
+    assert "APP_VERSION=${BUILD_VERSION}" in dockerfile
+    assert "APP_VERSION" in run_script
     assert "APP_MAIN=" in run_script and "app/main.py" in run_script
     assert "PYTHONPATH=" in run_script
     assert "container entrypoint:" in run_script
