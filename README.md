@@ -18,7 +18,7 @@ Die Anwendung verwendet keine HA-Sensoren und kein Dashboard. Alle Zeitpunkte im
 
 ## Daten- und Ausführungsintegrität (v0.1.10)
 
-Neue Risikoerhöhungen werden zusätzlich ausgesetzt, solange Trades-, Ledger- oder Closed-Orders-Historie fehlt, ein Backfill unvollständig ist oder ein Quellfehler vorliegt. Die bestehende Positionsüberwachung läuft weiter. Die öffentliche REST-API wird gedrosselt; frische Ask-/Bid-Quotes, valide Marktumsätze und unambiguous OHLC-Daten sind Pflicht für neue Kandidaten. Exchange-Order-Reconciliation prüft Richtung, Instrument und Sollmenge; unbekannte AddOrder-Antworten bleiben ungelöst statt als Ablehnung markiert zu werden. Diese Prüfungen ersetzen nicht die dokumentierten offenen Voll-Reconciliation- und Forward-Test-Gates.
+Neue Risikoerhöhungen werden zusätzlich ausgesetzt, solange Trades-, Ledger- oder Closed-Orders-Historie fehlt, ein Backfill unvollständig ist oder ein Quellfehler vorliegt. Die bestehende Positionsüberwachung läuft weiter. Fehlende End-of-history-Cursor-Metadaten gelten ebenfalls als unvollständiger Backfill. Die öffentliche REST-API wird gedrosselt; frische Ask-/Bid-Quotes, valide Marktumsätze und unambiguous OHLC-Daten sind Pflicht für neue Kandidaten. Exchange-Order-Reconciliation prüft Richtung, Instrument und Sollmenge; unbekannte AddOrder-Antworten bleiben ungelöst statt als Ablehnung markiert zu werden. Diese Prüfungen ersetzen nicht die dokumentierten offenen Voll-Reconciliation- und Forward-Test-Gates.
 
 ## Position Management (seit v0.1.5)
 
