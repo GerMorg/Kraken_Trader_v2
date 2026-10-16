@@ -37,3 +37,22 @@ def test_circuit_breaker_persists_in_database():
     db.trip_circuit_breaker("KRAKEN_API","TEST_FAILURE")
     assert db.circuit_breakers()[0]["reason"]=="TEST_FAILURE"
     db.close()
+
+
+def test_shadow_intent_is_atomically_terminal_and_never_unresolved():
+    db = Persistence(":memory:")
+    shadow = intent()
+    assert db.create_intent(shadow, initial_state="SHADOW_ONLY")
+    assert db.intent_state("i1") == "SHADOW_ONLY"
+    assert db.unresolved_intents() == []
+    with pytest.raises(ValueError, match="INVALID_ORDER_STATE_TRANSITION"):
+        db.transition_intent("i1", "SUBMITTING")
+    db.close()
+
+
+def test_intent_creation_rejects_unknown_initial_state():
+    db = Persistence(":memory:")
+    with pytest.raises(ValueError, match="INTENT_INITIAL_STATE_INVALID"):
+        db.create_intent(intent(), initial_state="SUBMITTING")
+    assert db.unresolved_intents() == []
+    db.close()
