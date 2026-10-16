@@ -144,6 +144,29 @@ def test_one_opening_order_with_multiple_unallocated_fills_is_ambiguous():
     db.close()
 
 
+def test_partial_closed_volume_cannot_be_claimed_reconciled_without_lot_linked_close_fill():
+    db = Persistence(":memory:")
+    db.record_account_snapshot(_snapshot(_position(vol_closed="0.25")))
+    _add_order(db)
+    _add_fill(db, ledgers=["L1"])
+    db.record_ledger({
+        "ledger_id": "L1", "asset": "USDC", "amount": "-100",
+        "fee": "0", "event_type": "margin", "ts": "2026-10-16T05:00:00+00:00",
+        "verified": True, "raw": {"refid": "P1"},
+    })
+    _mark_history_complete(db)
+
+    result = reconcile_positions_to_fills(db)
+
+    assert result["positions_matched_to_fills"] == 1
+    assert result["closing_volume_unmapped"] == 1
+    assert result["close_fill_reconciliation_complete"] is False
+    assert result["position_fill_reconciliation_complete"] is False
+    assert any(item["reason"] == "CLOSED_VOLUME_HAS_NO_POSITION_LINKED_CLOSE_FILL"
+               for item in db.circuit_breakers())
+    db.close()
+
+
 def test_position_without_trade_fill_trips_breaker_after_history_complete():
     db = Persistence(":memory:")
     db.record_account_snapshot(_snapshot(_position()))
