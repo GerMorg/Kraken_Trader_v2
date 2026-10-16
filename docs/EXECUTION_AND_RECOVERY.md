@@ -2,7 +2,7 @@
 
 ## Einzige Order Authority
 
-Strategielogik darf nur Entscheidungen/Intents erstellen. Die zentrale `OrderAuthority` persistiert jeden Intent vor einem geschützten API-Aufruf, prüft Aktions-/Produkt-/Richtungs-/Hebelparameter und enthält das source-owned Live-Release-Gate. Ein Validierungsauftrag mit `validate=true` ist ein Börsen-Parametercheck und keine Ausführung. Im aktuellen Repository sendet der Runtime-Zyklus ohnehin keine Orders; jeder Versuch durch `OrderAuthority` ist bis zur formalen Freigabe aus dem Quellcode blockiert.
+Strategielogik darf nur Entscheidungen/Intents erstellen. Die zentrale `OrderAuthority` persistiert jeden ausführbaren Intent vor einem geschützten API-Aufruf, prüft Aktions-/Produkt-/Richtungs-/Hebelparameter und enthält das source-owned Live-Release-Gate. Shadow-Kandidaten werden atomar mit dem terminalen Zustand `SHADOW_ONLY` gespeichert; sie sind nicht als unaufgelöste Ausführungsaufträge sichtbar und können nicht in `SUBMITTING` überführt werden. Ein Validierungsauftrag mit `validate=true` ist ein Börsen-Parametercheck und keine Ausführung. Im aktuellen Repository sendet der Runtime-Zyklus ohnehin keine Orders; jeder Versuch durch `OrderAuthority` ist bis zur formalen Freigabe aus dem Quellcode blockiert.
 
 ## Zustandsmaschine
 
