@@ -144,6 +144,10 @@ class OrderAuthority:
 
     def execute(self, intent: OrderIntent, instrument: Instrument, *, prechecks_passed: bool,
                 validate_only: bool = False) -> dict[str, Any]:
+        evidence = dict(intent.decision_evidence)
+        evidence["instrument_pair_aliases"] = [
+            instrument.pair_id, instrument.altname, instrument.wsname,
+        ]
         record = {"intent_id":intent.intent_id,"decision_id":intent.decision_id,
                   "client_order_id":intent.client_order_id,"pair":intent.pair,
                   "action":intent.action.value,"side":intent.side,"volume":str(intent.volume),
@@ -151,7 +155,7 @@ class OrderAuthority:
                   "position_txid": intent.position_txid,
                   "settlement_currency": intent.settlement_currency,
                   "settlement_amount_verified": intent.settlement_amount_verified,
-                  "decision_evidence":intent.decision_evidence}
+                  "decision_evidence": evidence}
         if not self.persistence.create_intent(record):
             self.audit.emit("ORDER_INTENT_DUPLICATE_BLOCKED",intent_id=intent.intent_id)
             raise ValueError("DUPLICATE_ORDER_INTENT")
