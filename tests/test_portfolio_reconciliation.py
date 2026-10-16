@@ -127,20 +127,31 @@ def test_position_key_is_not_assumed_to_be_trade_id_when_order_match_is_unique()
     db.close()
 
 
-def test_one_opening_order_with_multiple_unallocated_fills_is_ambiguous():
+def test_opening_order_with_multiple_fills_is_aggregated_against_position_volume():
     db = Persistence(":memory:")
     db.record_account_snapshot(_snapshot(_position(), position_id="POSITION-TXID"))
     _add_order(db)
-    _add_fill(db, trade_id="TRADE-1", ledgers=["L1"])
-    _add_fill(db, trade_id="TRADE-2", ledgers=["L2"])
+    _add_fill(db, trade_id="TRADE-1", volume="0.4", ledgers=["L1"])
+    _add_fill(db, trade_id="TRADE-2", volume="0.6", ledgers=["L2"])
+    db.record_ledger({
+        "ledger_id": "L1", "asset": "USDC", "amount": "-40",
+        "fee": "0", "event_type": "margin", "ts": "2026-10-16T05:00:00+00:00",
+        "verified": True, "raw": {"refid": "POSITION-TXID"},
+    })
+    db.record_ledger({
+        "ledger_id": "L2", "asset": "USDC", "amount": "-60",
+        "fee": "0", "event_type": "margin", "ts": "2026-10-16T05:00:01+00:00",
+        "verified": True, "raw": {"refid": "POSITION-TXID"},
+    })
     _mark_history_complete(db)
 
     result = reconcile_positions_to_fills(db)
 
-    assert result["unmatched_position_fills"] == 1
-    assert any(item["reason"] == "POSITION_OPENING_ORDER_HAS_AMBIGUOUS_FILLS"
-               for item in db.circuit_breakers())
-    assert result["full_portfolio_reconciliation"] is False
+    assert result["positions_matched_to_fills"] == 1
+    assert result["opening_fills_aggregated"] == 2
+    assert result["related_ledgers_checked"] == 2
+    assert result["missing_related_ledgers"] == 0
+    assert not db.circuit_breakers()
     db.close()
 
 
@@ -288,3 +299,23 @@ def test_wallet_reconciliation_never_claims_success_without_baseline_or_complete
     )
     assert incomplete["complete"] is False
     assert incomplete["status"] == "LEDGER_WINDOW_INCOMPLETE"
+
+
+def test_opening_fill_aggregate_must_match_position_and_exchange_executed_volume():
+    db = Persistence(":memory:")
+    db.record_account_snapshot(_snapshot(_position(), position_id="POSITION-TXID"))
+    _add_order(db)
+    _add_fill(db, trade_id="TRADE-1", volume="0.4", ledgers=["L1"])
+    _add_fill(db, trade_id="TRADE-2", volume="0.4", ledgers=["L2"])
+    _mark_history_complete(db)
+
+    result = reconcile_positions_to_fills(db)
+
+    assert result["positions_matched_to_fills"] == 0
+    assert result["fill_field_mismatches"] == 1
+    assert result["position_fill_reconciliation_complete"] is False
+    assert any(
+        item["reason"] == "POSITION_FILL_FIELDS_MISMATCH"
+        for item in db.circuit_breakers()
+    )
+    db.close()
