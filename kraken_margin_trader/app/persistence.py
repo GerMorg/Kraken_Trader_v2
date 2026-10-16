@@ -336,6 +336,44 @@ class Persistence:
                  event.get("source_ref"), int(bool(event.get("verified",False))), int(bool(event.get("manual_review",True))), _json(event)))
             return cur.rowcount == 1
 
+    def update_tax_event(self, event: dict[str, Any]) -> bool:
+        """Update a previously imported tax event after authoritative enrichment.
+
+        The import path remains insert-only/idempotent so routine history backfills
+        cannot overwrite a verified FX valuation or manual-review decision. Enrichment
+        is an explicit operation that updates an existing event only.
+        """
+        event_id = str(event.get("event_id", "")).strip()
+        if not event_id:
+            raise ValueError("TAX_EVENT_ID_REQUIRED")
+        try:
+            year = int(event.get("year", 0))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("TAX_EVENT_YEAR_INVALID") from exc
+        if year <= 0:
+            raise ValueError("TAX_EVENT_YEAR_INVALID")
+        timestamp = str(event.get("ts", "")).strip()
+        if not timestamp:
+            raise ValueError("TAX_EVENT_TIMESTAMP_REQUIRED")
+        event_type = str(event.get("event_type", "")).strip()
+        if not event_type:
+            raise ValueError("TAX_EVENT_TYPE_REQUIRED")
+
+        with self.lock:
+            cur = self.connection.execute(
+                "UPDATE tax_events SET ts=?,year=?,event_type=?,asset=?,quote_asset=?,"
+                "quantity=?,value_eur=?,fee_amount=?,fee_asset=?,source_ref=?,verified=?,"
+                "manual_review=?,payload_json=? WHERE event_id=?",
+                (
+                    timestamp, year, event_type, event.get("asset"), event.get("quote_asset"),
+                    event.get("quantity"), event.get("value_eur"), event.get("fee_amount"),
+                    event.get("fee_asset"), event.get("source_ref"),
+                    int(bool(event.get("verified", False))),
+                    int(bool(event.get("manual_review", True))), _json(event), event_id,
+                ),
+            )
+            return cur.rowcount == 1
+
     def tax_events_for_year(self, year: int) -> list[dict[str, Any]]:
         with self.lock:
             rows = self.connection.execute("SELECT * FROM tax_events WHERE year=? ORDER BY ts,event_id", (year,)).fetchall()
