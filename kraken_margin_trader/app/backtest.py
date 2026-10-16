@@ -157,6 +157,7 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
         gross_pnl = notional * gross / D(100)
         total_cost_usd = notional * total_cost / D(100)
         net_pnl = gross_pnl - total_cost_usd
+        net = net_pnl / notional * D(100)
         equity_return = net_pnl / equity_before_trade * D(100)
         trades.append(SimTrade(
             signal.direction, entry_bar.timestamp, exit_bar.timestamp, entry, exit_price,
