@@ -199,7 +199,8 @@ def test_missing_add_order_txid_keeps_intent_unknown_not_rejected(monkeypatch):
         product_type="CASH_SPOT",
     )
 
-    with pytest.raises(Exception, match="ADD_ORDER_RESPONSE_TXID_MISSING_OR_INVALID"):
+    from app.kraken import KrakenAmbiguousError
+    with pytest.raises(KrakenAmbiguousError, match="ADD_ORDER_RESPONSE_TXID_MISSING_OR_INVALID"):
         authority.execute(intent, instrument(), prechecks_passed=True, validate_only=False)
 
     assert db.intent_state(intent.intent_id) == "UNKNOWN_RECONCILING"
