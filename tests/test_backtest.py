@@ -114,3 +114,122 @@ def test_backtest_does_not_double_charge_slippage_already_applied_to_fill_prices
         assert trade.gross_return_pct == trade.gross_pnl_usd / trade.notional_usd * D(100)
         assert trade.net_return_pct == trade.net_pnl_usd / trade.notional_usd * D(100)
         assert trade.net_pnl_usd == trade.gross_pnl_usd - trade.total_cost_usd
+
+
+
+def order_books(data, *, default_depth=D("1000"), shallow_timestamp=None):
+    from app.orderbook_simulator import BookLevel, OrderBookSnapshot
+
+    snapshots = []
+    for bar in data:
+        if bar.timestamp <= 0:
+            continue
+        if shallow_timestamp == bar.timestamp:
+            bid_depth = D("0.01")
+        else:
+            bid_depth = default_depth
+        mid = bar.close
+        snapshots.append(
+            OrderBookSnapshot(
+                timestamp=bar.timestamp,
+                bids=(
+                    BookLevel(mid * D("0.9995"), bid_depth),
+                    BookLevel(mid * D("0.999"), default_depth),
+                ),
+                asks=(
+                    BookLevel(mid * D("1.0005"), default_depth),
+                    BookLevel(mid * D("1.001"), default_depth),
+                ),
+            )
+        )
+    return snapshots
+
+
+def test_orderbook_replay_executes_trend_entries_and_exits_on_visible_depth():
+    data = bars()
+    snapshots = order_books(data)
+    replay = replay_orderbook(data, snapshots, leverage=1)
+
+    assert replay.status == "ORDERBOOK_SCENARIO_ONLY"
+    assert replay.issues == ()
+    assert replay.trades
+    assert all(trade.notional_usd > 0 for trade in replay.trades)
+    assert all(trade.total_cost_usd > 0 for trade in replay.trades)
+    assert all(trade.quantity > 0 for trade in replay.trades)
+    assert all(trade.entry_time < trade.exit_time for trade in replay.trades)
+
+
+def test_orderbook_replay_blocks_margin_net_pnl_without_financing_evidence():
+    data = bars()
+    replay = replay_orderbook(data, order_books(data), leverage=2)
+
+    assert replay.status == "INCOMPLETE_REQUIRES_REVIEW"
+    assert replay.trades == ()
+    assert any(issue.reason == "NET_PNL_UNVERIFIABLE_MARGIN_FINANCING" for issue in replay.issues)
+
+
+def test_orderbook_replay_accepts_explicit_financing_in_the_usd_quote_currency():
+    data = bars()
+    snapshots = order_books(data)
+    funding = {snapshot.timestamp: D("1") for snapshot in snapshots}
+    replay = replay_orderbook(data, snapshots, leverage=2, funding=funding)
+
+    assert replay.status == "ORDERBOOK_SCENARIO_ONLY"
+    assert replay.issues == ()
+    assert replay.trades
+    assert all(trade.total_cost_usd > 0 for trade in replay.trades)
+
+
+def test_orderbook_replay_fails_closed_if_exit_book_is_missing_or_stale():
+    data = bars()
+    missing_exit_timestamp = data[76].timestamp
+    snapshots = [
+        snapshot for snapshot in order_books(data)
+        if snapshot.timestamp != missing_exit_timestamp
+    ]
+    replay = replay_orderbook(data, snapshots, leverage=1)
+
+    assert replay.status == "INCOMPLETE_REQUIRES_REVIEW"
+    assert replay.trades == ()
+    assert any(
+        issue.reason == "EXIT_BOOK_MISSING_OR_STALE_POSITION_UNRESOLVED"
+        for issue in replay.issues
+    )
+
+
+def test_orderbook_replay_does_not_mark_a_partially_exited_lot_closed():
+    data = bars()
+    partial_timestamp = data[76].timestamp
+    snapshots = order_books(data, shallow_timestamp=partial_timestamp)
+    replay = replay_orderbook(data, snapshots, leverage=1)
+
+    assert replay.status == "INCOMPLETE_REQUIRES_REVIEW"
+    assert replay.trades == ()
+    assert any(issue.reason == "EXIT_PARTIAL_POSITION_REMAINS_OPEN" for issue in replay.issues)
+
+
+def replay_orderbook(data, snapshots, *, leverage, funding=None):
+    from app.backtest import replay_trend_strategy_on_order_books
+
+    costs = BacktestCosts(
+        D("26"),
+        D("0"),
+        D("0"),
+        D("0"),
+        D("0"),
+        holding_hours=4,
+        leverage=leverage,
+        max_volume_participation=D("0.01"),
+        minimum_order_usd=D("5"),
+    )
+    return replay_trend_strategy_on_order_books(
+        data,
+        costs,
+        snapshots,
+        financing_cost_quote_by_entry_timestamp=funding,
+        quote_currency="USD",
+        equity_usd=D("10000"),
+        position_pct=D("10"),
+        max_holding_bars=4,
+        max_book_age_seconds=60,
+    )
