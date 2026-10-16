@@ -111,4 +111,6 @@ def test_backtest_does_not_double_charge_slippage_already_applied_to_fill_prices
         assert trade.gross_pnl_usd == (
             trade.quantity * (trade.exit - trade.entry) * direction_sign
         )
+        assert trade.gross_return_pct == trade.gross_pnl_usd / trade.notional_usd * D(100)
+        assert trade.net_return_pct == trade.net_pnl_usd / trade.notional_usd * D(100)
         assert trade.net_pnl_usd == trade.gross_pnl_usd - trade.total_cost_usd
