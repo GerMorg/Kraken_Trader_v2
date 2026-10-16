@@ -262,7 +262,7 @@ def summary_metrics(trades: Sequence[SimTrade]) -> dict[str,Decimal|int|str]:
             else t.gross_pnl_usd
         )
         for t in trades
-    , D(0))
+    , start=D(0))
     cost_share = (
         total_costs / abs(gross_pnl) * D(100) if gross_pnl != 0
         else (D(100) if total_costs > 0 else D(0))
