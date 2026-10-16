@@ -127,7 +127,7 @@ class Settings:
     def safe_summary(self) -> dict[str, Any]:
         return {
             "mode": self.mode, "live_enabled": self.live_enabled, "kill_switch": self.kill_switch,
-            "live_requested": self.live_requested, "internal_live_release": False,
+            "live_requested": self.live_requested,
             "credentials_present": self.credentials_present, "cycle_interval_seconds": self.cycle_interval_seconds,
             "position_take_profit_pct": str(self.position_take_profit_pct),
             "position_take_profit_fraction": str(self.position_take_profit_fraction),
