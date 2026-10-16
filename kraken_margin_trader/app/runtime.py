@@ -65,16 +65,27 @@ class TraderRuntime:
         free=free_value if free_value is not None else D(0)
         used=used_value if used_value is not None else D(0)
         margin_level=_decimal(trade.get("ml"))
+        captured_at = _decimal(snapshot.get("captured_at"))
+        snapshot_age = (
+            D(str(time.time())) - captured_at
+            if captured_at is not None and captured_at >= 0
+            else D("Infinity")
+        )
         exposure=aggregate_position_exposure(rows)
         gross,net=exposure.gross_usd,exposure.net_usd
-        complete=bool(equity_value is not None and free_value is not None and used_value is not None and
-                      isinstance(orders,dict) and isinstance(balance,dict) and exposure.complete and
-                      all("vol" in row and "pair" in row and "posstatus" in row for row in rows.values()))
+        complete=bool(
+            equity_value is not None and free_value is not None and used_value is not None
+            and captured_at is not None and snapshot_age.is_finite() and snapshot_age >= 0
+            and isinstance(orders,dict) and isinstance(balance,dict)
+            and isinstance(snapshot.get("closed_orders"), dict)
+            and isinstance(trade, dict) and exposure.complete
+            and all("vol" in row and "pair" in row and "posstatus" in row for row in rows.values())
+        )
         # Daily PnL and peak-equity drawdown need reconciled fills, fees and external transfers.
         # Until that ledger baseline is proven, represent both as unknown rather than zero.
         return RiskSnapshot(
             equity, free, used, gross, net, len(rows), None, None,
-            margin_level, D(0), complete, False,
+            margin_level, snapshot_age, complete, False,
         )
 
     def _refresh_tax_report(self) -> None:
