@@ -13,7 +13,7 @@ Strategielogik darf nur Entscheidungen/Intents erstellen. Die zentrale `OrderAut
 - Danach erst nach Reconciliation: `OPEN`, `PARTIALLY_FILLED`, `FILLED`, `CANCELED` oder `EXPIRED`
 - `REJECTED`, `BLOCKED` und `UNKNOWN_RECONCILING` für Fehler-/Sperrzustände.
 
-Die aktuelle ClosedOrders-Abfrage umfasst nur den vom Standardaufruf gelieferten jüngsten Ausschnitt; vollständige ClosedOrders-Paginierung und automatische Zuordnung von Exchange-Orders/Trades zu lokalen Intents fehlen noch. Persistierte Order-Rohantworten sind Auditdaten, nicht der Nachweis eines vollständigen Kontenabgleichs. Nicht alle Exchangezustände werden automatisch aus Trades History, ClosedOrders und Ledgers in diese State Machine überführt.
+Beobachtete offene/geschlossene Orders werden anhand Client-Order-ID und – falls aus einer ACK bekannt – Exchange-Order-ID gegen ungelöste Intents gematcht. Ein eindeutig belegter Zustand wird nur fortgeschrieben, wenn Exchange-Status und Volumen konsistent sind. Mehrdeutige Matches, ungültige Mengen, nicht sichtbare bereits abgesendete Intents und offene externe Orders lösen einen persistenten Circuit Breaker aus; es erfolgt kein blindes Retry. Die aktuelle ClosedOrders-Abfrage umfasst nur den vom Standardaufruf gelieferten jüngsten Ausschnitt; vollständige ClosedOrders-Paginierung sowie Abgleich mit allen Trades, Margin-Lots, Funding-Ledgern und Walletbeständen fehlen noch. Order-Reconciliation ist daher ausdrücklich keine vollständige Portfolioreconciliation. Nicht alle Exchangezustände werden automatisch aus Trades History, ClosedOrders und Ledgers in diese State Machine überführt.
 
 ## Submit-Timeout und Wiederholungen
 
