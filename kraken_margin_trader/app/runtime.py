@@ -16,6 +16,7 @@ from app.market import parse_ohlc_rows, parse_tickers, usd_crypto_universe, volu
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.portfolio import aggregate_position_exposure
+from app.reconciliation import reconcile_order_intents
 from app.risk import choose_trade_leverage, evaluate_entry, size_position_usd
 from app.strategy import generate_trend_signal
 from app.tax import AustrianTaxReports
@@ -185,6 +186,12 @@ class TraderRuntime:
                         self.persistence.record_exchange_order(order_id, order, source="OPEN")
                     for order_id, order in closed_orders.items():
                         self.persistence.record_exchange_order(order_id, order, source="CLOSED")
+                    reconciliation = reconcile_order_intents(self.persistence)
+                    self.audit.emit(
+                        "ORDER_RECONCILIATION_SUMMARY",
+                        cycle_id=cycle_id,
+                        **reconciliation,
+                    )
                 self.persistence.record_event("ACCOUNT_SNAPSHOT_CAPTURED", {
                     "open_positions": len(rows),
                     "open_orders": len(open_orders) if open_orders is not None else None,
