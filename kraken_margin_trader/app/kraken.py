@@ -90,6 +90,10 @@ def api_key_permission_gate_reasons(
         missing_write = assessment.get("missing_order_write_permissions")
         if not isinstance(missing_write, list) or missing_write:
             reasons.append("LIVE_ORDER_PERMISSIONS_MISSING")
+    if assessment.get("ready_for_account_reconciliation") is not True and not reasons:
+        # Fail closed if the assessment schema evolves or an inconsistent assessment
+        # is passed in; readiness must never be inferred from missing failure fields.
+        reasons.append("API_KEY_ASSESSMENT_NOT_READY")
     return list(dict.fromkeys(reasons))
 
 
