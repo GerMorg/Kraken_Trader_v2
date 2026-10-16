@@ -253,3 +253,44 @@ def test_tax_report_refresh_invalidates_when_existing_event_content_changes(tmp_
     assert updated_report["events"][0]["manual_review"] is False
     audit.close()
     db.close()
+
+
+def test_runtime_fetches_a_fresh_pair_scoped_ticker_for_entry_evaluation():
+    from app.models import Instrument
+    from decimal import Decimal
+
+    runtime, db, audit = make_runtime()
+    instrument = Instrument(
+        "XXBTZUSD", "XBTUSD", "XBT/USD", "XBT", "USD", "online",
+        Decimal("0.0001"), 8, 1, (2, 3), (2, 3),
+    )
+
+    class FakePublicClient:
+        def __init__(self):
+            self.calls = []
+
+        def public(self, method, params=None):
+            self.calls.append((method, params))
+            assert method == "Ticker"
+            assert params == {"pair": "XBTUSD"}
+            return {
+                "XBTUSD": {
+                    "c": ["100", "100"],
+                    "a": ["101", "101"],
+                    "b": ["99", "99"],
+                    "v": ["10", "20"],
+                    "p": ["100", "100"],
+                },
+            }
+
+    client = FakePublicClient()
+    runtime.client = client
+    ticker = runtime._fetch_fresh_ticker(instrument)
+
+    assert ticker is not None
+    assert ticker.pair_id == "XXBTZUSD"
+    assert ticker.ask == Decimal("101")
+    assert ticker.bid == Decimal("99")
+    assert client.calls == [("Ticker", {"pair": "XBTUSD"})]
+    audit.close()
+    db.close()
