@@ -125,3 +125,30 @@ def test_unmatched_external_open_order_trips_breaker():
     assert any(item["reason"] == "EXCHANGE_OPEN_ORDER_WITHOUT_MATCHING_LOCAL_INTENT"
                for item in db.circuit_breakers())
     db.close()
+
+
+def test_rejected_exchange_order_can_close_submitting_intent_without_false_ack():
+    db = Persistence(":memory:")
+    _submitted(db)
+    db.record_exchange_order("O1", _order("rejected", executed="0"), source="CLOSED")
+
+    result = reconcile_order_intents(db)
+
+    assert db.intent_state("I1") == "REJECTED"
+    assert result["state_updates"] == 1
+    assert not db.circuit_breakers()
+    db.close()
+
+
+def test_canceled_order_with_unverifiable_executed_quantity_is_not_reconciled():
+    db = Persistence(":memory:")
+    _submitted(db)
+    db.record_exchange_order("O1", _order("canceled", executed="NaN"), source="CLOSED")
+
+    result = reconcile_order_intents(db)
+
+    assert db.intent_state("I1") == "SUBMITTING"
+    assert result["invalid_exchange_states"] == 1
+    assert any(item["reason"] == "EXCHANGE_ORDER_STATE_OR_QUANTITY_UNVERIFIABLE"
+               for item in db.circuit_breakers())
+    db.close()
