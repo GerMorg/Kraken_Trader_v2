@@ -111,3 +111,55 @@ def test_runtime_refreshes_yearly_tax_report_without_claiming_complete_source_co
     assert report["source_coverage_complete"] is False
     audit.close()
     db.close()
+
+
+def test_runtime_generates_reports_for_all_imported_tax_years(tmp_path):
+    import json
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.tax import AustrianTaxReports
+
+    runtime, db, audit = make_runtime()
+    runtime.tax_reports = AustrianTaxReports(str(tmp_path))
+    current_year = datetime.now(ZoneInfo("Europe/Vienna")).year
+    historical_year = current_year - 2
+
+    for year in (historical_year, current_year):
+        db.record_tax_event({
+            "event_id": f"TAX-YEAR-{year}",
+            "ts": f"{year}-01-01T12:00:00+00:00",
+            "year": year,
+            "event_type": "MARGIN_EVENT",
+            "verified": False,
+            "manual_review": True,
+        })
+
+    runtime._refresh_tax_report()
+
+    for year in (historical_year, current_year):
+        path = tmp_path / str(year) / "income-tax-report.json"
+        assert path.is_file()
+        report = json.loads(path.read_text(encoding="utf-8"))
+        assert report["year"] == year
+        assert report["event_count"] == 1
+        assert report["source_coverage_complete"] is False
+
+    # A new event in an already reported year must invalidate the cached signature.
+    db.record_tax_event({
+        "event_id": f"TAX-YEAR-{historical_year}-SECOND",
+        "ts": f"{historical_year}-02-01T12:00:00+00:00",
+        "year": historical_year,
+        "event_type": "LEDGER_EVENT",
+        "verified": False,
+        "manual_review": True,
+    })
+    runtime._refresh_tax_report()
+    historical_report = json.loads(
+        (tmp_path / str(historical_year) / "income-tax-report.json").read_text(encoding="utf-8")
+    )
+    assert historical_report["event_count"] == 2
+    assert historical_report["source_coverage_complete"] is False
+
+    audit.close()
+    db.close()
