@@ -1,3 +1,3 @@
 """Kraken Trader v2 application package."""
-__version__ = "0.1.17"
+__version__ = "0.1.18"
 STRATEGY_VERSION = "tsm-0.1.2"
