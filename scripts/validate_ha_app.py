@@ -106,7 +106,7 @@ else:
         errors.append("Dockerfile must smoke-test importing app.main during image build")
     if 'ENTRYPOINT ["/run.sh"]' not in dockerfile:
         errors.append("Dockerfile must enforce run.sh as the container ENTRYPOINT")
-    if "APP_MAIN=" not in run_script or "app/main.py" not in run_script:
+    if "APP_MAIN=" not in run_script or 'APP_MAIN="${APP_DIR}/main.py"' not in run_script:
         errors.append("run.sh must validate the expected app.main path before startup")
     if "PYTHONPATH=" not in run_script:
         errors.append("run.sh must explicitly configure the Python package search path")
