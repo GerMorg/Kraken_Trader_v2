@@ -126,15 +126,17 @@ def order_books(data, *, default_depth=D("1000"), shallow_timestamp=None):
             continue
         if shallow_timestamp == bar.timestamp:
             bid_depth = D("0.01")
+            second_bid_depth = D("0.01")
         else:
             bid_depth = default_depth
+            second_bid_depth = default_depth
         mid = bar.close
         snapshots.append(
             OrderBookSnapshot(
                 timestamp=bar.timestamp,
                 bids=(
                     BookLevel(mid * D("0.9995"), bid_depth),
-                    BookLevel(mid * D("0.999"), default_depth),
+                    BookLevel(mid * D("0.999"), second_bid_depth),
                 ),
                 asks=(
                     BookLevel(mid * D("1.0005"), default_depth),
