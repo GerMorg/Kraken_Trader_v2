@@ -251,3 +251,44 @@ def test_repeated_history_cursor_does_not_mark_backfill_complete():
     assert db.history_sync_state("TRADES")["next_cursor"] == "CURSOR-1"
     assert db.history_sync_state("TRADES")["initial_backfill_complete"] is False
     db.close()
+
+
+def test_history_refresh_corrects_fill_and_invalidates_stale_tax_valuation():
+    db = Persistence(":memory:")
+    first_trade = trade()
+    client = FakeHistoryClient(trade_pages={
+        None: {"trades": {"T-REVISED": first_trade}},
+    })
+    first = sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1,
+        now_epoch=1769000000,
+    )
+    assert first["generation_complete"] is True
+    assert db.fills()[0]["price"] == "90000"
+
+    tax_event = next(
+        item for item in db.tax_events_for_year(2026)
+        if item["event_id"] == "TRADE:T-REVISED"
+    )
+    assert db.update_tax_event({
+        **tax_event, "value_eur": "8300.00", "verified": True, "manual_review": False,
+        "payload": {**tax_event["payload"], "fx_rate_source": "verified-fixture"},
+    })
+
+    corrected_trade = {**first_trade, "price": "91000", "fee": "0.21"}
+    client.trade_pages = {None: {"trades": {"T-REVISED": corrected_trade}}}
+    second = sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1,
+        now_epoch=1769000300,
+    )
+    assert second["generation_complete"] is True
+    assert db.fills()[0]["price"] == "91000"
+    assert db.fills()[0]["fee"] == "0.21"
+    revised_event = next(
+        item for item in db.tax_events_for_year(2026)
+        if item["event_id"] == "TRADE:T-REVISED"
+    )
+    assert revised_event["value_eur"] is None
+    assert revised_event["verified"] == 0
+    assert revised_event["manual_review"] == 1
+    db.close()
