@@ -57,8 +57,12 @@ class TraderRuntime:
         complete=bool(equity_value is not None and free_value is not None and used_value is not None and
                       isinstance(orders,dict) and isinstance(balance,dict) and exposure.complete and
                       all("vol" in row and "pair" in row and "posstatus" in row for row in rows.values()))
-        # Verified drawdown/cashflow baseline and full portfolio reconciliation are not available yet.
-        return RiskSnapshot(equity,free,used,gross,net,len(rows),D(0),D(0),margin_level,D(0),complete,False)
+        # Daily PnL and peak-equity drawdown need reconciled fills, fees and external transfers.
+        # Until that ledger baseline is proven, represent both as unknown rather than zero.
+        return RiskSnapshot(
+            equity, free, used, gross, net, len(rows), None, None,
+            margin_level, D(0), complete, False,
+        )
 
     def _refresh_tax_report(self) -> None:
         if not self.settings.tax_report_enabled:
