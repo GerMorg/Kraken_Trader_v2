@@ -117,7 +117,7 @@ def test_backtest_does_not_double_charge_slippage_already_applied_to_fill_prices
 
 
 
-def order_books(data, *, default_depth=D("1000"), shallow_timestamp=None):
+def order_books(data, *, default_depth=D("1000"), shallow_timestamp=None, shallow_ask_timestamp=None):
     from app.orderbook_simulator import BookLevel, OrderBookSnapshot
 
     snapshots = []
@@ -130,6 +130,8 @@ def order_books(data, *, default_depth=D("1000"), shallow_timestamp=None):
         else:
             bid_depth = default_depth
             second_bid_depth = default_depth
+        ask_depth = D("0.01") if shallow_ask_timestamp == bar.timestamp else default_depth
+        second_ask_depth = D("0.01") if shallow_ask_timestamp == bar.timestamp else default_depth
         mid = bar.close
         snapshots.append(
             OrderBookSnapshot(
@@ -139,8 +141,8 @@ def order_books(data, *, default_depth=D("1000"), shallow_timestamp=None):
                     BookLevel(mid * D("0.999"), second_bid_depth),
                 ),
                 asks=(
-                    BookLevel(mid * D("1.0005"), default_depth),
-                    BookLevel(mid * D("1.001"), default_depth),
+                    BookLevel(mid * D("1.0005"), ask_depth),
+                    BookLevel(mid * D("1.001"), second_ask_depth),
                 ),
             )
         )
@@ -295,5 +297,19 @@ def test_orderbook_replay_rejects_margin_cost_evidence_in_wrong_currency():
     assert replay.status == "INCOMPLETE_REQUIRES_REVIEW"
     assert any(
         issue.reason == "ORDERBOOK_EXECUTION_REJECTED:MARGIN_COST_QUOTE_CURRENCY_MISMATCH"
+        for issue in replay.issues
+    )
+
+
+def test_orderbook_replay_fails_closed_when_entry_has_unfilled_remainder():
+    data = bars()
+    partial_entry_timestamp = data[73].timestamp
+    snapshots = order_books(data, shallow_ask_timestamp=partial_entry_timestamp)
+    replay = replay_orderbook(data, snapshots, leverage=1)
+
+    assert replay.status == "INCOMPLETE_REQUIRES_REVIEW"
+    assert replay.trades == ()
+    assert any(
+        issue.reason == "ENTRY_PARTIAL_REMAINDER_CANCEL_NOT_SIMULATED"
         for issue in replay.issues
     )
