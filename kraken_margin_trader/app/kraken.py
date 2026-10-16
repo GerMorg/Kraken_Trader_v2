@@ -110,6 +110,25 @@ class KrakenClient:
             "reconciliation_complete": False,
         }
 
+    def closed_orders(self, *, offset: int = 0, start: int | None = None,
+                      end: int | None = None, close_time: str = "both",
+                      include_trades: bool = True) -> dict[str, Any]:
+        """Fetch closed-order history for recovery; this does not itself reconcile fills."""
+        if offset < 0:
+            raise ValueError("CLOSED_ORDERS_OFFSET_MUST_BE_NON_NEGATIVE")
+        if close_time not in {"open", "close", "both"}:
+            raise ValueError("CLOSED_ORDERS_CLOSE_TIME_INVALID")
+        params: dict[str, Any] = {
+            "ofs": offset,
+            "closetime": close_time,
+            "trades": include_trades,
+        }
+        if start is not None:
+            params["start"] = start
+        if end is not None:
+            params["end"] = end
+        return self.private("ClosedOrders", params)
+
     def trades_history(self, *, offset: int = 0, start: int | str | None = None,
                        end: int | str | None = None) -> dict[str, Any]:
         if offset < 0:
