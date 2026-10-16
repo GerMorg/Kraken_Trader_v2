@@ -102,6 +102,8 @@ else:
 
     if "COPY app/ /opt/kraken-trader/app/" not in dockerfile:
         errors.append("Dockerfile must copy the Python package into the configured app root")
+    if "chmod -R a+rX /opt/kraken-trader/app" not in dockerfile:
+        errors.append("Dockerfile must make app source readable and package directories searchable for runtime UIDs")
     if "import app.main" not in dockerfile:
         errors.append("Dockerfile must smoke-test importing app.main during image build")
     if 'ENTRYPOINT ["/run.sh"]' not in dockerfile:
@@ -120,6 +122,8 @@ else:
         errors.append("run.sh must execute the loaded app.main module")
     if "app_dir_entries=" not in run_script or "main_readable=" not in run_script:
         errors.append("run.sh must emit package filesystem diagnostics on startup/failure")
+    if "def safe_entries(path):" not in run_script or "except OSError as exc:" not in run_script:
+        errors.append("run.sh diagnostics must tolerate inaccessible directories without masking the root error")
     if (
         "container entrypoint:" not in run_script
         or "PYTHONPATH before correction" not in run_script
@@ -131,8 +135,8 @@ else:
 
     ci_path = root / ".github" / "workflows" / "ci.yml"
     ci_workflow = ci_path.read_text(encoding="utf-8")
-    if "docker run --rm kraken-trader-v2:ci --healthcheck" not in ci_workflow:
-        errors.append("CI must run the container using its declared default ENTRYPOINT")
+    if "docker run --rm --user 10001:10001 --tmpfs /data:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" not in ci_workflow:
+        errors.append("CI must run the default entrypoint as an unprivileged user with writable temporary data")
     if "&& /run.sh --healthcheck" not in dockerfile:
         errors.append("Dockerfile build must execute the real startup bootstrap healthcheck")
     if "docker run --rm --entrypoint /run.sh" in ci_workflow:
