@@ -38,3 +38,14 @@ Das neue Projekt übernimmt keine Legacy-Lernengine, keinen News-/Gemini-Alpha-Z
 - Bei einer OHLC-Abfrage für ein einzelnes Instrument darf bei fehlendem erwarteten Pair-Key nur ein eindeutig einzelner Aliasdatensatz als Antwort gelten. Mehrere mögliche Ergebnisreihen werden geschlossen verworfen; ein Regressionstest schützt gegen die Zuordnung fremder Marktpreise zum aktuellen Pair.
 
 Diese Änderungen sind Datenintegritäts-Härtungen, kein Nachweis für vollständige Positions-/Ledger-Reconciliation, Ausführungsqualität oder Profitabilität. Das interne Live-Release-Gate bleibt geschlossen.
+
+
+## Erweiterte Laufzeit- und Orderintegritätsprüfungen (16.10.2026)
+
+- Öffentliche Kraken-REST-Anfragen werden im Client mindestens eine Sekunde auseinandergehalten; die Drosselung ist mit injizierbarer Uhr getestet. Das ist insbesondere wegen der paarbezogenen Quote-Erneuerung wichtig und darf bei zukünftiger Parallelisierung nicht umgangen werden.
+- Quotes werden nach den potenziell langen History-/Account-Aufrufen erneuert und unmittelbar vor einer Kandidatenbewertung paarbezogen abgefragt. Für die Auftragsmengenberechnung gilt Ask für Long und Bid für Short; Last-Price ist keine ausführbare Einstiegsnotierung.
+- Ticker mit fehlendem oder nicht positivem 24-Stunden-Quote-Umsatz werden nicht als Kandidaten akzeptiert. Mehrdeutige OHLC-Alias-Antworten werden verworfen.
+- Orderstatus-Reconciliation prüft zusätzlich zum Client-ID-Match den Instrument-Alias, die Richtung und die ursprüngliche Sollmenge. Abweichungen bleiben ungelöst und lösen einen persistenten Circuit Breaker aus.
+- Eine potenziell angenommene `AddOrder`-Anfrage mit unlesbarer HTTP-/JSON-Antwort, ungültiger Result-Struktur oder fehlender Transaktions-ID bleibt `UNKNOWN_RECONCILING`; sie wird nicht als sicher abgelehnt behandelt und nicht blind erneut gesendet.
+
+Diese Regressionen beweisen die jeweils geprüften Fehlerfälle; sie ersetzen weder einen vollständigen Neustart-/Crash-Recovery-Integrationstest noch den Konto-, Kredit-, USDC-, Transfer- und Gesamtportfolioabgleich. Das Source-Release-Gate bleibt geschlossen.
