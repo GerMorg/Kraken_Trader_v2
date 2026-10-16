@@ -147,14 +147,15 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
                 costs.margin_open_bps_on_extended_amount
                 + D(rollovers) * costs.margin_rollover_bps_on_extended_amount
             )
+        # Slippage is already embedded in the simulated executable entry/exit prices
+        # above. Charge it there exactly once; the separate cost ledger adds fees,
+        # quoted round-trip spread and margin financing only.
         total_cost = (
             D(2) * costs.taker_fee_bps_per_side
             + costs.spread_bps_round_trip
-            + D(2) * costs.slippage_bps_per_side
             + margin_cost_bps
         ) / D(100)
-        net = gross - total_cost
-        gross_pnl = notional * gross / D(100)
+        gross_pnl = quantity * (exit_price - entry) * sign
         total_cost_usd = notional * total_cost / D(100)
         net_pnl = gross_pnl - total_cost_usd
         net = net_pnl / notional * D(100)
