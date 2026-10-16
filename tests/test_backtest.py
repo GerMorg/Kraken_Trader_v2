@@ -152,8 +152,8 @@ def test_orderbook_replay_executes_trend_entries_and_exits_on_visible_depth():
     snapshots = order_books(data)
     replay = replay_orderbook(data, snapshots, leverage=1)
 
+    assert replay.issues == (), replay.issues
     assert replay.status == "ORDERBOOK_SCENARIO_ONLY"
-    assert replay.issues == ()
     assert replay.trades
     assert all(trade.notional_usd > 0 for trade in replay.trades)
     assert all(trade.total_cost_usd > 0 for trade in replay.trades)
@@ -176,8 +176,8 @@ def test_orderbook_replay_accepts_explicit_financing_in_the_usd_quote_currency()
     funding = {snapshot.timestamp: D("1") for snapshot in snapshots}
     replay = replay_orderbook(data, snapshots, leverage=2, funding=funding)
 
+    assert replay.issues == (), replay.issues
     assert replay.status == "ORDERBOOK_SCENARIO_ONLY"
-    assert replay.issues == ()
     assert replay.trades
     assert all(trade.total_cost_usd > 0 for trade in replay.trades)
 
