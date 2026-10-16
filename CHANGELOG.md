@@ -7,6 +7,7 @@
 - Ein Einstieg mit nur teilweiser sichtbarer Ausführung wird im Szenario-Replay nicht als vollständiger Trade ausgegeben, solange der nicht ausgeführte Restauftrag bzw. seine Stornierung nicht simuliert wird.
 - OHLCV-Simulator und Orderbuch-Replay schließen keine Position auf demselben Zeitstempel wie ihren Einstieg; ein Regressionstest schützt diesen zeitlichen Guard.
 - EEA-/Margin-Dokumentation wurde erneut anhand der offiziellen Kraken-Dokumentation geprüft. Tatsächliche Kredit-, Gebühren-, USDC- und Ledger-Zuordnung ist im Runtimepfad weiterhin nicht vollständig integriert/verifiziert. Keine Live-Freigabe.
+- Der Backtest weist Handelsgebühren, Spread, Depth-/Slippage-Impact und Margin-Kosten getrennt aus; Mid-Market-Brutto-PnL und All-in-Kosten müssen mathematisch zum Netto-PnL überleiten. Doppelte Spread-/Slippage-Abzüge werden durch Regressionstests verhindert.
 
 ## 0.1.8 — Orderbuch-Replay und sicherheitsgerichtete Tests
 
