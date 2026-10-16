@@ -190,6 +190,14 @@ class Persistence:
             result.append(item)
         return result
 
+    def tax_event_years(self) -> list[int]:
+        """Return all positive tax years with persisted source events."""
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT DISTINCT year FROM tax_events WHERE year > 0 ORDER BY year"
+            ).fetchall()
+        return [int(row["year"]) for row in rows]
+
     def history_sync_state(self, source: str) -> dict[str, Any] | None:
         normalized = source.upper()
         with self.lock:
