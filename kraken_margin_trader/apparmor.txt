@@ -1,7 +1,7 @@
 # Least-privilege AppArmor profile for the Kraken Trader HA app.
-# Keep this profile name aligned with the active Home Assistant app slug.
+# Home Assistant Supervisor validates this name against config.yaml slug.
 #include <tunables/global>
-profile hassio-addon-kraken_margin_trader flags=(attach_disconnected,mediate_deleted) {
+profile kraken_margin_trader flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
   #include <abstractions/nameservice>
 
