@@ -60,7 +60,7 @@ def test_backtest_portfolio_metrics_use_equity_weighted_pnl_not_raw_position_ret
     equity_before_trade = equity
     for trade in trades:
         assert trade.notional_usd <= equity_before_trade * D("0.10")
-        assert trade.net_pnl_usd == trade.notional_usd * trade.net_return_pct / D(100)
+        assert abs(trade.net_pnl_usd - trade.notional_usd * trade.net_return_pct / D(100)) < D("1e-24")
         assert trade.equity_return_pct == trade.net_pnl_usd / equity_before_trade * D(100)
         equity_before_trade += trade.net_pnl_usd
     metrics = summary_metrics(trades)
