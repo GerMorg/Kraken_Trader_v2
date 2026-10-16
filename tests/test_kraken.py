@@ -77,3 +77,38 @@ def test_closed_orders_reject_invalid_offset_and_filter_before_api_call():
     with pytest.raises(ValueError, match="CLOSED_ORDERS_CLOSE_TIME_INVALID"):
         client.closed_orders(close_time="sometimes")
     assert calls == []
+
+
+def test_cursor_history_params_omit_deprecated_offsets_and_resume_with_token():
+    from app.kraken import KrakenClient
+
+    client = KrakenClient("k", "s")
+    calls = []
+    client.private = lambda method, params=None: calls.append((method, params)) or {}
+    client.trades_history(start=100, end=200, with_cursor=True, cursor="opaque-trades")
+    client.closed_orders(start=100, end=200, close_time="close", with_cursor=True,
+                         cursor="opaque-orders")
+    assert calls == [
+        ("TradesHistory", {
+            "trades": True, "ledgers": True, "with_cursor": True,
+            "cursor": "opaque-trades", "start": 100, "end": 200,
+        }),
+        ("ClosedOrders", {
+            "closetime": "close", "trades": True, "with_cursor": True,
+            "cursor": "opaque-orders", "start": 100, "end": 200,
+        }),
+    ]
+
+
+def test_cursor_history_rejects_nonzero_offset_combination():
+    import pytest
+    from app.kraken import KrakenClient
+
+    client = KrakenClient("k", "s")
+    calls = []
+    client.private = lambda method, params=None: calls.append((method, params)) or {}
+    with pytest.raises(ValueError, match="TRADES_HISTORY_CURSOR_AND_OFFSET_MUTUALLY_EXCLUSIVE"):
+        client.trades_history(offset=5, with_cursor=True)
+    with pytest.raises(ValueError, match="CLOSED_ORDERS_CURSOR_AND_OFFSET_MUTUALLY_EXCLUSIVE"):
+        client.closed_orders(offset=5, with_cursor=True)
+    assert calls == []
