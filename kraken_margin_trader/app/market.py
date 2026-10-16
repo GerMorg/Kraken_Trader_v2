@@ -79,7 +79,15 @@ def parse_tickers(raw: dict[str, Any], instruments: Iterable[Instrument]) -> dic
         base_vol = _d(_array_item(row, "v", 1))
         mean_price = _d(_array_item(row, "p", 1))
         ticker = Ticker(aliases[key], last, bid, ask, base_vol*mean_price)
-        if ticker.last > 0 and ticker.bid > 0 and ticker.ask >= ticker.bid:
+        if (
+            ticker.last > 0
+            and ticker.bid > 0
+            and ticker.ask >= ticker.bid
+            and base_vol > 0
+            and mean_price > 0
+            and ticker.volume_quote_24h.is_finite()
+            and ticker.volume_quote_24h > 0
+        ):
             result[ticker.pair_id] = ticker
     return result
 
