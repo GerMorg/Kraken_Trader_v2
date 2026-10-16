@@ -202,3 +202,28 @@ def test_malformed_position_snapshot_is_persisted_but_never_marked_complete():
     assert db.latest_account_snapshot()["open_positions"]["P-BAD"] == {"pair": "XXBTZUSD"}
     assert db.latest_exchange_position_snapshot() == []
     db.close()
+
+
+def test_position_snapshot_requires_finite_quantities_and_consistent_closed_volume():
+    db = Persistence(":memory:")
+    base_position = {
+        "pair": "XXBTZUSD", "type": "buy", "posstatus": "open",
+        "vol": "1", "vol_closed": "0", "cost": "500", "fee": "2",
+        "margin": "100", "value": "520", "net": "18", "time": 1760590000,
+    }
+    for position in (
+        {**base_position, "margin": "NaN"},
+        {**base_position, "vol": "1", "vol_closed": "2"},
+        {**base_position, "value": "-1"},
+        {key: value for key, value in base_position.items() if key != "margin"},
+    ):
+        snapshot = {
+            "captured_at": "2026-10-16T05:30:00+00:00",
+            "balance": {}, "trade_balance": {},
+            "open_orders": {"open": {}}, "closed_orders": {"closed": {}},
+            "open_positions": {"P1": position},
+        }
+        stored = db.record_account_snapshot(snapshot)
+        assert stored["positions_shape_complete"] is False
+        assert stored["reconciliation_complete"] is False
+    db.close()
