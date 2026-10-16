@@ -89,3 +89,26 @@ def test_backtest_rejects_nan_costs_invalid_ohlcv_and_excessive_participation():
     )
     with pytest.raises(ValueError, match="INVALID_SIMULATOR_LIQUIDITY_LIMITS"):
         simulate_trend_trades(bars(), participation)
+
+
+def test_backtest_does_not_double_charge_slippage_already_applied_to_fill_prices():
+    costs = BacktestCosts(
+        taker_fee_bps_per_side=D("26"),
+        spread_bps_round_trip=D("8"),
+        slippage_bps_per_side=D("5"),
+        margin_open_bps_on_extended_amount=D("20"),
+        margin_rollover_bps_on_extended_amount=D("20"),
+        holding_hours=8,
+        leverage=2,
+    )
+    trades = simulate_trend_trades(bars(), costs, max_holding_bars=4)
+    assert trades
+    # 52 bps trading fees + 8 bps spread + 20 bps open + 2 * 20 bps rollover.
+    # The 5 bps/side slippage is already reflected in entry/exit execution prices.
+    for trade in trades:
+        assert trade.total_cost_pct == D("1.20")
+        direction_sign = D(1) if trade.direction == "LONG" else D(-1)
+        assert trade.gross_pnl_usd == (
+            trade.quantity * (trade.exit - trade.entry) * direction_sign
+        )
+        assert trade.net_pnl_usd == trade.gross_pnl_usd - trade.total_cost_usd
