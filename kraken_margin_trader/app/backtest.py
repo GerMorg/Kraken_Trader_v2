@@ -106,8 +106,10 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
             or bar.low > min(bar.open, bar.close, bar.high)
         ):
             raise ValueError("INVALID_OHLCV_BAR")
-    trades=[]; index=72
-    while index+1<len(ordered):
+    trades = []
+    index = 72
+    current_equity = equity_usd
+    while index + 1 < len(ordered) and current_equity > 0:
         signal=generate_trend_signal("SIM",[x.close for x in ordered[:index+1]],
                                      fast_threshold_bps=fast_threshold_bps,slow_threshold_bps=slow_threshold_bps)
         if not signal.has_direction:
@@ -115,7 +117,8 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
         entry_bar=ordered[index+1]
         if entry_bar.open<=0 or entry_bar.base_volume<=0:
             index+=1; continue
-        desired=equity_usd*position_pct/D(100)
+        equity_before_trade = current_equity
+        desired = equity_before_trade * position_pct / D(100)
         # Bar volume is only a proxy for reachable depth; this model is explicitly not an order-book simulator.
         notional=min(desired,entry_bar.open*entry_bar.base_volume*costs.max_volume_participation)
         if notional<costs.minimum_order_usd:
@@ -154,13 +157,14 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
         gross_pnl = notional * gross / D(100)
         total_cost_usd = notional * total_cost / D(100)
         net_pnl = gross_pnl - total_cost_usd
-        equity_return = net_pnl / equity_usd * D(100)
+        equity_return = net_pnl / equity_before_trade * D(100)
         trades.append(SimTrade(
             signal.direction, entry_bar.timestamp, exit_bar.timestamp, entry, exit_price,
             quantity, gross, total_cost, net, exit_reason, notional, gross_pnl,
             total_cost_usd, net_pnl, equity_return,
         ))
-        index=max(index+1,exit_index)
+        current_equity += net_pnl
+        index = max(index + 1, exit_index)
     return trades
 
 def summary_metrics(trades: Sequence[SimTrade]) -> dict[str,Decimal|int|str]:
@@ -174,20 +178,36 @@ def summary_metrics(trades: Sequence[SimTrade]) -> dict[str,Decimal|int|str]:
     average = sum(returns, D(0)) / D(len(returns))
     equity = peak = D(1)
     drawdown = D(0)
-    for ret in returns:
+    peak_index = 0
+    recovery_start: int | None = None
+    max_recovery_trades = 0
+    for index, ret in enumerate(returns, start=1):
         equity *= D(1) + ret
-        peak = max(peak, equity)
-        if peak > 0:
-            drawdown = max(drawdown, (peak - equity) / peak * D(100))
+        if equity >= peak:
+            if recovery_start is not None:
+                max_recovery_trades = max(max_recovery_trades, index - recovery_start)
+                recovery_start = None
+            peak = equity
+            peak_index = index
+        else:
+            if recovery_start is None:
+                recovery_start = peak_index
+            if peak > 0:
+                drawdown = max(drawdown, (peak - equity) / peak * D(100))
+    if recovery_start is not None:
+        max_recovery_trades = max(max_recovery_trades, len(returns) - recovery_start)
     wins = sum((t.net_pnl_usd for t in trades if t.net_pnl_usd > 0), D(0))
     losses = -sum((t.net_pnl_usd for t in trades if t.net_pnl_usd < 0), D(0))
     factor: Decimal | str = wins / losses if losses else ("NO_LOSSES" if wins else D(0))
     floats = [float(x) for x in returns]
     deviation = pstdev(floats) if len(floats) > 1 else 0.0
     sharpe = mean(floats) / deviation * sqrt(len(floats)) if deviation else 0.0
+    downside_values = [min(value, 0.0) for value in floats]
+    downside_deviation = sqrt(sum(value * value for value in downside_values) / len(downside_values))
+    sortino = mean(floats) / downside_deviation * sqrt(len(floats)) if downside_deviation else 0.0
     sorted_returns = sorted(returns)
     tail_count = max(1, int(len(sorted_returns) * 0.05))
-    es95 = -sum(sorted_returns[:tail_count], D(0)) / D(tail_count) * D(100)
+    es95 = max(D(0), -sum(sorted_returns[:tail_count], D(0)) / D(tail_count) * D(100))
     loss_streak = max_streak = 0
     for item in trades:
         if item.net_pnl_usd < 0:
@@ -213,8 +233,13 @@ def summary_metrics(trades: Sequence[SimTrade]) -> dict[str,Decimal|int|str]:
         "turnover_usd": turnover,
         "profit_factor": factor,
         "max_drawdown_pct": drawdown,
+        "max_recovery_trades": max_recovery_trades,
         "expected_shortfall_95_equity_return_pct": es95,
         "max_consecutive_loss_trades": max_streak,
+        "sortino_trade_proxy": D(str(sortino)),
+        "long_net_pnl_usd": sum((t.net_pnl_usd for t in trades if t.direction == "LONG"), D(0)),
+        "short_net_pnl_usd": sum((t.net_pnl_usd for t in trades if t.direction == "SHORT"), D(0)),
+        "mean_holding_hours": sum((D(t.exit_time - t.entry_time) / D(3600) for t in trades), D(0)) / D(len(trades)),
         "sharpe_trade_proxy": D(str(sharpe)),
         "long_count": sum(t.direction == "LONG" for t in trades),
         "short_count": sum(t.direction == "SHORT" for t in trades),
