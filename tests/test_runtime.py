@@ -427,3 +427,56 @@ def test_runtime_blocks_private_calls_when_key_cannot_query_complete_history(mon
     assert cycle_summaries
     audit.close()
     db.close()
+
+
+
+def test_runtime_retries_failed_api_key_preflight_without_persistent_breaker(monkeypatch):
+    import app.runtime as runtime_module
+    from app.kraken import KrakenAPIError
+    from app.models import Instrument
+
+    runtime, db, audit = make_runtime()
+    runtime.settings = Settings.from_mapping({
+        "kraken_api_key": "test-key",
+        "kraken_api_secret": "test-secret",
+        "tax_report_enabled": False,
+    })
+    instrument = Instrument(
+        "XXBTZUSD", "XBTUSD", "XBT/USD", "XBT", "USD", "online",
+        D("0.0001"), 8, 1, (2, 3), (2, 3),
+    )
+
+    class FakeClient:
+        def __init__(self):
+            self.permission_checks = 0
+
+        def public(self, method, params=None):
+            if method == "SystemStatus":
+                return {"status": "online"}
+            if method == "AssetPairs":
+                return {}
+            if method == "Ticker":
+                return {}
+            raise AssertionError(f"unexpected public endpoint: {method}")
+
+        def api_key_permission_assessment(self):
+            self.permission_checks += 1
+            raise KrakenAPIError("KRAKEN_PRIVATE:Permission denied")
+
+    client = FakeClient()
+    runtime.client = client
+    monkeypatch.setattr(runtime_module, "usd_crypto_universe", lambda _raw: [instrument])
+    monkeypatch.setattr(runtime_module, "parse_tickers", lambda *_args: {})
+
+    result = runtime.cycle()
+
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "API_KEY_PERMISSION_CHECK_FAILED"
+    assert result["permission_error_code"] == "KRAKEN_PRIVATE:Permission denied"
+    assert client.permission_checks == 1
+    assert db.circuit_breakers() == []
+    logs = audit.stream.getvalue()
+    assert "API_KEY_PERMISSION_CHECK_FAILED" in logs
+    assert "entries_blocked" in logs
+    audit.close()
+    db.close()
