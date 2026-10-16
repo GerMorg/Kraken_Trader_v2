@@ -217,3 +217,24 @@ def test_trade_history_missing_margin_field_is_incomplete_not_guessed_as_spot():
     assert result["last_error"] == "HISTORY_ITEM_INVALID"
     assert db.tax_events_for_year(2026) == []
     db.close()
+
+
+def test_repeated_history_cursor_does_not_mark_backfill_complete():
+    db = Persistence(":memory:")
+    client = FakeHistoryClient(trade_pages={
+        None: {"trades": {"T1": trade()}, "cursor": {"next": "CURSOR-1"}},
+        "CURSOR-1": {"trades": {"T2": trade()}, "cursor": {"next": "CURSOR-1"}},
+    })
+    first = sync_history_source(client=client, persistence=db, source="TRADES",
+                                page_budget=1, now_epoch=1769000000)
+    assert first["generation_complete"] is False
+    assert first["last_error"] is None
+    assert db.history_sync_state("TRADES")["next_cursor"] == "CURSOR-1"
+
+    second = sync_history_source(client=client, persistence=db, source="TRADES",
+                                 page_budget=1, now_epoch=1769000000)
+    assert second["generation_complete"] is False
+    assert second["last_error"] == "HISTORY_CURSOR_INVALID_OR_REPEATED"
+    assert db.history_sync_state("TRADES")["next_cursor"] == "CURSOR-1"
+    assert db.history_sync_state("TRADES")["initial_backfill_complete"] is False
+    db.close()
