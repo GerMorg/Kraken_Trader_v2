@@ -183,3 +183,149 @@ def simulate_order_book_execution(
         slices=tuple(slices),
         snapshot_timestamp=book.timestamp,
     )
+
+
+
+@dataclass(frozen=True)
+class OrderBookRoundTrip:
+    """Realized quote-currency accounting for a book-walk entry and exit.
+
+    Net PnL is deliberately unknown for margin unless an evidenced financing
+    cost in the same quote currency is supplied. This avoids silently treating
+    an EEA USDC liability as USD or treating an unknown rollover cost as zero.
+    """
+
+    direction: Literal["LONG", "SHORT"]
+    position_status: Literal[
+        "NOT_OPENED", "OPEN", "PARTIALLY_CLOSED", "CLOSED", "CLOSED_COST_INCOMPLETE"
+    ]
+    requested_notional_quote: Decimal
+    target_quantity: Decimal
+    entered_quantity: Decimal
+    closed_quantity: Decimal
+    remaining_quantity: Decimal
+    entry: OrderBookExecution | None
+    exit: OrderBookExecution | None
+    gross_realized_pnl_quote: Decimal | None
+    trading_fees_quote: Decimal
+    financing_cost_quote: Decimal | None
+    net_realized_pnl_quote: Decimal | None
+    entry_target_filled: bool
+    quote_currency: str
+
+
+def simulate_order_book_round_trip(
+    entry_book: OrderBookSnapshot,
+    exit_book: OrderBookSnapshot,
+    *,
+    direction: Literal["LONG", "SHORT"],
+    requested_notional_quote: Decimal,
+    entry_fee_bps: Decimal,
+    exit_fee_bps: Decimal,
+    quote_currency: str,
+    is_margin: bool = False,
+    financing_cost_quote: Decimal | None = None,
+    max_level_participation: Decimal = D("1"),
+) -> OrderBookRoundTrip:
+    """Replay a long/short round trip against two chronological L2 snapshots.
+
+    financing_cost_quote must be an evidenced amount already expressed in
+    quote_currency. For margin, omitting it prevents net PnL from being
+    reported. EEA USDC financing must therefore be valued explicitly before
+    it can be combined with a USD quote PnL.
+    """
+    if direction not in ("LONG", "SHORT"):
+        raise ValueError("ROUND_TRIP_DIRECTION_INVALID")
+    if exit_book.timestamp <= entry_book.timestamp:
+        raise ValueError("ROUND_TRIP_BOOKS_NOT_CHRONOLOGICAL")
+    if not requested_notional_quote.is_finite() or requested_notional_quote <= 0:
+        raise ValueError("ROUND_TRIP_NOTIONAL_INVALID")
+    normalized_quote = quote_currency.strip().upper()
+    if not normalized_quote:
+        raise ValueError("ROUND_TRIP_QUOTE_CURRENCY_REQUIRED")
+    if financing_cost_quote is not None and (
+        not financing_cost_quote.is_finite() or financing_cost_quote < 0
+    ):
+        raise ValueError("ROUND_TRIP_FINANCING_COST_INVALID")
+    if not is_margin and financing_cost_quote not in (None, D(0)):
+        raise ValueError("SPOT_ROUND_TRIP_CANNOT_HAVE_MARGIN_FINANCING")
+
+    midpoint = (entry_book.bids[0].price + entry_book.asks[0].price) / D(2)
+    target_quantity = requested_notional_quote / midpoint
+    entry_side: OrderSide = "BUY" if direction == "LONG" else "SELL"
+    exit_side: OrderSide = "SELL" if direction == "LONG" else "BUY"
+    entry = simulate_order_book_execution(
+        entry_book,
+        side=entry_side,
+        quantity=target_quantity,
+        fee_bps=entry_fee_bps,
+        max_level_participation=max_level_participation,
+    )
+    if entry.filled_quantity == 0:
+        return OrderBookRoundTrip(
+            direction, "NOT_OPENED", requested_notional_quote, target_quantity,
+            D(0), D(0), D(0), entry, None, None, D(0),
+            D(0) if not is_margin else financing_cost_quote,
+            None, False, normalized_quote,
+        )
+
+    exit_result = simulate_order_book_execution(
+        exit_book,
+        side=exit_side,
+        quantity=entry.filled_quantity,
+        fee_bps=exit_fee_bps,
+        max_level_participation=max_level_participation,
+    )
+    closed_quantity = exit_result.filled_quantity
+    remaining_quantity = entry.filled_quantity - closed_quantity
+    gross_pnl: Decimal | None = None
+    trading_fees = D(0)
+    allocated_financing: Decimal | None = D(0)
+    net_pnl: Decimal | None = None
+
+    if closed_quantity > 0 and entry.average_price is not None:
+        entry_quote_for_closed = entry.average_price * closed_quantity
+        if direction == "LONG":
+            gross_pnl = exit_result.quote_amount - entry_quote_for_closed
+        else:
+            gross_pnl = entry_quote_for_closed - exit_result.quote_amount
+        entry_fee_allocated = entry.fee_quote * closed_quantity / entry.filled_quantity
+        trading_fees = entry_fee_allocated + exit_result.fee_quote
+        if is_margin:
+            if financing_cost_quote is None:
+                allocated_financing = None
+            else:
+                allocated_financing = (
+                    financing_cost_quote * closed_quantity / entry.filled_quantity
+                )
+        else:
+            allocated_financing = D(0)
+        if allocated_financing is not None:
+            net_pnl = gross_pnl - trading_fees - allocated_financing
+
+    if remaining_quantity > 0:
+        status: Literal[
+            "NOT_OPENED", "OPEN", "PARTIALLY_CLOSED", "CLOSED", "CLOSED_COST_INCOMPLETE"
+        ] = "PARTIALLY_CLOSED" if closed_quantity > 0 else "OPEN"
+    elif is_margin and financing_cost_quote is None:
+        status = "CLOSED_COST_INCOMPLETE"
+    else:
+        status = "CLOSED"
+
+    return OrderBookRoundTrip(
+        direction=direction,
+        position_status=status,
+        requested_notional_quote=requested_notional_quote,
+        target_quantity=target_quantity,
+        entered_quantity=entry.filled_quantity,
+        closed_quantity=closed_quantity,
+        remaining_quantity=remaining_quantity,
+        entry=entry,
+        exit=exit_result,
+        gross_realized_pnl_quote=gross_pnl,
+        trading_fees_quote=trading_fees,
+        financing_cost_quote=allocated_financing,
+        net_realized_pnl_quote=net_pnl,
+        entry_target_filled=entry.complete,
+        quote_currency=normalized_quote,
+    )
