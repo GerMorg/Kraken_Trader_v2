@@ -1,4 +1,5 @@
 import io
+import time
 from decimal import Decimal
 
 from app.audit import AuditLogger
@@ -41,9 +42,11 @@ def make_runtime():
 
 def account_snapshot(positions):
     return {
+        "captured_at": time.time(),
         "trade_balance": {"e": "1000", "mf": "500", "m": "100", "ml": "450"},
         "open_positions": {"open": positions},
         "open_orders": {"open": {}},
+        "closed_orders": {"closed": {}},
         "balance": {"ZUSD": "1000"},
     }
 
@@ -86,6 +89,33 @@ def test_zero_equity_is_not_replaced_by_unrealized_excluded_balance():
     snapshot = runtime._account_risk_snapshot(raw)
     assert snapshot.equity_usd == D("0")
     assert snapshot.complete
+    audit.close()
+    db.close()
+
+
+def test_risk_snapshot_uses_actual_capture_time_and_rejects_stale_snapshot():
+    runtime, db, audit = make_runtime()
+    raw = account_snapshot({})
+    raw["captured_at"] = time.time() - 3600
+    snapshot = runtime._account_risk_snapshot(raw)
+    assert snapshot.snapshot_age_seconds >= D("3600")
+    assert snapshot.complete
+    assert not snapshot.reconciliation_ok
+    audit.close()
+    db.close()
+
+
+def test_risk_snapshot_rejects_missing_or_future_capture_timestamp():
+    runtime, db, audit = make_runtime()
+    missing = account_snapshot({})
+    missing.pop("captured_at")
+    assert not runtime._account_risk_snapshot(missing).complete
+
+    future = account_snapshot({})
+    future["captured_at"] = time.time() + 60
+    future_snapshot = runtime._account_risk_snapshot(future)
+    assert not future_snapshot.complete
+    assert future_snapshot.snapshot_age_seconds < 0
     audit.close()
     db.close()
 
