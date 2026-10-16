@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.11 — API-Key-Preflight und fail-closed Historienfreigabe
+
+- Jede authentifizierte Runtime prüft über Kraken `GetApiKeyInfo` die tatsächlich erteilten Leserechte, Key-Ablaufzeit und den erlaubten History-Zeitraum.
+- API-Key-Informationen werden auf erlaubte Metadaten reduziert; der mitgelieferte Key-Wert wird niemals in Logs oder Assessment-Ergebnisse übernommen.
+- Neue Risikoerhöhungen werden bei fehlenden Query-Scopes, eingeschränkter/unklarer Historienabfrage, Ablauf-/Metadatenfehlern, unerlaubten Withdrawal-Rechten oder fehlender Berechtigung für angeforderte reine Ordervalidierung blockiert.
+- Bekannte Scope-/Konfigurationsfehler werden zyklisch neu geprüft, statt allein dafür einen unauflösbaren permanenten Circuit Breaker zu setzen. Wenn private Leserechte fehlen, wird vor dem History-/Account-Snapshot-Pfad mit explizitem Blockierungsstatus abgebrochen; vorhandene Positionen können bei fehlendem Lesezugriff nicht zuverlässig überwacht werden.
+- Die Historienfreigabe verlangt weiterhin vollständige, fehlerfreie Trades-, Ledger- und Closed-Orders-Backfills. Die bestehende Konten-, Finanzierung-, Recovery-, OOS-/Forward- und HA-OS-Abnahme bleibt offen; keine Live-Freigabe.
+- Regressionstests prüfen vollständige und fehlende API-Scopes, Withdrawal-Rechte, Ablauf und History-Fenster, Secret-Redaction, angeforderte Orderrechte und Runtime-Abbruch ohne persistenten Konfigurations-Breaker.
+
+
 ## 0.1.10 — Fail-closed Historienfreigabe
 
 - Neue Risikoerhöhungen werden blockiert, solange nicht alle drei erforderlichen Exchange-Historien (Trades, Ledgers und geschlossene Orders) vollständig importiert sind und der aktuelle Sync fehlerfrei abgeschlossen wurde.
