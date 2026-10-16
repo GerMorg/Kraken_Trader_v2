@@ -75,7 +75,12 @@ class KrakenClient:
                      "Content-Type":"application/x-www-form-urlencoded", "User-Agent":f"KrakenTraderV2/{__version__}"})
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310 -- fixed Kraken HTTPS origin; endpoint names are static
-                value = _decode_response(response.read())
+                try:
+                    value = _decode_response(response.read())
+                except KrakenAPIError as exc:
+                    if method == "AddOrder":
+                        raise KrakenAmbiguousError("ADD_ORDER_RESPONSE_PARSE_OUTCOME_UNKNOWN") from exc
+                    raise
         except HTTPError as exc:
             try:
                 value = _decode_response(exc.read())
@@ -83,6 +88,10 @@ class KrakenClient:
                 if method == "AddOrder":
                     raise KrakenAmbiguousError("ADD_ORDER_HTTP_OUTCOME_UNKNOWN") from exc
                 raise KrakenAPIError("KRAKEN_PRIVATE_HTTP_ERROR") from exc
+            # A parsed, explicit Kraken error is a definite rejection. An HTTP
+            # error without one is not proof that the order was not accepted.
+            if method == "AddOrder" and not value.get("error"):
+                raise KrakenAmbiguousError("ADD_ORDER_HTTP_STATUS_OUTCOME_UNKNOWN") from exc
         except (TimeoutError, URLError, OSError) as exc:
             if method == "AddOrder":
                 raise KrakenAmbiguousError("ADD_ORDER_NETWORK_OUTCOME_UNKNOWN") from exc
@@ -91,6 +100,8 @@ class KrakenClient:
             raise KrakenAPIError("KRAKEN_PRIVATE:" + ";".join(str(x) for x in value["error"]))
         result = value.get("result", {})
         if not isinstance(result, dict):
+            if method == "AddOrder":
+                raise KrakenAmbiguousError("ADD_ORDER_RESULT_SHAPE_OUTCOME_UNKNOWN")
             raise KrakenAPIError("KRAKEN_PRIVATE_RESULT_INVALID")
         return result
 
