@@ -8,6 +8,7 @@
 - `app/market.py`: aktuelle Instrument-Metadaten; nur explizite reguläre `currency`-Basisklassen mit Online-USD-Quote; sichere Ticker-/OHLC-Validierung und konservative Lot-Rundung.
 - `app/strategy.py`: deterministische H1-Time-Series-Momentum-/Trend-Hypothese, Stop-Distanz-Proxys, Teilgewinnmengen-Helfer.
 - `app/position_management.py`: deterministischer, pro Exchange-Positions-ID arbeitender Shadow-Exit-Planer für Teilgewinn und Stop-Risikoreduktion; keinerlei eigenständige Orderübermittlung.
+- `app/backtest.py`: chronologischer OHLCV-Szenario-Simulator mit realistischen Grenzen klar benannt, konservativer voller Margin-Kostenbasis, konto-gewichteter Equitykurve und Drawdown-/Tail-/Kostenkennzahlen.
 - `app/costs.py`: Gesamtkostenmodell; wenn tatsächliche Handels-/Margin-Kosten unbekannt sind, Status `INCOMPLETE`.
 - `app/risk.py`: risikobasierte Notionalgröße und unabhängiges Entry-Gate.
 - `app/execution.py`: Order-Intent, Parametermapping, zentrale Order Authority und intern verriegelte Live-Freigabe.
