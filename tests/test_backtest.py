@@ -72,6 +72,18 @@ def test_backtest_portfolio_metrics_use_equity_weighted_pnl_not_raw_position_ret
     assert "max_recovery_trades" in metrics
     assert "long_net_pnl_usd" in metrics
     assert "short_net_pnl_usd" in metrics
+    assert metrics["all_in_costs_usd"] == (
+        metrics["trading_fees_usd"]
+        + metrics["spread_cost_usd"]
+        + metrics["slippage_impact_usd"]
+        + metrics["margin_cost_usd"]
+    )
+    assert abs(
+        metrics["gross_mid_market_pnl_usd"]
+        - metrics["all_in_costs_usd"]
+        - metrics["net_pnl_usd"]
+    ) < D("1e-18")
+    assert metrics["all_in_cost_share_of_abs_mid_market_gross_pnl_pct"] >= 0
 
 
 def test_backtest_rejects_nan_costs_invalid_ohlcv_and_excessive_participation():
@@ -159,6 +171,23 @@ def test_orderbook_replay_executes_trend_entries_and_exits_on_visible_depth():
     assert replay.trades
     assert all(trade.notional_usd > 0 for trade in replay.trades)
     assert all(trade.total_cost_usd > 0 for trade in replay.trades)
+    assert all(trade.gross_mid_market_pnl_usd is not None for trade in replay.trades)
+    assert all(trade.spread_cost_usd > 0 for trade in replay.trades)
+    assert all(trade.trading_fees_usd > 0 for trade in replay.trades)
+    assert all(trade.margin_cost_usd > 0 for trade in replay.trades)
+    assert all(trade.margin_cost_quality == "RESEARCH_ESTIMATE" for trade in replay.trades)
+    assert all(len(trade.margin_cost_evidence_ids) == 2 for trade in replay.trades)
+    assert all(
+        abs(
+            trade.gross_mid_market_pnl_usd
+            - trade.trading_fees_usd
+            - trade.spread_cost_usd
+            - trade.slippage_impact_usd
+            - trade.margin_cost_usd
+            - trade.net_pnl_usd
+        ) < D("1e-18")
+        for trade in replay.trades
+    )
     assert all(trade.quantity > 0 for trade in replay.trades)
     assert all(trade.entry_time < trade.exit_time for trade in replay.trades)
 
