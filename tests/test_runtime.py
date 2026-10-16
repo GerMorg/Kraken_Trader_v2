@@ -416,7 +416,7 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
 
     result = runtime.cycle()
 
-    assert result["status"] == "OK"
+    assert result["status"] == "OK", (result, audit.stream.getvalue())
     assert client.permission_checks == 1
     assert client.snapshot_options == [False]
     assert db.circuit_breakers() == []
