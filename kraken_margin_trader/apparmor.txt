@@ -15,7 +15,7 @@ profile hassio-addon-kraken_margin_trader flags=(attach_disconnected,mediate_del
   # Name resolution and CA trust.
   /etc/hosts r,
   /etc/resolv.conf r,
-  /etc/ssl/certs/** r,
+  /etc/ssl/** r,
 
   # Runtime pseudo-filesystems.
   /dev/null rw,
