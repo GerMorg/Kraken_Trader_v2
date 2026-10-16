@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.14 — tatsächlichen HA-Containerstart absichern
+
+- `run.sh` wird als Docker-`ENTRYPOINT` erzwungen, damit die geprüfte Startlogik nicht nur von einem optionalen Standardkommando abhängt. Ein früheres direktes `python -m app.main`-Kommando wird sicher normalisiert.
+- Die Runtime protokolliert beim Start Version, Python-Version und Executable; der Wrapper protokolliert Container-Root und `PYTHONPATH`, damit fehlende oder veraltete Images klarer identifizierbar sind.
+- Kritischer CI-Fix: Der bisherige Smoke-Test setzte `--entrypoint /run.sh` ausdrücklich und umging damit die Image-Startkonfiguration. Der Test startet jetzt das Image ohne Entrypoint-Override. Validator und Regressionstest verhindern, dass dieser Override zurückkehrt.
+
 ## 0.1.13 — Container-Start und Import-Smoke-Tests
 
 - Behebt den Startfehler `ModuleNotFoundError: No module named 'app'`, indem `run.sh` den erwarteten Paketpfad explizit prüft, `PYTHONPATH` setzt, in das Application-Root wechselt und Argumente an Python weitergibt.
