@@ -71,6 +71,40 @@ class Persistence:
                     raw_json TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS exchange_orders_client_id_idx ON exchange_orders(client_order_id);
+                CREATE TABLE IF NOT EXISTS account_snapshots(
+                    snapshot_id TEXT PRIMARY KEY,
+                    captured_at TEXT NOT NULL,
+                    position_count INTEGER NOT NULL,
+                    positions_shape_complete INTEGER NOT NULL,
+                    reconciliation_complete INTEGER NOT NULL,
+                    balance_json TEXT NOT NULL,
+                    trade_balance_json TEXT NOT NULL,
+                    open_orders_json TEXT NOT NULL,
+                    closed_orders_json TEXT NOT NULL,
+                    open_positions_json TEXT NOT NULL,
+                    raw_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS account_snapshots_captured_idx ON account_snapshots(captured_at);
+                CREATE TABLE IF NOT EXISTS exchange_position_snapshots(
+                    snapshot_id TEXT NOT NULL,
+                    position_txid TEXT NOT NULL,
+                    pair TEXT,
+                    side TEXT,
+                    position_status TEXT,
+                    volume TEXT,
+                    volume_closed TEXT,
+                    cost TEXT,
+                    fee TEXT,
+                    margin TEXT,
+                    value TEXT,
+                    net TEXT,
+                    pnl TEXT,
+                    opened_at TEXT,
+                    rollover_time TEXT,
+                    terms TEXT,
+                    raw_json TEXT NOT NULL,
+                    PRIMARY KEY(snapshot_id,position_txid)
+                );
                 CREATE TABLE IF NOT EXISTS history_sync_state(
                     source TEXT PRIMARY KEY,
                     start_epoch INTEGER NOT NULL,
@@ -91,7 +125,7 @@ class Persistence:
             if "next_cursor" not in history_columns:
                 self.connection.execute("ALTER TABLE history_sync_state ADD COLUMN next_cursor TEXT")
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','3') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','4') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
@@ -298,6 +332,118 @@ class Persistence:
                 "SELECT DISTINCT year FROM tax_events WHERE year > 0 ORDER BY year"
             ).fetchall()
         return [int(row["year"]) for row in rows]
+
+    def record_account_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        """Persist raw account/position snapshots without asserting they reconcile."""
+        required = ("captured_at", "balance", "trade_balance", "open_orders",
+                    "closed_orders", "open_positions")
+        if not isinstance(snapshot, dict) or any(key not in snapshot for key in required):
+            raise ValueError("ACCOUNT_SNAPSHOT_REQUIRED_FIELD_MISSING")
+        captured_at = str(snapshot["captured_at"]).strip()
+        if not captured_at:
+            raise ValueError("ACCOUNT_SNAPSHOT_TIMESTAMP_MISSING")
+        for key in ("balance", "trade_balance", "open_orders", "closed_orders", "open_positions"):
+            if not isinstance(snapshot[key], dict):
+                raise ValueError("ACCOUNT_SNAPSHOT_RESPONSE_SHAPE_INVALID:" + key)
+
+        raw_positions = snapshot["open_positions"]
+        wrapped = raw_positions.get("open")
+        positions = wrapped if isinstance(wrapped, dict) else raw_positions
+        positions_shape_complete = isinstance(positions, dict)
+        normalized: list[tuple[str, dict[str, Any]]] = []
+        for txid, row in positions.items():
+            if not isinstance(row, dict) or not str(txid).strip():
+                positions_shape_complete = False
+                continue
+            if "pair" not in row or "type" not in row:
+                positions_shape_complete = False
+                continue
+            normalized.append((str(txid), row))
+
+        snapshot_json = _json(snapshot)
+        import hashlib
+        snapshot_id = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
+        open_orders = snapshot["open_orders"].get("open", {})
+        closed_orders = snapshot["closed_orders"].get("closed", {})
+        with self.lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO account_snapshots(snapshot_id,captured_at,position_count,"
+                    "positions_shape_complete,reconciliation_complete,balance_json,trade_balance_json,"
+                    "open_orders_json,closed_orders_json,open_positions_json,raw_json) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        snapshot_id, captured_at, len(normalized), int(positions_shape_complete), 0,
+                        _json(snapshot["balance"]), _json(snapshot["trade_balance"]),
+                        _json(open_orders), _json(closed_orders), _json(raw_positions), snapshot_json,
+                    ),
+                )
+                for txid, row in normalized:
+                    self.connection.execute(
+                        "INSERT OR REPLACE INTO exchange_position_snapshots(snapshot_id,position_txid,pair,side,"
+                        "position_status,volume,volume_closed,cost,fee,margin,value,net,pnl,opened_at,"
+                        "rollover_time,terms,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            snapshot_id, txid, row.get("pair"), row.get("type"),
+                            row.get("posstatus"), str(row["vol"]) if row.get("vol") is not None else None,
+                            str(row["vol_closed"]) if row.get("vol_closed") is not None else None,
+                            str(row["cost"]) if row.get("cost") is not None else None,
+                            str(row["fee"]) if row.get("fee") is not None else None,
+                            str(row["margin"]) if row.get("margin") is not None else None,
+                            str(row["value"]) if row.get("value") is not None else None,
+                            str(row["net"]) if row.get("net") is not None else None,
+                            str(row["net"]) if row.get("net") is not None else None,
+                            str(row["time"]) if row.get("time") is not None else None,
+                            str(row["rollovertm"]) if row.get("rollovertm") is not None else None,
+                            str(row.get("terms", "")), _json(row),
+                        ),
+                    )
+                self.connection.execute("COMMIT")
+            except Exception:
+                self.connection.execute("ROLLBACK")
+                raise
+        return {
+            "snapshot_id": snapshot_id,
+            "captured_at": captured_at,
+            "position_count": len(normalized),
+            "positions_shape_complete": positions_shape_complete,
+            "reconciliation_complete": False,
+        }
+
+    def latest_account_snapshot(self) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT * FROM account_snapshots ORDER BY captured_at DESC,snapshot_id DESC LIMIT 1"
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        for field in (
+            "balance_json", "trade_balance_json", "open_orders_json",
+            "closed_orders_json", "open_positions_json", "raw_json",
+        ):
+            parsed = json.loads(str(result.pop(field)))
+            result[field.removesuffix("_json")] = parsed
+        result["positions_shape_complete"] = bool(result["positions_shape_complete"])
+        result["reconciliation_complete"] = bool(result["reconciliation_complete"])
+        return result
+
+    def latest_exchange_position_snapshot(self) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT p.* FROM exchange_position_snapshots p "
+                "JOIN account_snapshots a ON a.snapshot_id=p.snapshot_id "
+                "WHERE a.snapshot_id=(SELECT snapshot_id FROM account_snapshots "
+                "ORDER BY captured_at DESC,snapshot_id DESC LIMIT 1) "
+                "ORDER BY p.opened_at,p.position_txid"
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["raw"] = json.loads(str(item.pop("raw_json")))
+            result.append(item)
+        return result
 
     def history_sync_state(self, source: str) -> dict[str, Any] | None:
         normalized = source.upper()
