@@ -6,7 +6,6 @@
 - Fehlende, doppelte, unbekannte oder fehlerhafte History-Quellen haben explizite Blockierungsgründe; ein abgeschlossenes initiales Backfill allein reicht nicht, wenn der aktuelle Refresh noch läuft.
 - Die Sperre gilt für neue Entries; die bestehende Positionsüberwachung und protokollierte Risikoreduktionsentscheidungen werden nicht durch diesen History-Gate ersetzt oder deaktiviert.
 - Regressionstests prüfen vollständige, fehlende, doppelte, unvollständige und fehlerhafte History-Quellen.
-- TradesHistory-/ClosedOrders-Cursor-Backfills werden nur bei expliziter `cursor.next`-Metadatenstruktur abgeschlossen. Ein fehlender Cursor wird nicht mehr fälschlich als Ende der Börsenhistorie behandelt; Regressionstest ergänzt.
 - Diese Ergänzung schließt keine offenen Echtgeld-Konto-, Margin-Funding-, Settlement-, historischen Out-of-Sample-, Forward-Shadow- oder HA-OS-Abnahmekriterien. Live-Ausführung bleibt gesperrt.
 
 
