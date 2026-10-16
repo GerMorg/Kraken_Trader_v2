@@ -49,6 +49,9 @@ class SimTrade:
     total_cost_usd: Decimal
     net_pnl_usd: Decimal
     equity_return_pct: Decimal
+    margin_cost_quality: str | None = None
+    margin_cost_evidence_ids: tuple[str, ...] = ()
+    margin_cost_sources: tuple[str, ...] = ()
 
 def chronological_split(values: Sequence[Bar], train_fraction: float=0.6,
                         validation_fraction: float=0.2) -> tuple[list[Bar],list[Bar],list[Bar]]:
@@ -540,6 +543,9 @@ def replay_trend_strategy_on_order_books(
                 total_cost_usd=total_cost_quote,
                 net_pnl_usd=net_pnl,
                 equity_return_pct=net_pnl / current_equity * D(100),
+                margin_cost_quality=round_trip.margin_cost_evidence_quality,
+                margin_cost_evidence_ids=round_trip.margin_cost_evidence_ids,
+                margin_cost_sources=round_trip.margin_cost_sources,
             )
         )
         current_equity += net_pnl
