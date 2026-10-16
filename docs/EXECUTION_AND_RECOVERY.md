@@ -17,7 +17,9 @@ Beobachtete offene/geschlossene Orders werden anhand Client-Order-ID und – fal
 
 ## Submit-Timeout und Wiederholungen
 
-Ein Netzwerkfehler bei `AddOrder` kann eintreten, nachdem Kraken die Order bereits angenommen hat. Dieser Fall wird daher als `UNKNOWN_RECONCILING` gespeichert. Es wird keine automatische Wiederholung gesendet. Vor einem erneuten Versuch müssen mindestens Client-Order-ID, offene/geschlossene Orders, Trades History, Open Positions und relevante Ledgerdaten abgeglichen werden. Das ist noch als vollständige End-to-End-Recovery umzusetzen.
+Ein Netzwerkfehler bei `AddOrder` kann eintreten, nachdem Kraken die Order bereits angenommen hat. Dieser Fall wird daher als `UNKNOWN_RECONCILING` gespeichert. Es wird keine automatische Wiederholung gesendet. Vor einem erneuten Versuch müssen mindestens Client-Order-ID, offene/geschlossene Orders, Trades History, Open Positions und relevante Ledgerdaten abgeglichen werden. Die Trades-History-Persistenz trennt inzwischen anhand des Kraken-Felds `margin` technisch Spot- und Margin-Fills; fehlende/ungültige Werte blockieren den Backfill. Das ist noch keine PnL- oder steuerliche Reconciliation.
+
+Das ist noch als vollständige End-to-End-Recovery umzusetzen.
 
 ## Persistenz
 
