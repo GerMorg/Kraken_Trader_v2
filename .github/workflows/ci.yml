@@ -62,6 +62,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -f kraken_margin_trader/Dockerfile -t kraken-trader-v2:ci kraken_margin_trader
-      # Run the image exactly as Home Assistant should: do not override ENTRYPOINT.
-      # This validates the default image startup configuration, wrapper, and import.
-      - run: docker run --rm kraken-trader-v2:ci --healthcheck
+      # Verify package readability and startup when the process is not root.
+      # The temporary /data avoids changing persistent data permissions and sends no orders.
+      - run: docker run --rm --user 10001:10001 --tmpfs /data:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck
