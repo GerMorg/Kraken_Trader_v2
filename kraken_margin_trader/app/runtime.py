@@ -11,7 +11,8 @@ from zoneinfo import ZoneInfo
 from app.audit import AuditLogger
 from app.config import Settings
 from app.costs import estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
-from app.kraken import KrakenAPIError, KrakenClient
+from app.kraken import KrakenAPIError, KrakenAmbiguousError, KrakenClient
+from app.execution import OrderAuthority, OrderIntent
 from app.history_sync import sync_history_source
 from app.market import executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
 from app.models import Action, RiskSnapshot
@@ -57,6 +58,28 @@ class TraderRuntime:
         self.client=KrakenClient(settings.api_key,settings.api_secret,persistence.next_nonce)
         self.tax_reports=AustrianTaxReports()
         self._last_tax_report_signature: dict[int, tuple[str, ...]] = {}
+
+    def _validate_shadow_order(self, intent: dict[str, Any], instrument: Any) -> dict[str, Any]:
+        """Ask Kraken to validate a proposed order without placing a live order."""
+        order = OrderIntent(
+            intent_id=str(intent["intent_id"]),
+            decision_id=str(intent["decision_id"]),
+            client_order_id=str(intent["client_order_id"]),
+            pair=str(intent["pair"]),
+            action=Action(str(intent["action"])),
+            side=str(intent["side"]).upper(),
+            volume=D(str(intent["volume"])),
+            product_type=str(intent["product_type"]).upper(),
+            leverage=int(intent["leverage"]) if intent.get("leverage") is not None else None,
+            decision_evidence=dict(intent.get("decision_evidence", {})),
+        )
+        authority = OrderAuthority(self.client, self.persistence, self.settings, self.audit)
+        return authority.execute(
+            order,
+            instrument,
+            prechecks_passed=True,
+            validate_only=True,
+        )
 
     def _fetch_fresh_ticker(self, instrument: Any) -> Any | None:
         """Fetch this market's executable quote immediately before entry evaluation."""
@@ -448,7 +471,42 @@ class TraderRuntime:
                     "product_type":"SPOT_MARGIN" if is_margin else "CASH_SPOT",
                     "decision_evidence":{"cycle_id":cycle_id,"net_edge_is_uncalibrated_proxy":True,
                     "estimated_cost_bps":str(cost.total_round_trip_bps),"margin_fee_source":"UNCONFIRMED" if is_margin else "NOT_APPLICABLE"}}
-                if self.persistence.create_intent(intent, initial_state="SHADOW_ONLY"):
+                if self.settings.validate_shadow_orders:
+                    try:
+                        validation = self._validate_shadow_order(intent, instrument)
+                    except KrakenAmbiguousError as exc:
+                        counts["blocked"] += 1
+                        self.audit.emit(
+                            "SHADOW_ORDER_VALIDATION_OUTCOME_UNKNOWN",
+                            cycle_id=cycle_id,
+                            pair=instrument.wsname,
+                            intent_id=intent["intent_id"],
+                            code=exc.code,
+                            no_live_order_submitted=True,
+                        )
+                        continue
+                    except (KrakenAPIError, ValueError) as exc:
+                        counts["blocked"] += 1
+                        self.audit.emit(
+                            "SHADOW_ORDER_VALIDATION_FAILED",
+                            cycle_id=cycle_id,
+                            pair=instrument.wsname,
+                            intent_id=intent["intent_id"],
+                            exception_type=type(exc).__name__,
+                            code=getattr(exc, "code", str(exc))[:200],
+                            no_live_order_submitted=True,
+                        )
+                        continue
+                    counts["intents"] += 1
+                    self.audit.emit(
+                        "SHADOW_ORDER_VALIDATED_NO_ORDER_SENT",
+                        cycle_id=cycle_id,
+                        pair=instrument.wsname,
+                        intent_id=intent["intent_id"],
+                        validation_state=validation.get("state"),
+                        no_live_order_submitted=True,
+                    )
+                elif self.persistence.create_intent(intent, initial_state="SHADOW_ONLY"):
                     counts["intents"] += 1
                     self.audit.emit(
                         "SHADOW_INTENT_PERSISTED_NO_ORDER_SENT",
