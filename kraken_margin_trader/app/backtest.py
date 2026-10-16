@@ -52,6 +52,12 @@ class SimTrade:
     margin_cost_quality: str | None = None
     margin_cost_evidence_ids: tuple[str, ...] = ()
     margin_cost_sources: tuple[str, ...] = ()
+    gross_mid_market_pnl_usd: Decimal | None = None
+    trading_fees_usd: Decimal = D(0)
+    spread_cost_usd: Decimal = D(0)
+    slippage_impact_usd: Decimal = D(0)
+    margin_cost_usd: Decimal = D(0)
+    all_in_cost_pct: Decimal | None = None
 
 def chronological_split(values: Sequence[Bar], train_fraction: float=0.6,
                         validation_fraction: float=0.2) -> tuple[list[Bar],list[Bar],list[Bar]]:
@@ -131,7 +137,8 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
             index+=1; continue
         quantity=notional/entry_bar.open
         sign=D(1) if signal.direction=="LONG" else D(-1)
-        entry=entry_bar.open+sign*entry_bar.open*costs.slippage_bps_per_side/D(10000)
+        entry_reference_price = entry_bar.open
+        entry=entry_reference_price+sign*entry_reference_price*costs.slippage_bps_per_side/D(10000)
         end=min(len(ordered)-1,index+max(1,max_holding_bars))
         exit_price=ordered[end].open; exit_reason="TIME_EXIT"; exit_index=end
         for probe_index,probe in enumerate(ordered[index+1:end+1],start=index+1):
@@ -142,7 +149,8 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
                 exit_price=min(trigger,probe.open) if signal.direction=="LONG" else max(trigger,probe.open)
                 exit_index=probe_index; exit_reason="STOP_GAP_CONSERVATIVE"; break
         exit_bar=ordered[exit_index]
-        exit_price-=sign*exit_price*costs.slippage_bps_per_side/D(10000)
+        exit_reference_price = exit_price
+        exit_price-=sign*exit_reference_price*costs.slippage_bps_per_side/D(10000)
         rollovers=max(0,costs.holding_hours//4)
         margin_cost_bps = D(0)
         if costs.leverage > 1:
@@ -163,6 +171,15 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
         gross_pnl = quantity * (exit_price - entry) * sign
         gross = gross_pnl / notional * D(100)
         total_cost_usd = notional * total_cost / D(100)
+        trading_fees_usd = notional * D(2) * costs.taker_fee_bps_per_side / D(10000)
+        spread_cost_usd = notional * costs.spread_bps_round_trip / D(10000)
+        margin_cost_usd = notional * margin_cost_bps / D(10000)
+        entry_slippage_usd = abs(entry - entry_reference_price) * quantity
+        exit_slippage_usd = abs(exit_price - exit_reference_price) * quantity
+        slippage_impact_usd = entry_slippage_usd + exit_slippage_usd
+        gross_mid_market_pnl_usd = gross_pnl + slippage_impact_usd
+        all_in_costs_usd = trading_fees_usd + spread_cost_usd + slippage_impact_usd + margin_cost_usd
+        all_in_cost_pct = all_in_costs_usd / notional * D(100)
         net_pnl = gross_pnl - total_cost_usd
         net = net_pnl / notional * D(100)
         equity_return = net_pnl / equity_before_trade * D(100)
@@ -170,6 +187,12 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
             signal.direction, entry_bar.timestamp, exit_bar.timestamp, entry, exit_price,
             quantity, gross, total_cost, net, exit_reason, notional, gross_pnl,
             total_cost_usd, net_pnl, equity_return,
+            gross_mid_market_pnl_usd=gross_mid_market_pnl_usd,
+            trading_fees_usd=trading_fees_usd,
+            spread_cost_usd=spread_cost_usd,
+            slippage_impact_usd=slippage_impact_usd,
+            margin_cost_usd=margin_cost_usd,
+            all_in_cost_pct=all_in_cost_pct,
         ))
         current_equity += net_pnl
         index = max(index + 1, exit_index)
@@ -227,9 +250,27 @@ def summary_metrics(trades: Sequence[SimTrade]) -> dict[str,Decimal|int|str]:
     gross_pnl = sum((t.gross_pnl_usd for t in trades), D(0))
     net_pnl = sum((t.net_pnl_usd for t in trades), D(0))
     turnover = sum((t.notional_usd * D(2) for t in trades), D(0))
+    trading_fees = sum((t.trading_fees_usd for t in trades), D(0))
+    spread_costs = sum((t.spread_cost_usd for t in trades), D(0))
+    slippage_costs = sum((t.slippage_impact_usd for t in trades), D(0))
+    margin_costs = sum((t.margin_cost_usd for t in trades), D(0))
+    all_in_costs = trading_fees + spread_costs + slippage_costs + margin_costs
+    gross_mid_market = sum(
+        (
+            t.gross_mid_market_pnl_usd
+            if t.gross_mid_market_pnl_usd is not None
+            else t.gross_pnl_usd
+        )
+        for t in trades
+    , D(0))
     cost_share = (
         total_costs / abs(gross_pnl) * D(100) if gross_pnl != 0
         else (D(100) if total_costs > 0 else D(0))
+    )
+    all_in_cost_share = (
+        all_in_costs / abs(gross_mid_market) * D(100)
+        if gross_mid_market != 0
+        else (D(100) if all_in_costs > 0 else D(0))
     )
     return {
         "trade_count": len(trades),
@@ -238,6 +279,13 @@ def summary_metrics(trades: Sequence[SimTrade]) -> dict[str,Decimal|int|str]:
         "total_costs_usd": total_costs,
         "net_pnl_usd": net_pnl,
         "cost_share_of_absolute_gross_pnl_pct": cost_share,
+        "gross_mid_market_pnl_usd": gross_mid_market,
+        "trading_fees_usd": trading_fees,
+        "spread_cost_usd": spread_costs,
+        "slippage_impact_usd": slippage_costs,
+        "margin_cost_usd": margin_costs,
+        "all_in_costs_usd": all_in_costs,
+        "all_in_cost_share_of_abs_mid_market_gross_pnl_pct": all_in_cost_share,
         "turnover_usd": turnover,
         "profit_factor": factor,
         "max_drawdown_pct": drawdown,
@@ -555,6 +603,21 @@ def replay_trend_strategy_on_order_books(
                 margin_cost_quality=round_trip.margin_cost_evidence_quality,
                 margin_cost_evidence_ids=round_trip.margin_cost_evidence_ids,
                 margin_cost_sources=round_trip.margin_cost_sources,
+                gross_mid_market_pnl_usd=round_trip.mid_market_gross_pnl_quote,
+                trading_fees_usd=round_trip.trading_fees_quote,
+                spread_cost_usd=round_trip.spread_cost_quote or D(0),
+                slippage_impact_usd=round_trip.slippage_impact_quote or D(0),
+                margin_cost_usd=round_trip.margin_cost_quote or D(0),
+                all_in_cost_pct=(
+                    (
+                        round_trip.trading_fees_quote
+                        + (round_trip.spread_cost_quote or D(0))
+                        + (round_trip.slippage_impact_quote or D(0))
+                        + (round_trip.margin_cost_quote or D(0))
+                    )
+                    / trade_notional
+                    * D(100)
+                ),
             )
         )
         current_equity += net_pnl
