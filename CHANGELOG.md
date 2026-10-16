@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.15 — Python-Modulpfad im Prozess explizit setzen
+
+- Reagiert auf den bestätigten HA-Log von 0.1.14: Die Dateien wurden vom Shell-Wrapper gefunden, aber `python -m app.main` konnte `app` zur Laufzeit weiterhin nicht auflösen.
+- Startet die Anwendung über einen Python-Bootstrap, der `/opt/kraken-trader` direkt in `sys.path` einfügt, bevor `app.main` importiert wird. Das Bootstrap-Protokoll meldet Executable, Arbeitsverzeichnis und `sys.path[0]`.
+- Der Image-Build prüft sowohl den normalen Paketimport als auch den expliziten Bootstrap-Pfad. CI startet das Image weiterhin ohne Entrypoint-Override.
+
 ## 0.1.14 — tatsächlichen HA-Containerstart absichern
 
 - `run.sh` wird als Docker-`ENTRYPOINT` erzwungen, damit die geprüfte Startlogik nicht nur von einem optionalen Standardkommando abhängt. Ein früheres direktes `python -m app.main`-Kommando wird sicher normalisiert.

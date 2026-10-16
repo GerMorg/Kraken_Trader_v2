@@ -1,6 +1,6 @@
 FROM python:3.12-alpine
 
-ARG BUILD_VERSION=0.1.14
+ARG BUILD_VERSION=0.1.15
 ARG BUILD_ARCH=amd64
 
 LABEL \
@@ -18,6 +18,7 @@ RUN chmod 0755 /run.sh && mkdir -p /data/logs
 # cannot import the application package. This catches incorrect copy/context paths.
 RUN test -f /opt/kraken-trader/app/main.py \
   && test -f /opt/kraken-trader/app/__init__.py \
-  && python -c "import app.main; print('Kraken Trader application import: OK')"
+  && python -c "import app.main; print('Kraken Trader application import: OK')" \
+  && python -c "import sys; sys.path.insert(0, '/opt/kraken-trader'); import app.main; print('Kraken Trader explicit-path bootstrap import: OK')"
 
 ENTRYPOINT ["/run.sh"]

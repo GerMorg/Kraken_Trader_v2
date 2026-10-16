@@ -110,8 +110,10 @@ else:
         errors.append("run.sh must validate the expected app.main path before startup")
     if "PYTHONPATH=" not in run_script:
         errors.append("run.sh must explicitly configure the Python package search path")
-    if 'exec python -m app.main "$@"' not in run_script:
-        errors.append("run.sh must execute app.main and forward command-line arguments")
+    if "sys.path.insert(0, app_root)" not in run_script:
+        errors.append("run.sh must explicitly insert APP_ROOT into Python sys.path")
+    if "import app.main" not in run_script or "sys.exit(app.main.main())" not in run_script:
+        errors.append("run.sh must import and execute app.main through the explicit Python bootstrap")
     if (
         "container entrypoint:" not in run_script
         or "PYTHONPATH before correction" not in run_script

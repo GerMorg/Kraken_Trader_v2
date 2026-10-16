@@ -66,7 +66,9 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "APP_MAIN=" in run_script and "app/main.py" in run_script
     assert "PYTHONPATH=" in run_script
     assert "container entrypoint:" in run_script
-    assert 'exec python -m app.main "$@"' in run_script
+    assert "sys.path.insert(0, app_root)" in run_script
+    assert "import app.main" in run_script
+    assert "sys.exit(app.main.main())" in run_script
 
     workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "docker run --rm kraken-trader-v2:ci --healthcheck" in workflow
