@@ -7,7 +7,7 @@ from statistics import mean, pstdev
 from typing import Literal, Sequence, cast
 
 from app.strategy import generate_trend_signal
-from app.orderbook_simulator import OrderBookRoundTrip, OrderBookSnapshot, simulate_order_book_round_trip
+from app.orderbook_simulator import MarginCostEvidence, OrderBookRoundTrip, OrderBookSnapshot, simulate_order_book_round_trip
 
 D=Decimal
 
@@ -272,7 +272,7 @@ def replay_trend_strategy_on_order_books(
     costs: BacktestCosts,
     order_books: Sequence[OrderBookSnapshot],
     *,
-    financing_cost_quote_by_entry_timestamp: dict[int, Decimal] | None = None,
+    margin_cost_evidence_by_entry_timestamp: dict[int, MarginCostEvidence] | None = None,
     quote_currency: str = "USD",
     equity_usd: Decimal = D("10000"),
     position_pct: Decimal = D("10"),
@@ -454,9 +454,9 @@ def replay_trend_strategy_on_order_books(
             )
             break
 
-        funding = (
-            financing_cost_quote_by_entry_timestamp.get(entry_bar.timestamp)
-            if financing_cost_quote_by_entry_timestamp is not None
+        margin_evidence = (
+            margin_cost_evidence_by_entry_timestamp.get(entry_bar.timestamp)
+            if margin_cost_evidence_by_entry_timestamp is not None
             else None
         )
         try:
@@ -469,7 +469,7 @@ def replay_trend_strategy_on_order_books(
                 exit_fee_bps=costs.taker_fee_bps_per_side,
                 quote_currency=normalized_quote,
                 is_margin=costs.leverage > 1,
-                financing_cost_quote=funding,
+                margin_cost_evidence=margin_evidence,
                 max_level_participation=max_book_level_participation,
             )
         except ValueError as exc:
@@ -511,7 +511,7 @@ def replay_trend_strategy_on_order_books(
             or round_trip.entry.average_price is None
             or round_trip.exit.average_price is None
             or round_trip.gross_realized_pnl_quote is None
-            or round_trip.financing_cost_quote is None
+            or round_trip.margin_cost_quote is None
         ):
             issues.append(OrderBookReplayIssue(exit_event_timestamp, "EXECUTION_ACCOUNTING_INCOMPLETE", signal.direction))
             break
@@ -520,7 +520,7 @@ def replay_trend_strategy_on_order_books(
         if trade_notional <= 0:
             issues.append(OrderBookReplayIssue(exit_event_timestamp, "EXECUTION_NOTIONAL_INVALID", signal.direction))
             break
-        total_cost_quote = round_trip.trading_fees_quote + round_trip.financing_cost_quote
+        total_cost_quote = round_trip.trading_fees_quote + round_trip.margin_cost_quote
         gross_pnl = round_trip.gross_realized_pnl_quote
         net_pnl = round_trip.net_realized_pnl_quote
         trades.append(
