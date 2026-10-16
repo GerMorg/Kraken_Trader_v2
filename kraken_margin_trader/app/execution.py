@@ -124,6 +124,9 @@ class OrderAuthority:
                   "client_order_id":intent.client_order_id,"pair":intent.pair,
                   "action":intent.action.value,"side":intent.side,"volume":str(intent.volume),
                   "leverage":intent.leverage,"product_type":intent.product_type,
+                  "position_txid": intent.position_txid,
+                  "settlement_currency": intent.settlement_currency,
+                  "settlement_amount_verified": intent.settlement_amount_verified,
                   "decision_evidence":intent.decision_evidence}
         if not self.persistence.create_intent(record):
             self.audit.emit("ORDER_INTENT_DUPLICATE_BLOCKED",intent_id=intent.intent_id)
