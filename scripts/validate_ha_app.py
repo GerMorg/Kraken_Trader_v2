@@ -138,7 +138,7 @@ else:
         errors.append("Dockerfile must expose BUILD_VERSION for startup diagnostics")
     # A custom AppArmor profile is mandatory because application code, DNS sockets,
     # Python runtime libraries, and the writable tax-report mount need explicit access.
-    if "profile hassio-addon-kraken_margin_trader " not in apparmor_profile:
+    if "profile kraken_margin_trader " not in apparmor_profile:
         errors.append("AppArmor profile name must match the Home Assistant add-on profile")
     for permission in (
         "/opt/kraken-trader/app/ r,",
