@@ -98,3 +98,83 @@ def test_order_builder_rejects_invalid_direction_for_any_order_action():
     )
     with pytest.raises(ValueError, match="ORDER_DIRECTION_INVALID"):
         build_add_order_params(intent, instrument(), validate_only=True)
+
+
+def test_settlement_requires_position_and_reconciled_ledger_evidence():
+    intent = OrderIntent.create(
+        decision_id="settle-evidence",
+        pair="XBTUSD",
+        action=Action.SETTLE_MARGIN_POSITION,
+        side="LONG",
+        volume=D("0.05"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+        position_txid="P-OPEN-1",
+        settlement_currency="USDC",
+        settlement_amount_verified=True,
+    )
+    with pytest.raises(ValueError, match="SETTLEMENT_EVIDENCE_REQUIRED"):
+        build_add_order_params(intent, instrument(), validate_only=True)
+
+
+def test_settlement_order_requires_evidence_that_matches_position_currency_and_volume():
+    evidence = {
+        "settlement": {
+            "position_txid": "P-OPEN-1",
+            "currency": "USDC",
+            "borrowed_amount": "1200.00",
+            "position_volume": "0.05",
+            "snapshot_id": "snapshot-sha256",
+            "ledger_evidence_id": "LEDGER-SETTLEMENT-DEBT",
+            "ledger_reconciled": True,
+        }
+    }
+    intent = OrderIntent.create(
+        decision_id="settle-evidence-valid",
+        pair="XBTUSD",
+        action=Action.SETTLE_MARGIN_POSITION,
+        side="LONG",
+        volume=D("0.05"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+        position_txid="P-OPEN-1",
+        settlement_currency="USDC",
+        settlement_amount_verified=True,
+        evidence=evidence,
+    )
+    params = build_add_order_params(intent, instrument(), validate_only=True)
+    assert params["ordertype"] == "settle-position"
+    assert params["type"] == "buy"
+    assert params["volume"] == "0.05"
+    assert params["pair"] == "XBTUSD"
+    assert params["leverage"] == "2"
+    assert params["validate"] is True
+
+
+def test_settlement_rejects_currency_or_ledger_mismatch():
+    evidence = {
+        "settlement": {
+            "position_txid": "P-OTHER",
+            "currency": "USD",
+            "borrowed_amount": "1200",
+            "position_volume": "0.05",
+            "snapshot_id": "snapshot-sha256",
+            "ledger_evidence_id": "LEDGER-1",
+            "ledger_reconciled": True,
+        }
+    }
+    intent = OrderIntent.create(
+        decision_id="settle-evidence-mismatch",
+        pair="XBTUSD",
+        action=Action.SETTLE_MARGIN_POSITION,
+        side="LONG",
+        volume=D("0.05"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+        position_txid="P-OPEN-1",
+        settlement_currency="USDC",
+        settlement_amount_verified=True,
+        evidence=evidence,
+    )
+    with pytest.raises(ValueError, match="SETTLEMENT_EVIDENCE_POSITION_MISMATCH"):
+        build_add_order_params(intent, instrument(), validate_only=True)
