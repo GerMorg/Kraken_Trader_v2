@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import time
+import threading
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -40,13 +41,40 @@ def _decode_response(raw: bytes) -> dict[str, Any]:
     return value
 
 class KrakenClient:
-    def __init__(self, api_key: str | None = None, api_secret: str | None = None,
-                 nonce_provider: Callable[[], int] | None = None, timeout_seconds: float = 15.0) -> None:
+    MIN_PUBLIC_REQUEST_INTERVAL_SECONDS = 1.0
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+        nonce_provider: Callable[[], int] | None = None,
+        timeout_seconds: float = 15.0,
+        clock: Callable[[], float] | None = None,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
         self.api_key, self.api_secret = api_key or "", api_secret or ""
         self.nonce_provider = nonce_provider or (lambda: time.time_ns() // 1000)
         self.timeout_seconds = timeout_seconds
+        self._clock = clock or time.monotonic
+        self._sleeper = sleeper or time.sleep
+        self._public_rate_lock = threading.Lock()
+        self._last_public_request_at: float | None = None
+
+    def _wait_for_public_rate_limit(self) -> None:
+        # Kraken's public Spot REST endpoints share a conservative per-client
+        # request cadence. Serialize reservation of request-start times to avoid
+        # bursts when the runtime is extended with concurrent market scans.
+        with self._public_rate_lock:
+            now = self._clock()
+            if self._last_public_request_at is not None:
+                elapsed = now - self._last_public_request_at
+                wait_seconds = self.MIN_PUBLIC_REQUEST_INTERVAL_SECONDS - elapsed
+                if wait_seconds > 0:
+                    self._sleeper(wait_seconds)
+            self._last_public_request_at = self._clock()
 
     def public(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._wait_for_public_rate_limit()
         encoded = urlencode(params or {}, doseq=True)
         url = f"{SPOT_BASE}/0/public/{method}" + (("?" + encoded) if encoded else "")
         request = Request(url, headers={"User-Agent":f"KrakenTraderV2/{__version__}"})
