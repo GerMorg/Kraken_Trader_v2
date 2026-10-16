@@ -69,9 +69,13 @@ class KrakenClient:
         payload = dict(params or {})
         payload["nonce"] = str(self.nonce_provider())
         encoded = urlencode(payload, doseq=True).encode("utf-8")
+        try:
+            signature = sign_spot(path, payload, self.api_secret)
+        except (ValueError, TypeError) as exc:
+            raise KrakenAPIError("KRAKEN_PRIVATE_SIGNING_CONFIGURATION_INVALID") from exc
         request = Request(
             SPOT_BASE + path, data=encoded, method="POST",
-            headers={"API-Key": self.api_key, "API-Sign": sign_spot(path, payload, self.api_secret),
+            headers={"API-Key": self.api_key, "API-Sign": signature,
                      "Content-Type":"application/x-www-form-urlencoded", "User-Agent":f"KrakenTraderV2/{__version__}"})
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310 -- fixed Kraken HTTPS origin; endpoint names are static
@@ -84,10 +88,10 @@ class KrakenClient:
         except HTTPError as exc:
             try:
                 value = _decode_response(exc.read())
-            except KrakenAPIError:
+            except (KrakenAPIError, TimeoutError, URLError, OSError) as body_exc:
                 if method == "AddOrder":
-                    raise KrakenAmbiguousError("ADD_ORDER_HTTP_OUTCOME_UNKNOWN") from exc
-                raise KrakenAPIError("KRAKEN_PRIVATE_HTTP_ERROR") from exc
+                    raise KrakenAmbiguousError("ADD_ORDER_HTTP_OUTCOME_UNKNOWN") from body_exc
+                raise KrakenAPIError("KRAKEN_PRIVATE_HTTP_ERROR") from body_exc
             # A parsed, explicit Kraken error is a definite rejection. An HTTP
             # error without one is not proof that the order was not accepted.
             if method == "AddOrder" and not value.get("error"):
