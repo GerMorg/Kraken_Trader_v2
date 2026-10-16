@@ -27,14 +27,11 @@ profile kraken_margin_trader flags=(attach_disconnected,mediate_deleted) {
   /tmp/** rwk,
 
   # Application source is read-only at runtime. Explicitly allow directory
-  # traversal/listing and file reads: Unix mode bits alone cannot override
+  # listing and file reads: Unix mode bits alone cannot override
   # AppArmor's mandatory access-control decisions.
   /opt/ r,
-  /opt/ x,
   /opt/kraken-trader/ r,
-  /opt/kraken-trader/ x,
   /opt/kraken-trader/app/ r,
-  /opt/kraken-trader/app/ x,
   /opt/kraken-trader/app/** r,
 
   # Writable state and tax-report output are limited to declared HA mounts.
