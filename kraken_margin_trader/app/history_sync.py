@@ -159,6 +159,8 @@ def sync_history_source(
     source: str,
     page_budget: int = PAGE_BUDGET_PER_SOURCE,
     now_epoch: int | None = None,
+    force_refresh: bool = False,
+    start_epoch_override: int | None = None,
 ) -> dict[str, Any]:
     """Incrementally backfill one Kraken source and never overstate history completeness."""
     normalized = source.upper()
@@ -176,11 +178,18 @@ def sync_history_source(
             "last_error": None,
         }
         persistence.save_history_sync_state(state)
-    elif state["generation_complete"] and now - int(state["end_epoch"]) >= REFRESH_INTERVAL_SECONDS:
+    elif state["generation_complete"] and (
+        force_refresh or now - int(state["end_epoch"]) >= REFRESH_INTERVAL_SECONDS
+    ):
         previous_end = int(state["end_epoch"])
+        requested_start = (
+            max(0, int(start_epoch_override) - 1)
+            if force_refresh and start_epoch_override is not None
+            else max(0, previous_end - REFRESH_OVERLAP_SECONDS)
+        )
         state = {
             "source": normalized,
-            "start_epoch": max(0, previous_end - REFRESH_OVERLAP_SECONDS),
+            "start_epoch": requested_start,
             "end_epoch": now, "next_offset": 0, "expected_count": None,
             "initial_backfill_complete": bool(state["initial_backfill_complete"]),
             "generation_complete": False, "last_error": None,
