@@ -252,7 +252,7 @@ class TraderRuntime:
                     free_collateral_usd=snapshot.free_collateral_usd,leverage=int(leverage or 1))
                 gate=evaluate_entry(instrument=instrument,signal=signal,snapshot=snapshot,settings=self.settings,
                     cost_complete=cost.complete,estimated_net_edge_bps=edge,leverage=int(leverage or 1),
-                    proposed_notional_usd=proposed)
+                    proposed_notional_usd=proposed,edge_calibrated=False)
                 if not gate.allowed:
                     counts["blocked"]+=1
                     self.audit.emit("RISK_GATE_REJECTED",cycle_id=cycle_id,pair=instrument.wsname,
