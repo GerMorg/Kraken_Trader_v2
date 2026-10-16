@@ -84,3 +84,26 @@ def test_ohlc_parser_rejects_ambiguous_alias_fallback_instead_of_using_first_mar
     ]
     result = parse_ohlc_rows({"OTHERPAIR": rows, "THIRDPAIR": rows, "last": "cursor"}, "XBTUSD")
     assert result == []
+
+
+def test_entry_sizing_reference_uses_ask_for_long_and_bid_for_short():
+    from app.market import executable_reference_price
+    from app.models import Ticker
+
+    ticker = Ticker(
+        "XBTUSD", Decimal("100"), Decimal("99"), Decimal("101"), Decimal("10000")
+    )
+    assert executable_reference_price(ticker, "LONG") == Decimal("101")
+    assert executable_reference_price(ticker, "SHORT") == Decimal("99")
+    assert executable_reference_price(ticker, "HOLD") == Decimal("0")
+
+
+def test_entry_sizing_reference_fails_closed_on_invalid_quote():
+    from app.market import executable_reference_price
+    from app.models import Ticker
+
+    invalid = Ticker(
+        "XBTUSD", Decimal("100"), Decimal("102"), Decimal("101"), Decimal("10000")
+    )
+    assert executable_reference_price(invalid, "LONG") == Decimal("0")
+    assert executable_reference_price(invalid, "SHORT") == Decimal("0")
