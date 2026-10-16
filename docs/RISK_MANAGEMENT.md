@@ -46,3 +46,8 @@ Testen: adverse Gap- und Spread-Szenarien, Gebührenschocks, USDC-Depeg, Margin-
 Die derzeitige Positionsverwaltung beobachtet jeden einzelnen Kraken-Positions-Lot, bewertet den Ausstieg mit Bid (Long) beziehungsweise Ask (Short) und erstellt nur eine Empfehlung. Die Startparameter sind +3,5 % Brutto-Kursbewegung für einen Teilverkauf von 50 % der aktuell verbleibenden Menge und −3,0 % für eine Empfehlung zur Schließung der verbleibenden Menge. Die Mengengrundlage ist `vol - vol_closed`; die Menge wird auf die Börsen-Lotpräzision abgerundet und nie auf die Mindestmenge angehoben.
 
 Diese Schwellen sind keine wissenschaftlich validierte Strategie-Optimierung. Sie sind weder Gebühren-/Funding-bereinigte Gewinntrigger noch garantierte Stop-Loss-Ausführung: Open fee, Rollover, tatsächlicher Kreditbetrag, weitere Slippage, Gebührenwährung, Kraken-Orderakzeptanz und die lokale Prozessverfügbarkeit werden nicht durch diesen Shadow-Plan abgesichert. Die Empfehlungen werden protokolliert, nie übermittelt. Eine echte Reduktion erfordert später die zentrale Order Authority, geprüfte Positions-/Order-Reconciliation und nachgewiesene Exchange-Parameter.
+
+
+### Unresolved partial-close allocation
+
+The position-level reconciliation intentionally does not infer that a position transaction ID equals a trade ID. It uses the opening order reference and pair/side to select a fill only when that mapping is unique. If Kraken exposes a positive `vol_closed` while the app cannot unambiguously link the reducing trades to this exact lot, the position is not considered reconciled and a persistent circuit breaker is raised. This is a deliberate safety block; there is no assumed FIFO attribution across overlapping lots.
