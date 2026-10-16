@@ -175,7 +175,7 @@ def test_account_and_position_snapshots_are_durable_and_auditable():
     assert latest["snapshot_id"] == recorded["snapshot_id"]
     assert latest["balance"]["USDC"] == "100.0"
     assert latest["trade_balance"]["ml"] == "500"
-    assert latest["raw_json"]["open_positions"]["P1"]["margin"] == "100"
+    assert latest["raw"]["open_positions"]["P1"]["margin"] == "100"
 
     positions = db.latest_exchange_position_snapshot()
     assert len(positions) == 1
