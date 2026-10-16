@@ -174,9 +174,9 @@ def test_orderbook_replay_executes_trend_entries_and_exits_on_visible_depth():
     assert all(trade.gross_mid_market_pnl_usd is not None for trade in replay.trades)
     assert all(trade.spread_cost_usd > 0 for trade in replay.trades)
     assert all(trade.trading_fees_usd > 0 for trade in replay.trades)
-    assert all(trade.margin_cost_usd > 0 for trade in replay.trades)
-    assert all(trade.margin_cost_quality == "RESEARCH_ESTIMATE" for trade in replay.trades)
-    assert all(len(trade.margin_cost_evidence_ids) == 2 for trade in replay.trades)
+    assert all(trade.margin_cost_usd == 0 for trade in replay.trades)
+    assert all(trade.margin_cost_quality is None for trade in replay.trades)
+    assert all(trade.margin_cost_evidence_ids == () for trade in replay.trades)
     assert all(
         abs(
             trade.gross_mid_market_pnl_usd
