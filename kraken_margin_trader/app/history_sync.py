@@ -53,6 +53,12 @@ def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
         # The margin field is required to distinguish a cash-spot fill from
         # a margin fill. Missing data must never be silently classified as spot.
         return False
+    ledger_refs = row.get("ledgers")
+    if not isinstance(ledger_refs, list) or any(
+        not isinstance(ledger_id, str) or not ledger_id.strip()
+        for ledger_id in ledger_refs
+    ):
+        return False
     side = str(row.get("type", "")).lower()
     pair = str(row.get("pair", "")).strip()
     if (
@@ -81,7 +87,7 @@ def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
             "pair": pair, "side": side, "price": str(price),
             "margin_amount": str(margin_amount),
             "product_type": "SPOT_MARGIN" if margin_amount > 0 else "CASH_SPOT",
-            "related_ledger_ids": row.get("ledgers", []),
+            "related_ledger_ids": ledger_refs,
             "raw": row,
         },
     })
