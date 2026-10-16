@@ -77,3 +77,48 @@ def test_costed_plan_rejects_unknown_direction_non_finite_edge_and_negative_net_
         gross_edge_proxy_bps=D("NaN"), margin_cost=margin, spot_cost=spot) is None
     assert select_costed_plan(direction="LONG", margin_leverage=2,
         gross_edge_proxy_bps=D("10"), margin_cost=margin, spot_cost=spot) is None
+
+
+def test_margin_fee_basis_uses_full_extended_notional_not_leverage_discount():
+    # 40 trade + 5 spread + 4 slippage + 10 opening + 10 rollover = 69 bps.
+    for leverage in (2, 3):
+        cost = estimate_round_trip_cost(
+            is_margin=True, taker_fee_bps=D("20"), spread_bps=D("5"),
+            slippage_bps_per_side=D("2"), holding_hours=8, leverage=leverage,
+            margin_open_bps=D("10"), margin_rollover_bps=D("5"),
+        )
+        assert cost.complete
+        assert cost.total_round_trip_bps == D("69")
+
+
+def test_margin_open_fee_is_counted_when_no_rollover_is_due():
+    cost = estimate_round_trip_cost(
+        is_margin=True, taker_fee_bps=D("20"), spread_bps=D("5"),
+        slippage_bps_per_side=D("2"), holding_hours=3, leverage=2,
+        margin_open_bps=D("10"), margin_rollover_bps=None,
+    )
+    assert cost.complete
+    assert cost.rollover_count == 0
+    assert cost.total_round_trip_bps == D("59")
+
+
+def test_invalid_margin_fee_rate_fails_closed_without_decimal_error():
+    cost = estimate_round_trip_cost(
+        is_margin=True, taker_fee_bps=D("20"), spread_bps=D("5"),
+        slippage_bps_per_side=D("2"), holding_hours=8, leverage=2,
+        margin_open_bps=D("NaN"), margin_rollover_bps=D("5"),
+    )
+    assert not cost.complete
+    assert cost.total_round_trip_bps is None
+    assert "MARGIN_OPEN_FEE_INVALID" in cost.reasons
+
+
+def test_non_finite_holding_hours_fail_closed():
+    cost = estimate_round_trip_cost(
+        is_margin=True, taker_fee_bps=D("20"), spread_bps=D("5"),
+        slippage_bps_per_side=D("2"), holding_hours=D("NaN"), leverage=2,
+        margin_open_bps=D("10"), margin_rollover_bps=D("5"),
+    )
+    assert not cost.complete
+    assert cost.total_round_trip_bps is None
+    assert "HOLDING_HOURS_INVALID" in cost.reasons

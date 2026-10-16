@@ -13,15 +13,20 @@ class CostEstimate:
     trade_fee_bps: Decimal | None
     spread_bps: Decimal
     slippage_bps_per_side: Decimal
-    margin_open_bps_on_borrowed: Decimal | None
-    margin_rollover_bps_on_borrowed: Decimal | None
+    margin_open_bps_on_extended_amount: Decimal | None
+    margin_rollover_bps_on_extended_amount: Decimal | None
     rollover_count: int
     quality: str
     reasons: tuple[str,...]
 
 def rollover_count_for_hold(hours: int | Decimal) -> int:
-    duration=D(str(hours))
-    return int((duration/D(4)).to_integral_value(rounding=ROUND_FLOOR)) if duration>0 else 0
+    try:
+        duration = D(str(hours))
+    except (ArithmeticError, TypeError, ValueError) as exc:
+        raise ValueError("HOLDING_HOURS_INVALID") from exc
+    if not duration.is_finite() or duration < 0:
+        raise ValueError("HOLDING_HOURS_INVALID")
+    return int((duration / D(4)).to_integral_value(rounding=ROUND_FLOOR))
 
 def percent_fee_to_bps(value: Any) -> Decimal | None:
     try:
@@ -42,18 +47,31 @@ def estimate_round_trip_cost(*, is_margin: bool, taker_fee_bps: Decimal | None,
         reasons.append("SPREAD_INVALID")
     if not slippage_bps_per_side.is_finite() or slippage_bps_per_side<0:
         reasons.append("SLIPPAGE_INVALID")
-    rollovers=rollover_count_for_hold(holding_hours)
-    margin_cost=D(0)
+    try:
+        rollovers = rollover_count_for_hold(holding_hours)
+    except (ArithmeticError, TypeError, ValueError):
+        rollovers = 0
+        reasons.append("HOLDING_HOURS_INVALID")
+    margin_cost = D(0)
     if is_margin:
-        if leverage<2:
+        if leverage < 2:
             reasons.append("MARGIN_LEVERAGE_INVALID")
-        if margin_open_bps is None or margin_open_bps<0:
+        if margin_open_bps is None:
             reasons.append("MARGIN_OPEN_FEE_UNKNOWN")
-        if rollovers and (margin_rollover_bps is None or margin_rollover_bps<0):
-            reasons.append("MARGIN_ROLLOVER_FEE_UNKNOWN")
-        if margin_open_bps is not None and margin_rollover_bps is not None and leverage>=2:
-            borrowed=D(1)-D(1)/D(leverage)
-            margin_cost=borrowed*(margin_open_bps+D(rollovers)*margin_rollover_bps)
+        elif not margin_open_bps.is_finite() or margin_open_bps < 0:
+            reasons.append("MARGIN_OPEN_FEE_INVALID")
+        else:
+            # Kraken's fee basis is the amount extended; account collateral does
+            # not reduce it. Until the loan amount is verified, use full notional.
+            margin_cost += margin_open_bps
+
+        if margin_rollover_bps is None:
+            if rollovers:
+                reasons.append("MARGIN_ROLLOVER_FEE_UNKNOWN")
+        elif not margin_rollover_bps.is_finite() or margin_rollover_bps < 0:
+            reasons.append("MARGIN_ROLLOVER_FEE_INVALID")
+        elif rollovers:
+            margin_cost += D(rollovers) * margin_rollover_bps
     complete=not reasons
     total=None
     fee_total=None
