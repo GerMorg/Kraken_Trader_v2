@@ -80,3 +80,29 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "docker run --rm --user 10001:10001 --tmpfs /data:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" in workflow
     assert "docker run --rm --entrypoint /run.sh" not in workflow
     assert "&& /run.sh --healthcheck" in dockerfile
+
+
+def test_apparmor_profile_grants_runtime_paths_without_disabling_confinement():
+    root = Path(__file__).resolve().parents[1]
+    manifest = yaml.safe_load(
+        (root / "kraken_margin_trader" / "config.yaml").read_text(encoding="utf-8")
+    )
+    profile = (root / "kraken_margin_trader" / "apparmor.txt").read_text(encoding="utf-8")
+
+    assert manifest["apparmor"] is True
+    assert "profile hassio-addon-kraken_margin_trader " in profile
+    assert "/opt/kraken-trader/app/ r," in profile
+    assert "/opt/kraken-trader/app/ x," in profile
+    assert "/opt/kraken-trader/app/** r," in profile
+    assert "/config/** rwk," in profile
+    assert "/data/** rwk," in profile
+    assert "#include <abstractions/nameservice>" in profile
+    assert "network inet stream," in profile
+    assert "network inet dgram," in profile
+    assert "network inet6 stream," in profile
+    assert "network inet6 dgram," in profile
+    assert "file," not in profile
+    assert "full_access: true" not in (root / "kraken_margin_trader" / "config.yaml").read_text(encoding="utf-8")
+
+    workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "apparmor_parser --skip-kernel-load --warn=all kraken_margin_trader/apparmor.txt" in workflow
