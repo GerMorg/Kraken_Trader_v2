@@ -178,3 +178,31 @@ def test_settlement_rejects_currency_or_ledger_mismatch():
     )
     with pytest.raises(ValueError, match="SETTLEMENT_EVIDENCE_POSITION_MISMATCH"):
         build_add_order_params(intent, instrument(), validate_only=True)
+
+
+def test_missing_add_order_txid_keeps_intent_unknown_not_rejected(monkeypatch):
+    db = Persistence(":memory:")
+    audit = AuditLogger(path="/definitely-invalid-root/events.jsonl", stream=io.StringIO())
+    client = KrakenClient("k", "s")
+    client.private = lambda method, params=None: {}
+    monkeypatch.setattr("app.execution.LIVE_EXECUTION_RELEASED", True)
+    settings = Settings.from_mapping({
+        "mode": "LIVE", "live_enabled": True, "kill_switch": False,
+    })
+    authority = OrderAuthority(client, db, settings, audit)
+    intent = OrderIntent.create(
+        decision_id="unknown-response",
+        pair="XBTUSD",
+        action=Action.OPEN_SPOT_LONG,
+        side="LONG",
+        volume=D("0.1"),
+        product_type="CASH_SPOT",
+    )
+
+    with pytest.raises(Exception, match="ADD_ORDER_RESPONSE_TXID_MISSING_OR_INVALID"):
+        authority.execute(intent, instrument(), prechecks_passed=True, validate_only=False)
+
+    assert db.intent_state(intent.intent_id) == "UNKNOWN_RECONCILING"
+    assert db.intent_state(intent.intent_id) != "REJECTED"
+    audit.close()
+    db.close()
