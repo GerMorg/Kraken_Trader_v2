@@ -487,9 +487,18 @@ def replay_trend_strategy_on_order_books(
             continue
 
         if round_trip.position_status == "NOT_OPENED":
-            issues.append(OrderBookReplayIssue(entry_bar.timestamp, "ENTRY_UNFILLED", signal.direction))
+            issues.append(OrderBookReplayIssue(entry_bar.timestamp, "ENTRY_UNFILLED", direction))
             index += 1
             continue
+        if not round_trip.entry_target_filled:
+            issues.append(
+                OrderBookReplayIssue(
+                    entry_bar.timestamp,
+                    "ENTRY_PARTIAL_REMAINDER_CANCEL_NOT_SIMULATED",
+                    direction,
+                )
+            )
+            break
         if round_trip.remaining_quantity > 0:
             issues.append(
                 OrderBookReplayIssue(
