@@ -82,7 +82,30 @@ def evaluate_position_exits(
             continue
 
         instrument = instruments.get(pair)
+        if instrument is None:
+            normalized_pair = pair.casefold()
+            instrument = next(
+                (
+                    candidate for candidate in instruments.values()
+                    if normalized_pair in {
+                        str(candidate.pair_id).casefold(),
+                        str(candidate.altname).casefold(),
+                        str(candidate.wsname).casefold(),
+                    }
+                ),
+                None,
+            )
         ticker = tickers.get(pair)
+        if ticker is None and instrument is not None:
+            ticker = tickers.get(instrument.pair_id)
+        if ticker is None and instrument is not None:
+            ticker = next(
+                (
+                    candidate for candidate in tickers.values()
+                    if str(candidate.pair_id).casefold() == str(instrument.pair_id).casefold()
+                ),
+                None,
+            )
         if instrument is None or instrument.quote.upper() != "USD":
             recommendations.append(_decision(
                 txid, pair, "BLOCKED", "EXISTING_POSITION_OUTSIDE_SUPPORTED_USD_UNIVERSE",
