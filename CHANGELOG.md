@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.17 — Laufzeit-Dateirechte und nicht privilegierter Starttest
+
+- Die HA-Logs von 0.1.16 zeigen `PermissionError: [Errno 13] Permission denied: '/opt/kraken-trader/app'` im Diagnosecode. Der unmittelbare Fehler war das fehlende Verzeichnis-Leserecht für den laufenden Containerprozess.
+- Der Image-Build setzt das Anwendungspaket rekursiv auf lesbare Dateien und les-/durchsuchbare Verzeichnisse (`chmod -R a+rX`).
+- Die Startdiagnose kann fehlgeschlagene Verzeichnisauflistung jetzt als Datenwert protokollieren, anstatt mit einem neuen `PermissionError` abzubrechen. UID/GID und Datei-/Verzeichnismodi werden mit ausgegeben.
+- CI startet den Standard-Entrypoint zusätzlich unter UID/GID 10001 mit einem nur für den Test temporär bereitgestellten beschreibbaren `/data`. Das prüft die Dateirechte ohne Live-API-Aufrufe oder Orderübermittlung.
+
 ## 0.1.16 — Paketdateien direkt bootstrappen und beim Build starten
 
 - Die Home-Assistant-Logs von 0.1.15 zeigten weiterhin `ModuleNotFoundError: No module named 'app'`, obwohl Python `/opt/kraken-trader` als `sys.path[0]` ausgab.
