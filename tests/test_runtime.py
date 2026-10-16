@@ -209,10 +209,11 @@ def test_runtime_generates_reports_for_all_imported_tax_years(tmp_path):
     db.close()
 
 
-def test_tax_report_refresh_invalidates_when_existing_event_content_changes(tmp_path, monkeypatch):
+def test_tax_report_refresh_invalidates_when_existing_event_content_changes(tmp_path):
     import json
     from datetime import datetime
     from zoneinfo import ZoneInfo
+
     from app.tax import AustrianTaxReports
 
     runtime, db, audit = make_runtime()
@@ -225,35 +226,36 @@ def test_tax_report_refresh_invalidates_when_existing_event_content_changes(tmp_
         "value_eur": None,
         "verified": False,
         "manual_review": True,
+        "payload": {"source": "test"},
     }
-    monkeypatch.setattr(db, "tax_event_years", lambda: [year])
-    monkeypatch.setattr(
-        db,
-        "tax_events_for_year",
-        lambda requested_year: [dict(event)] if requested_year == year else [],
-    )
+    assert db.record_tax_event(event)
     runtime.tax_reports = AustrianTaxReports(str(tmp_path))
 
     runtime._refresh_tax_report()
     report_path = tmp_path / str(year) / "income-tax-report.json"
     first_report = json.loads(report_path.read_text(encoding="utf-8"))
     assert first_report["events"][0]["value_eur"] is None
-    assert first_report["events"][0]["verified"] is False
+    assert first_report["events"][0]["verified"] == 0
 
-    # The event ID and row count stay constant; later reconciliation enriches it.
-    event["value_eur"] = "123.45"
-    event["verified"] = True
-    event["manual_review"] = False
+    # Explicit enrichment changes content, but keeps event ID and row count constant.
+    enriched = {
+        **event,
+        "value_eur": "123.45",
+        "verified": True,
+        "manual_review": False,
+        "payload": {"source": "test", "fx_rate_source": "verified-test-fixture"},
+    }
+    assert db.update_tax_event(enriched)
     runtime._refresh_tax_report()
 
     updated_report = json.loads(report_path.read_text(encoding="utf-8"))
     assert updated_report["event_count"] == 1
     assert updated_report["events"][0]["value_eur"] == "123.45"
-    assert updated_report["events"][0]["verified"] is True
-    assert updated_report["events"][0]["manual_review"] is False
+    assert updated_report["events"][0]["verified"] == 1
+    assert updated_report["events"][0]["manual_review"] == 0
+    assert updated_report["events"][0]["payload"]["fx_rate_source"] == "verified-test-fixture"
     audit.close()
     db.close()
-
 
 def test_runtime_fetches_a_fresh_pair_scoped_ticker_for_entry_evaluation():
     from app.models import Instrument
