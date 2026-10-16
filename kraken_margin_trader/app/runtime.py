@@ -193,6 +193,66 @@ class TraderRuntime:
             candidates=ranked[:self.settings.max_market_candidates]; counts["candidates"]=len(candidates)
             account=None; snapshot=None; trade_volume={}
             if self.settings.credentials_present:
+                # GetApiKeyInfo is explicitly permissioned for none of the data scopes.
+                # Use an allowlisted assessment: the API response includes the API key
+                # itself and must never be copied to an audit event.
+                key_assessment = self.client.api_key_permission_assessment()
+                self.audit.emit(
+                    "KRAKEN_API_KEY_PERMISSION_CHECK",
+                    cycle_id=cycle_id,
+                    **key_assessment,
+                )
+                if not key_assessment["ready_for_account_reconciliation"]:
+                    if key_assessment["missing_required_query_permissions"]:
+                        permission_failure = "REQUIRED_QUERY_PERMISSION_MISSING"
+                    elif key_assessment["withdrawal_permissions_present"]:
+                        permission_failure = "WITHDRAWAL_PERMISSION_PRESENT"
+                    elif key_assessment["api_key_expired_or_expiry_unknown"]:
+                        permission_failure = "API_KEY_EXPIRED_OR_EXPIRY_UNKNOWN"
+                    elif key_assessment["historical_query_window_restricted"]:
+                        permission_failure = "API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED"
+                    else:
+                        permission_failure = "API_KEY_METADATA_INCOMPLETE"
+                    self.persistence.trip_circuit_breaker(
+                        "KRAKEN_API_KEY_PERMISSIONS",
+                        permission_failure,
+                        {
+                            "cycle_id": cycle_id,
+                            "missing_required_query_permissions": key_assessment[
+                                "missing_required_query_permissions"
+                            ],
+                            "withdrawal_permissions_present": key_assessment[
+                                "withdrawal_permissions_present"
+                            ],
+                            "api_key_expired_or_expiry_unknown": key_assessment[
+                                "api_key_expired_or_expiry_unknown"
+                            ],
+                            "historical_query_window_restricted": key_assessment[
+                                "historical_query_window_restricted"
+                            ],
+                        },
+                    )
+                if self.settings.validate_shadow_orders and (
+                    "modify-trades" not in key_assessment["permissions"]
+                ):
+                    self.persistence.trip_circuit_breaker(
+                        "KRAKEN_API_KEY_PERMISSIONS",
+                        "SHADOW_ORDER_VALIDATION_PERMISSION_MISSING",
+                        {"cycle_id": cycle_id},
+                    )
+                if self.settings.live_requested and key_assessment[
+                    "missing_order_write_permissions"
+                ]:
+                    self.persistence.trip_circuit_breaker(
+                        "KRAKEN_API_KEY_PERMISSIONS",
+                        "LIVE_ORDER_PERMISSIONS_MISSING",
+                        {
+                            "cycle_id": cycle_id,
+                            "missing_order_write_permissions": key_assessment[
+                                "missing_order_write_permissions"
+                            ],
+                        },
+                    )
                 history_summaries=[]
                 for history_source in ("TRADES", "LEDGERS", "CLOSED_ORDERS"):
                     history_summary=sync_history_source(
