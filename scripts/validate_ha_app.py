@@ -112,8 +112,14 @@ else:
         errors.append("run.sh must explicitly configure the Python package search path")
     if 'exec python -m app.main "$@"' not in run_script:
         errors.append("run.sh must execute app.main and forward command-line arguments")
-    if "container entrypoint:" not in run_script or "PYTHONPATH before correction" not in run_script:
-        errors.append("run.sh must log startup diagnostics for import failures")
+    if (
+        "container entrypoint:" not in run_script
+        or "PYTHONPATH before correction" not in run_script
+        or "APP_VERSION" not in run_script
+    ):
+        errors.append("run.sh must log image version and import-failure diagnostics")
+    if "APP_VERSION=${BUILD_VERSION}" not in dockerfile:
+        errors.append("Dockerfile must expose BUILD_VERSION for startup diagnostics")
 
     ci_path = root / ".github" / "workflows" / "ci.yml"
     ci_workflow = ci_path.read_text(encoding="utf-8")
