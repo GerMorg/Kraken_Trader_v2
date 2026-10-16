@@ -262,3 +262,22 @@ def test_round_trip_rejects_non_chronological_order_books():
             exit_fee_bps=D("0"),
             quote_currency="USD",
         )
+
+
+
+def test_vwap_rounding_noise_does_not_reject_a_valid_single_level_buy():
+    snapshot = OrderBookSnapshot(
+        timestamp=1_800_000_000,
+        bids=(BookLevel(D("100"), D("1000")),),
+        asks=(BookLevel(D("101"), D("1000")),),
+    )
+    quantity = D("1000") / D("101")
+    result = simulate_order_book_execution(
+        snapshot, side="BUY", quantity=quantity, fee_bps=D("0")
+    )
+
+    assert result.status == "FILLED"
+    assert result.slippage_bps is not None
+    assert result.slippage_bps >= 0
+    assert result.average_price is not None
+    assert abs(result.average_price - D("101")) < D("1e-18")
