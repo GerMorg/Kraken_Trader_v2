@@ -404,12 +404,43 @@ class KrakenClient:
         if ledger_type not in {"all", "deposit", "withdrawal", "trade", "margin",
                                "rollover", "credit", "transfer", "settled", "staking", "sale"}:
             raise ValueError("LEDGER_TYPE_INVALID")
-        params: dict[str, Any] = {"aclass": "currency", "type": ledger_type, "asset": asset, "ofs": offset}
+        # Current Kraken docs deprecate the aclass filter; asset="all" is the documented
+        # currency-history request and avoids combining legacy and current filters.
+        params: dict[str, Any] = {"type": ledger_type, "asset": asset, "ofs": offset}
         if start is not None:
             params["start"] = start
         if end is not None:
             params["end"] = end
         return self.private("Ledgers", params)
+
+    def query_trades_info(
+        self, trade_ids: list[str], *, include_ledgers: bool = True
+    ) -> dict[str, Any]:
+        """Fetch exact trades to recover optional ledger references omitted by TradesHistory."""
+        normalized = list(dict.fromkeys(
+            str(trade_id).strip() for trade_id in trade_ids if str(trade_id).strip()
+        ))
+        if not normalized:
+            raise ValueError("QUERY_TRADES_IDS_REQUIRED")
+        if len(normalized) > 20:
+            raise ValueError("QUERY_TRADES_IDS_LIMIT_EXCEEDED")
+        params: dict[str, Any] = {
+            "txid": ",".join(normalized),
+            "trades": False,
+            "ledgers": bool(include_ledgers),
+        }
+        return self.private("QueryTrades", params)
+
+    def query_ledgers_info(self, ledger_ids: list[str]) -> dict[str, Any]:
+        """Fetch exact ledger rows referenced by trade fills (maximum 20 IDs per call)."""
+        normalized = list(dict.fromkeys(
+            str(ledger_id).strip() for ledger_id in ledger_ids if str(ledger_id).strip()
+        ))
+        if not normalized:
+            raise ValueError("QUERY_LEDGERS_IDS_REQUIRED")
+        if len(normalized) > 20:
+            raise ValueError("QUERY_LEDGERS_IDS_LIMIT_EXCEEDED")
+        return self.private("QueryLedgers", {"id": ",".join(normalized)})
 
     def trade_volume(self, pairs: list[str]) -> dict[str, Any]:
         if not pairs:
