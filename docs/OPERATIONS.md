@@ -4,7 +4,7 @@
 
 1. In Home Assistant **Einstellungen → Apps → App-Repository hinzufügen** öffnen.
 2. `https://github.com/GerMorg/Kraken_Trader_v2` als benutzerdefiniertes Repository hinzufügen und den Store aktualisieren.
-3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.18` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.18` zeigen; andernfalls läuft noch nicht das neue Image. Anschließend starten und das App-Protokoll prüfen.
+3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.22` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.22` zeigen; andernfalls läuft noch nicht das neue Image. Anschließend starten und das App-Protokoll prüfen.
 4. `mode: SHADOW`, `live_enabled: false` und `kill_switch: true` beibehalten.
 5. Für die erste Datenerfassung einen Kraken-API-Key mit den erforderlichen **Lese-Rechten** konfigurieren. Keine Auszahlungsrechte und zunächst keine Handelsrechte aktivieren.
 
@@ -21,6 +21,8 @@ Der Laufzeitpfad blockiert neue Entries weiterhin, solange einer der erforderlic
 ## API-Key-Rechte und Sicherheit
 
 Keine Auszahlungsberechtigung (`withdraw-funds`). Für die reine Datenerfassung müssen die von der Runtime verwendeten Query-Rechte für Konto-/Trade-Balance, offene und geschlossene Orders/Trades, Positionen und Ledger verfügbar sein. Die App fragt vor privaten History-Abfragen `GetApiKeyInfo` ab und prüft Berechtigungen, Ablaufzeit und History-Zeitfenster. Die Antwort wird auf erlaubte Metadaten reduziert; das Feld `apiKey` wird nicht in Audit-Ereignisse übernommen.
+
+Wenn `GetApiKeyInfo` weiterhin unvollständige Metadaten meldet, protokolliert Version 0.1.22 die sicheren Feldnamen `api_key_info_response_fields_present`, `api_key_metadata_fields_present` und `api_key_metadata_fields_invalid`. Bei einer ungültigen Trade-History-Zeile nennt `last_error` die Validierungsursache und der Fingerprint erlaubt, denselben Eintrag über Zyklen hinweg zu erkennen; weder die Trade-ID noch rohe API-Antworten werden ausgegeben.
 
 Für die aktuelle Shadow-Datenerfassung sind keine Handelsrechte erforderlich. Handelsrechte erst nach separater Prüfung hinzufügen. Während der Installations-/Reconciliation-Phase `mode: LIVE` nicht aktivieren, `live_enabled: true` nicht setzen und den Kill-Switch nicht deaktivieren. Auch dann gilt: Ein Entry ist nur zulässig, wenn alle unabhängigen Daten-, Kosten-, Edge- und Risiko-Gates bestanden sind.
 
