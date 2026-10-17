@@ -206,17 +206,35 @@ def test_trade_history_classifies_margin_fills_separately_and_preserves_ledger_r
     db.close()
 
 
-def test_trade_history_missing_ledger_reference_shape_is_not_accepted():
+def test_trade_history_missing_ledger_references_are_imported_but_block_new_risk():
     db = Persistence(":memory:")
-    invalid = trade()
-    invalid.pop("ledgers")
-    client = FakeHistoryClient(trade_pages={None: {"trades": {"T-NO-LEDGERS": invalid}}})
-    result = sync_history_source(client=client, persistence=db, source="TRADES",
-                                 page_budget=1, now_epoch=1769000000)
-    assert result["generation_complete"] is False
-    assert result["last_error"] == "HISTORY_ITEM_INVALID:TRADE_LEDGER_REFERENCES_MISSING"
-    assert result["invalid_item_reason"] == "TRADE_LEDGER_REFERENCES_MISSING"
-    assert db.fills() == []
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    client = FakeHistoryClient(trade_pages={None: {"trades": {"T-NO-LEDGERS": missing_refs}}})
+
+    result = sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+
+    assert result["generation_complete"] is True
+    assert result["initial_backfill_complete"] is True
+    assert result["last_error"] is None
+    assert result["quality_gap_count"] == 1
+    assert result["quality_gap_types"] == ["TRADE_LEDGER_REFERENCES_MISSING"]
+    assert result["quality_gaps"][0].startswith("TRADE_LEDGER_REFERENCES_MISSING:")
+    assert len(db.fills()) == 1
+    tax_event = db.tax_events_for_year(2026)[0]
+    assert tax_event["payload"]["related_ledger_ids_missing"] is True
+    ready, gaps = history_sources_ready([
+        {**result, "source": "TRADES"},
+        {"source": "LEDGERS", "initial_backfill_complete": True,
+         "generation_complete": True, "last_error": None, "quality_gaps": []},
+        {"source": "CLOSED_ORDERS", "initial_backfill_complete": True,
+         "generation_complete": True, "last_error": None, "quality_gaps": []},
+    ])
+    assert ready is False
+    assert "HISTORY_DATA_QUALITY_GAP:TRADES:TRADE_LEDGER_REFERENCES_MISSING" in gaps
+    assert db.history_sync_state("TRADES")["quality_gaps"] == result["quality_gaps"]
     db.close()
 
 
@@ -341,12 +359,13 @@ def test_forced_refresh_does_not_reset_an_incomplete_initial_backfill():
 
 
 
-def _history_readiness_summary(source, *, initial=True, generation=True, error=None):
+def _history_readiness_summary(source, *, initial=True, generation=True, error=None, quality_gaps=None):
     return {
         "source": source,
         "initial_backfill_complete": initial,
         "generation_complete": generation,
         "last_error": error,
+        "quality_gaps": quality_gaps or [],
     }
 
 
@@ -377,6 +396,19 @@ def test_new_risk_history_gate_fails_closed_for_missing_or_duplicate_sources():
     assert ready is False
     assert "HISTORY_SOURCE_MISSING:CLOSED_ORDERS" in gaps
     assert "DUPLICATE_HISTORY_SOURCE:TRADES" in gaps
+
+
+def test_new_risk_history_gate_fails_closed_for_persisted_quality_gaps():
+    ready, gaps = history_sources_ready([
+        _history_readiness_summary(
+            "TRADES", quality_gaps=["TRADE_LEDGER_REFERENCES_MISSING:46179196fa61"]
+        ),
+        _history_readiness_summary("LEDGERS"),
+        _history_readiness_summary("CLOSED_ORDERS"),
+    ])
+
+    assert ready is False
+    assert gaps == ["HISTORY_DATA_QUALITY_GAP:TRADES:TRADE_LEDGER_REFERENCES_MISSING"]
 
 
 def test_new_risk_history_gate_fails_closed_for_errors_and_unexpected_sources():
