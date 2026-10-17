@@ -12,7 +12,7 @@ def test_signature_changes_when_nonce_changes():
     assert sign_spot("/0/private/Balance",{"nonce":"123"},secret)!=sign_spot("/0/private/Balance",{"nonce":"124"},secret)
 
 
-def test_private_form_booleans_are_lowercase_and_signed_payload_matches_request(monkeypatch):
+def test_private_json_booleans_keep_native_types_and_signature_matches_body(monkeypatch):
     import json
 
     from app.kraken import KrakenClient
@@ -44,8 +44,14 @@ def test_private_form_booleans_are_lowercase_and_signed_payload_matches_request(
 
     assert result == {"count": 0, "trades": {}}
     assert len(captured) == 1
-    assert captured[0].data.decode("utf-8") == "trades=true&ledgers=false&nonce=123"
-    assert captured[0].get_header("Content-type") == "application/x-www-form-urlencoded"
+    body = captured[0].data.decode("utf-8")
+    assert body == '{"nonce":123,"trades":true,"ledgers":false}'
+    assert json.loads(body) == {"nonce": 123, "trades": True, "ledgers": False}
+    assert captured[0].get_header("Content-type") == "application/json"
+    assert captured[0].get_header("Api-sign") == sign_spot(
+        "/0/private/TradesHistory", body,
+        base64.b64encode(b"test-secret").decode("ascii"),
+    )
 
 
 
@@ -328,6 +334,23 @@ def test_get_api_key_info_uses_json_body_and_signs_the_exact_body(monkeypatch):
     assert request.get_header("Api-sign") == sign_spot(
         "/0/private/GetApiKeyInfo", body, secret
     )
+
+
+def test_api_key_assessment_reports_only_safe_response_field_names():
+    from app.kraken import assess_api_key_info
+
+    response = _api_key_info_fixture()
+    response["apiKey"] = "must-never-appear-in-audit-output"
+    assessment = assess_api_key_info(response, now_epoch=100)
+
+    assert "apiKey" not in assessment["api_key_info_response_fields_present"]
+    assert {
+        "permissions", "validUntil", "queryFrom", "queryTo"
+    }.issubset(set(assessment["api_key_info_response_fields_present"]))
+    assert assessment["api_key_metadata_fields_present"] == [
+        "queryFrom", "queryTo", "validUntil"
+    ]
+    assert assessment["api_key_metadata_fields_invalid"] == []
 
 
 def test_api_key_permission_assessment_is_ready_for_complete_read_only_history_scope():
