@@ -28,7 +28,7 @@ def test_ohlc_parser_ignores_current_forming_candle():
     assert len(rows)==2 and rows[-1]["close"]==Decimal("110")
 
 
-def test_market_universe_fails_closed_for_unknown_asset_class():def test_market_universe_excludes_fiat_base_pairs_but_keeps_dynamic_crypto_usd_pairs():
+def test_market_universe_excludes_fiat_base_pairs_but_keeps_dynamic_crypto_usd_pairs():
     def pair(base, base_id, wsname):
         return {
             "altname": wsname.replace("/", ""),
