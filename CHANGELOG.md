@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.22 — Einheitlicher JSON-Transport und präzise History-Diagnose
+
+- Alle privaten Kraken-Spot-REST-Anfragen verwenden den dokumentierten JSON-Transport. JSON-Boolesche Werte bleiben Boolesche Werte; die Signatur basiert auf exakt dem kompakten JSON-Body einschließlich Nonce.
+- Die sichere `GetApiKeyInfo`-Diagnose gibt Feldnamen aus, darunter vorhandene, fehlende und ungültige Metadatenfelder, jedoch keine Feldwerte, API-Keys oder andere Geheimnisse.
+- Trade-History-Validierungsfehler enthalten einen konkreten Fehlercode und einen kurzen SHA-256-Fingerprint der Trade-ID; ungültige Seiten werden weiterhin nicht als vollständig importiert oder im Cursor fortgeschrieben.
+- Regressionstests prüfen JSON-Serialisierung und Signatur, Geheimnisschutz sowie die präzisen Ursachen fehlerhafter Trade-Einträge.
+
 ## 0.1.21 — GetApiKeyInfo mit dem dokumentierten JSON-Protokoll
 
 - Der offizielle Kraken-Endpunkt `GetApiKeyInfo` erwartet laut aktueller Dokumentation `application/json`; zuvor wurde er fälschlich mit dem generischen Form-Transport angesprochen.
