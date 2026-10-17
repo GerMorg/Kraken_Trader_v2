@@ -70,17 +70,6 @@ def _nonnegative_epoch(value: Any) -> int | None:
     return epoch if epoch >= 0 else None
 
 
-def _normalize_form_value(value: Any) -> Any:
-    """Encode boolean form values as the lowercase literals accepted by Kraken."""
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
-    if isinstance(value, (list, tuple)):
-        return [_normalize_form_value(item) for item in value]
-    return value
-
-
 def api_key_permission_gate_reasons(
     assessment: dict[str, Any],
     *,
@@ -152,6 +141,16 @@ def assess_api_key_info(
     metadata_fields_missing = sorted(
         field for field, value in metadata_values.items() if value is None
     )
+    metadata_fields_present = sorted(field for field in metadata_values if field in response)
+    metadata_fields_invalid = sorted(
+        field for field in metadata_fields_present if metadata_values[field] is None
+    )
+    # Only field names are reported; response values, including apiKey, are never copied.
+    response_fields_present = sorted(
+        field for field in response
+        if isinstance(field, str)
+        and field.lower() not in {"apikey", "api_key", "secret", "apisecret", "privatekey"}
+    )
     metadata_complete = not metadata_fields_missing
     key_expiry_unknown = valid_until is None
     key_expired = valid_until is not None and valid_until != 0 and valid_until <= now
@@ -177,6 +176,9 @@ def assess_api_key_info(
         "missing_order_write_permissions": missing_order_write,
         "api_key_metadata_complete": metadata_complete,
         "api_key_metadata_fields_missing": metadata_fields_missing,
+        "api_key_metadata_fields_present": metadata_fields_present,
+        "api_key_metadata_fields_invalid": metadata_fields_invalid,
+        "api_key_info_response_fields_present": response_fields_present,
         "api_key_expiry_unknown": key_expiry_unknown,
         "api_key_expired": key_expired,
         "api_key_expired_or_expiry_unknown": key_expired,
@@ -245,28 +247,19 @@ class KrakenClient:
             raise KrakenAPIError("KRAKEN_CREDENTIALS_MISSING")
         with self._private_request_lock:
             path = f"/0/private/{method}"
-            payload = {
-                key: _normalize_form_value(value)
-                for key, value in dict(params or {}).items()
-            }
             nonce = self.nonce_provider()
-            # Current Kraken docs explicitly require application/json for GetApiKeyInfo.
-            # Its signature must be generated from nonce + the exact JSON body bytes,
-            # while the established private endpoints continue using form encoding.
-            if method == "GetApiKeyInfo":
-                payload["nonce"] = int(nonce)
-                json_body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-                encoded = json_body.encode("utf-8")
-                signing_payload: dict[str, Any] | str = json_body
-                content_type = "application/json"
-            else:
-                payload["nonce"] = str(nonce)
-                encoded = urlencode(payload, doseq=True).encode("utf-8")
-                signing_payload = payload
-                content_type = "application/x-www-form-urlencoded"
             try:
-                signature = sign_spot(path, signing_payload, self.api_secret)
-            except (ValueError, TypeError) as exc:
+                # Current Kraken Spot REST documentation specifies JSON request bodies.
+                # Keep native JSON values and sign the exact compact body sent on wire.
+                payload: dict[str, Any] = {"nonce": int(nonce)}
+                payload.update(dict(params or {}))
+                payload["nonce"] = int(nonce)
+                json_body = json.dumps(
+                    payload, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+                )
+                encoded = json_body.encode("utf-8")
+                signature = sign_spot(path, json_body, self.api_secret)
+            except (ValueError, TypeError, OverflowError) as exc:
                 raise KrakenAPIError("KRAKEN_PRIVATE_SIGNING_CONFIGURATION_INVALID") from exc
             request = Request(
                 SPOT_BASE + path,
@@ -275,7 +268,7 @@ class KrakenClient:
                 headers={
                     "API-Key": self.api_key,
                     "API-Sign": signature,
-                    "Content-Type": content_type,
+                    "Content-Type": "application/json",
                     "Accept": "application/json",
                     "User-Agent": f"KrakenTraderV2/{__version__}",
                 },
