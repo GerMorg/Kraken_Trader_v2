@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.21 — GetApiKeyInfo mit dem dokumentierten JSON-Protokoll
+
+- Der offizielle Kraken-Endpunkt `GetApiKeyInfo` erwartet laut aktueller Dokumentation `application/json`; zuvor wurde er fälschlich mit dem generischen Form-Transport angesprochen.
+- Der Client sendet für diesen Endpunkt jetzt einen JSON-Body und erzeugt `API-Sign` anhand des exakten JSON-Texts einschließlich Nonce. Die übrigen privaten Endpunkte bleiben bei ihrem bestehenden Form-Transport.
+- Ein Regressionstest prüft Request-Body, Content-Type, Accept-Header, Signatur und das Vorhandensein von `validUntil`, `queryFrom` und `queryTo` im simulierten API-Ergebnis.
+
+
 ## 0.1.20 — Kraken-API-Kompatibilität und Metadaten-Fallback
 
 - Der private REST-Transport serialisiert signierte Requests pro Client und schreibt Boolesche Formwerte als `true`/ `false`, bevor Nonce, Signatur und Request-Body erzeugt werden.

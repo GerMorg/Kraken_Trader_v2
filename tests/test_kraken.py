@@ -286,6 +286,50 @@ def _api_key_info_fixture(**overrides):
     }
 
 
+def test_get_api_key_info_uses_json_body_and_signs_the_exact_body(monkeypatch):
+    import base64
+    import json
+
+    from app.kraken import KrakenClient, sign_spot
+
+    response_payload = {"error": [], "result": _api_key_info_fixture()}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(response_payload).encode("utf-8")
+
+    captured = []
+
+    def fake_urlopen(request, timeout):
+        captured.append(request)
+        return Response()
+
+    secret = base64.b64encode(b"test-secret").decode("ascii")
+    monkeypatch.setattr("app.kraken.urlopen", fake_urlopen)
+    client = KrakenClient("test-key", secret, nonce_provider=lambda: 123)
+
+    result = client.private("GetApiKeyInfo")
+
+    assert result["validUntil"] == "0"
+    assert result["queryFrom"] == "0"
+    assert result["queryTo"] == "0"
+    assert len(captured) == 1
+    request = captured[0]
+    body = request.data.decode("utf-8")
+    assert body == '{"nonce":123}'
+    assert request.get_header("Content-type") == "application/json"
+    assert request.get_header("Accept") == "application/json"
+    assert request.get_header("Api-sign") == sign_spot(
+        "/0/private/GetApiKeyInfo", body, secret
+    )
+
+
 def test_api_key_permission_assessment_is_ready_for_complete_read_only_history_scope():
     from app.kraken import assess_api_key_info
 
