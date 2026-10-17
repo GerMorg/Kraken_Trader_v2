@@ -28,6 +28,44 @@ def test_ohlc_parser_ignores_current_forming_candle():
     assert len(rows)==2 and rows[-1]["close"]==Decimal("110")
 
 
+def test_market_universe_fails_closed_for_unknown_asset_class():def test_market_universe_excludes_fiat_base_pairs_but_keeps_dynamic_crypto_usd_pairs():
+    def pair(base, base_id, wsname):
+        return {
+            "altname": wsname.replace("/", ""),
+            "wsname": wsname,
+            "aclass_base": "currency",
+            "base": base_id,
+            "quote": "ZUSD",
+            "status": "online",
+            "ordermin": "0.001",
+            "lot_decimals": 8,
+            "pair_decimals": 2,
+        }
+
+    pairs = {
+        "ZEURZUSD": pair("EUR", "ZEUR", "EUR/USD"),
+        "ZGBPZUSD": pair("GBP", "ZGBP", "GBP/USD"),
+        "ZCADZUSD": pair("CAD", "ZCAD", "CAD/USD"),
+        "XBTZUSD": pair("XBT", "XXBT", "XBT/USD"),
+        "NEWCOINZUSD": pair("NEWCOIN", "NEWCOIN", "NEWCOIN/USD"),
+    }
+
+    instruments = usd_crypto_universe(pairs)
+
+    assert {item.wsname for item in instruments} == {"XBT/USD", "NEWCOIN/USD"}
+
+
+def test_market_universe_rejects_fiat_asset_ids_even_when_symbol_is_an_alias():
+    raw = {
+        "FIATUSD": {
+            "altname": "FIATUSD", "wsname": "TOK/USD", "aclass_base": "currency",
+            "base": "ZGBP", "quote": "ZUSD", "status": "online",
+            "ordermin": "1", "lot_decimals": 2, "pair_decimals": 2,
+        },
+    }
+    assert usd_crypto_universe(raw) == []
+
+
 def test_market_universe_fails_closed_for_unknown_asset_class():
     raw = {
         "UNKNOWNUSD": {"altname": "UNKNOWNUSD", "wsname": "UNKNOWN/USD",
