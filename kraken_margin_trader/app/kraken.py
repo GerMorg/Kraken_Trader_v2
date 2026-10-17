@@ -407,7 +407,7 @@ class KrakenClient:
             raise ValueError("LEDGERS_CURSOR_AND_OFFSET_MUTUALLY_EXCLUSIVE")
         if ledger_type not in {
             "all", "deposit", "withdrawal", "trade", "margin", "rollover",
-            "credit", "transfer", "settled", "staking", "sale",
+            "credit", "transfer", "settled", "staking", "sale", "adjustment", "dividend", "nft_rebate",
         }:
             raise ValueError("LEDGER_TYPE_INVALID")
         # Current Kraken docs deprecate aclass and ofs; prefer asset
