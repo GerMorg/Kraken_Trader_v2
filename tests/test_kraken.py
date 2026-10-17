@@ -149,6 +149,21 @@ def test_query_trade_and_ledger_info_use_exact_bounded_ids():
     assert len(calls) == 2
 
 
+def test_ledger_history_cursor_params_omit_deprecated_filters_and_offset():
+    from app.kraken import KrakenClient
+
+    client = KrakenClient("k", "s")
+    calls = []
+    client.private = lambda method, params=None: calls.append((method, params)) or {"ledger": {}}
+
+    client.ledgers(start=100, end=200, with_cursor=True, cursor="opaque-ledger-cursor")
+
+    assert calls == [("Ledgers", {
+        "type": "all", "asset": "all", "with_cursor": True,
+        "cursor": "opaque-ledger-cursor", "start": 100, "end": 200,
+    })]
+
+
 def test_closed_orders_history_uses_validated_pagination_and_close_filter():
     from app.kraken import KrakenClient
 
