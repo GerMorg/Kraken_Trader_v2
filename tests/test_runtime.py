@@ -354,7 +354,7 @@ def test_validate_shadow_order_calls_central_authority_with_validate_only(monkey
 
 
 
-def test_runtime_keeps_current_position_reads_when_key_history_window_is_restricted(monkeypatch):
+def test_runtime_probes_history_when_key_metadata_is_missing_and_keeps_position_monitoring(monkeypatch):
     import json
 
     import app.runtime as runtime_module
@@ -372,11 +372,7 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
         "permissions": [
             "query-funds", "query-open-trades", "query-closed-trades", "query-ledger",
         ],
-        "validUntil": "0",
-        "queryFrom": "100",
-        "queryTo": "0",
     }, now_epoch=200)
-
     instrument = Instrument(
         "XXBTZUSD", "XBTUSD", "XBT/USD", "XBT", "USD", "online",
         D("0.0001"), 8, 1, (2, 3), (2, 3),
@@ -386,6 +382,7 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
         def __init__(self):
             self.permission_checks = 0
             self.snapshot_options = []
+            self.trade_volume_calls = 0
 
         def public(self, method, params=None):
             if method == "SystemStatus":
@@ -415,7 +412,8 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
             return snapshot
 
         def trade_volume(self, pairs):
-            raise AssertionError("trade volume must be skipped while history evidence is untrusted")
+            self.trade_volume_calls += 1
+            return {}
 
     client = FakeClient()
     runtime.client = client
@@ -426,6 +424,18 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
         ask=D("103.51"),
         volume_quote_24h=D("100000"),
     )
+    history_calls = []
+
+    def fake_history_sync(*, client, persistence, source, **kwargs):
+        history_calls.append(source)
+        return {
+            "source": source, "pages": 1, "items_saved": 0, "expected_count": 0,
+            "next_offset": 0, "generation_complete": False,
+            "initial_backfill_complete": False, "cached_until_refresh": False,
+            "last_error": None,
+        }
+
+    monkeypatch.setattr(runtime_module, "sync_history_source", fake_history_sync)
     monkeypatch.setattr(runtime_module, "usd_crypto_universe", lambda _raw: [instrument])
     monkeypatch.setattr(runtime_module, "parse_tickers", lambda *_args: {"XXBTZUSD": ticker})
 
@@ -433,13 +443,15 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
 
     assert result["status"] == "OK", (result, audit.stream.getvalue())
     assert client.permission_checks == 1
-    assert client.snapshot_options == [False]
+    assert client.snapshot_options == [True]
+    assert history_calls == ["TRADES", "LEDGERS", "CLOSED_ORDERS"]
+    assert client.trade_volume_calls == 0
     assert db.circuit_breakers() == []
     logs = audit.stream.getvalue()
-    assert "API_KEY_PERMISSION_GATE_BLOCKED" in logs
-    assert "KRAKEN_HISTORY_SYNC_SKIPPED" in logs
-    assert "ORDER_RECONCILIATION_SKIPPED_HISTORY_UNAVAILABLE" in logs
-    assert "API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED" in logs
+    assert "KRAKEN_API_KEY_METADATA_INCOMPLETE" in logs
+    assert "KRAKEN_HISTORY_SYNC_SKIPPED" not in logs
+    assert "NEW_RISK_BLOCKED_HISTORY_INCOMPLETE" in logs
+    assert "ACCOUNT_SNAPSHOT_PERSISTED" in logs
     assert '"action":"REDUCE_LONG"' in logs
     assert '"position_txid":"POSITION-1"' in logs
     assert "never-log-this" not in logs
@@ -451,6 +463,76 @@ def test_runtime_keeps_current_position_reads_when_key_history_window_is_restric
     audit.close()
     db.close()
 
+
+def test_runtime_blocks_history_sync_but_keeps_position_monitoring_for_explicit_query_restriction(monkeypatch):
+    import app.runtime as runtime_module
+    from app.kraken import assess_api_key_info
+    from app.models import Instrument
+
+    runtime, db, audit = make_runtime()
+    runtime.settings = Settings.from_mapping({
+        "kraken_api_key": "test-key",
+        "kraken_api_secret": "test-secret",
+        "tax_report_enabled": False,
+    })
+    key_assessment = assess_api_key_info({
+        "apiKey": "never-log-this",
+        "permissions": [
+            "query-funds", "query-open-trades", "query-closed-trades", "query-ledger",
+        ],
+        "validUntil": "0",
+        "queryFrom": "100",
+        "queryTo": "0",
+    }, now_epoch=200)
+    instrument = Instrument(
+        "XXBTZUSD", "XBTUSD", "XBT/USD", "XBT", "USD", "online",
+        D("0.0001"), 8, 1, (2, 3), (2, 3),
+    )
+
+    class FakeClient:
+        def __init__(self):
+            self.snapshot_options = []
+
+        def public(self, method, params=None):
+            if method in {"SystemStatus", "Ticker"}:
+                return {"status": "online"} if method == "SystemStatus" else {}
+            if method == "AssetPairs":
+                return {}
+            if method == "OHLC":
+                return {}
+            raise AssertionError(f"unexpected public endpoint: {method}")
+
+        def api_key_permission_assessment(self):
+            return key_assessment
+
+        def account_snapshot(self, *, include_closed_orders=True):
+            self.snapshot_options.append(include_closed_orders)
+            return account_snapshot({})
+
+        def trade_volume(self, pairs):
+            raise AssertionError("TradeVolume must remain gated under an explicit restriction")
+
+    client = FakeClient()
+    runtime.client = client
+
+    def unexpected_history_call(**kwargs):
+        raise AssertionError("history sync must not run for an explicitly restricted query window")
+
+    monkeypatch.setattr(runtime_module, "sync_history_source", unexpected_history_call)
+    monkeypatch.setattr(runtime_module, "usd_crypto_universe", lambda _raw: [instrument])
+    monkeypatch.setattr(runtime_module, "parse_tickers", lambda *_args: {})
+
+    result = runtime.cycle()
+
+    assert result["status"] == "OK", (result, audit.stream.getvalue())
+    assert client.snapshot_options == [False]
+    logs = audit.stream.getvalue()
+    assert "API_KEY_PERMISSION_GATE_BLOCKED" in logs
+    assert "KRAKEN_HISTORY_SYNC_SKIPPED" in logs
+    assert "NEW_RISK_BLOCKED_HISTORY_INCOMPLETE" in logs
+    assert "never-log-this" not in logs
+    audit.close()
+    db.close()
 
 
 def test_runtime_retries_failed_api_key_preflight_without_persistent_breaker(monkeypatch):
