@@ -417,8 +417,7 @@ def reconcile_trade_ledger_coverage(
     # safely instead of accepting count=0 or an empty cursor as complete coverage.
     ledger_state = persistence.history_sync_state("LEDGERS") or ledger_state
     full_ledger_window = (
-        int(ledger_state.get("start_epoch", 0)) == 0
-        and ledger_state.get("initial_backfill_complete") is True
+        ledger_state.get("initial_backfill_complete") is True
         and ledger_state.get("generation_complete") is True
         and ledger_state.get("last_error") is None
     )
