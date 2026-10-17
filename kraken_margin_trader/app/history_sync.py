@@ -557,7 +557,7 @@ def sync_history_source(
             **_quality_gap_fields(state),
         }
 
-    cursor_source = normalized in {"TRADES", "CLOSED_ORDERS"}
+    cursor_source = normalized in {"TRADES", "LEDGERS", "CLOSED_ORDERS"}
     pages = 0
     saved = 0
     while pages < page_budget and not state["generation_complete"]:
@@ -571,7 +571,9 @@ def sync_history_source(
             )
             items = _result_items(response.get("trades"))
         elif normalized == "LEDGERS":
-            response = client.ledgers(offset=offset, start=start, end=end)
+            response = client.ledgers(
+                offset=0, start=start, end=end, with_cursor=True, cursor=request_cursor
+            )
             items = _result_items(response.get("ledger"))
         else:
             response = client.closed_orders(
