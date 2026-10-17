@@ -115,6 +115,7 @@ class Persistence:
                     initial_backfill_complete INTEGER NOT NULL,
                     generation_complete INTEGER NOT NULL,
                     last_error TEXT,
+                    quality_gaps_json TEXT NOT NULL DEFAULT '[]',
                     updated_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS circuit_breakers(name TEXT PRIMARY KEY,active INTEGER NOT NULL,reason TEXT NOT NULL,ts TEXT NOT NULL,detail_json TEXT NOT NULL);
@@ -124,8 +125,12 @@ class Persistence:
             }
             if "next_cursor" not in history_columns:
                 self.connection.execute("ALTER TABLE history_sync_state ADD COLUMN next_cursor TEXT")
+            if "quality_gaps_json" not in history_columns:
+                self.connection.execute(
+                    "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
+                )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','4') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','5') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
@@ -679,7 +684,7 @@ class Persistence:
         with self.lock:
             row = self.connection.execute(
                 "SELECT source,start_epoch,end_epoch,next_offset,next_cursor,expected_count,"
-                "initial_backfill_complete,generation_complete,last_error,updated_at "
+                "initial_backfill_complete,generation_complete,last_error,quality_gaps_json,updated_at "
                 "FROM history_sync_state WHERE source=?",
                 (normalized,),
             ).fetchone()
@@ -688,6 +693,15 @@ class Persistence:
         result = dict(row)
         result["initial_backfill_complete"] = bool(result["initial_backfill_complete"])
         result["generation_complete"] = bool(result["generation_complete"])
+        try:
+            quality_gaps = json.loads(str(result.get("quality_gaps_json", "[]")))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            quality_gaps = ["HISTORY_QUALITY_GAP_STATE_INVALID"]
+        if not isinstance(quality_gaps, list) or any(
+            not isinstance(item, str) or not item.strip() for item in quality_gaps
+        ):
+            quality_gaps = ["HISTORY_QUALITY_GAP_STATE_INVALID"]
+        result["quality_gaps"] = sorted(set(quality_gaps))
         return result
 
     def save_history_sync_state(self, state: dict[str, Any]) -> None:
@@ -702,23 +716,29 @@ class Persistence:
             raise ValueError("HISTORY_SYNC_STATE_INVALID")
         if expected is not None and int(expected) < 0:
             raise ValueError("HISTORY_SYNC_EXPECTED_COUNT_INVALID")
+        raw_quality_gaps = state.get("quality_gaps", [])
+        if not isinstance(raw_quality_gaps, list) or any(
+            not isinstance(item, str) or not item.strip() for item in raw_quality_gaps
+        ):
+            raise ValueError("HISTORY_SYNC_QUALITY_GAPS_INVALID")
+        quality_gaps = sorted(set(raw_quality_gaps))
         with self.lock:
             self.connection.execute(
                 "INSERT INTO history_sync_state(source,start_epoch,end_epoch,next_offset,next_cursor,expected_count,"
-                "initial_backfill_complete,generation_complete,last_error,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source) DO UPDATE SET "
+                "initial_backfill_complete,generation_complete,last_error,quality_gaps_json,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source) DO UPDATE SET "
                 "start_epoch=excluded.start_epoch,end_epoch=excluded.end_epoch,"
                 "next_offset=excluded.next_offset,next_cursor=excluded.next_cursor,expected_count=excluded.expected_count,"
                 "initial_backfill_complete=excluded.initial_backfill_complete,"
                 "generation_complete=excluded.generation_complete,last_error=excluded.last_error,"
-                "updated_at=excluded.updated_at",
+                "quality_gaps_json=excluded.quality_gaps_json,updated_at=excluded.updated_at",
                 (
                     source, start_epoch, end_epoch, next_offset,
                     str(state["next_cursor"]) if state.get("next_cursor") else None,
                     int(expected) if expected is not None else None,
                     int(bool(state.get("initial_backfill_complete", False))),
                     int(bool(state.get("generation_complete", False))),
-                    state.get("last_error"), _now(),
+                    state.get("last_error"), _json(quality_gaps), _now(),
                 ),
             )
 
