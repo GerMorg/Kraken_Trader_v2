@@ -97,7 +97,9 @@ def test_history_invalid_page_never_advances_cursor_or_marks_complete():
     result = sync_history_source(client=client, persistence=db, source="TRADES",
                                  page_budget=1, now_epoch=1769000000)
     assert result["generation_complete"] is False
-    assert result["last_error"] == "HISTORY_ITEM_INVALID"
+    assert result["last_error"] == "HISTORY_ITEM_INVALID:TRADE_TIME_INVALID"
+    assert result["invalid_item_reason"] == "TRADE_TIME_INVALID"
+    assert len(result["invalid_item_id_fingerprint"]) == 12
     assert result["next_offset"] == 0
     assert result["initial_backfill_complete"] is False
     db.close()
@@ -212,7 +214,8 @@ def test_trade_history_missing_ledger_reference_shape_is_not_accepted():
     result = sync_history_source(client=client, persistence=db, source="TRADES",
                                  page_budget=1, now_epoch=1769000000)
     assert result["generation_complete"] is False
-    assert result["last_error"] == "HISTORY_ITEM_INVALID"
+    assert result["last_error"] == "HISTORY_ITEM_INVALID:TRADE_LEDGER_REFERENCES_MISSING"
+    assert result["invalid_item_reason"] == "TRADE_LEDGER_REFERENCES_MISSING"
     assert db.fills() == []
     db.close()
 
@@ -227,7 +230,8 @@ def test_trade_history_missing_margin_field_is_incomplete_not_guessed_as_spot():
     result = sync_history_source(client=client, persistence=db, source="TRADES",
                                  page_budget=1, now_epoch=1769000000)
     assert result["generation_complete"] is False
-    assert result["last_error"] == "HISTORY_ITEM_INVALID"
+    assert result["last_error"] == "HISTORY_ITEM_INVALID:TRADE_FIELD_MISSING_OR_INVALID:margin"
+    assert result["invalid_item_reason"] == "TRADE_FIELD_MISSING_OR_INVALID:margin"
     assert db.tax_events_for_year(2026) == []
     db.close()
 
