@@ -161,7 +161,7 @@ def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
     price = D(str(row["price"]))
     fee = D(str(row["fee"]))
     margin_amount = D(str(row["margin"]))
-    ledger_refs = row["ledgers"]
+    ledger_refs = row.get("ledgers", [])
     side = str(row.get("type", "")).lower()
     pair = str(row.get("pair", "")).strip()
     _, ts_iso, year = stamp
