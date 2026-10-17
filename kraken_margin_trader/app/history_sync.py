@@ -246,6 +246,251 @@ def _save_closed_order(row_id: str, row: dict[str, Any], persistence: Any) -> bo
     return True
 
 
+
+def _valid_ledger_references(value: Any) -> list[str] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    if any(not isinstance(item, str) or not item.strip() for item in value):
+        return None
+    return list(dict.fromkeys(item.strip() for item in value))
+
+
+def reconcile_trade_ledger_coverage(
+    *,
+    client: Any,
+    persistence: Any,
+    max_trade_queries: int = 20,
+    max_ledger_queries: int = 40,
+) -> dict[str, Any]:
+    """Repair trade-ledger links using Kraken's ID-based endpoints, failing closed.
+
+    QueryTrades recovers omitted ledger arrays and QueryLedgers retrieves the exact
+    linked rows. At most 20 trade IDs and 40 ledger IDs are requested per cycle.
+    """
+    if max_trade_queries < 1 or max_trade_queries > 20:
+        raise ValueError("TRADE_LEDGER_QUERY_BUDGET_OUT_OF_RANGE")
+    if max_ledger_queries < 0 or max_ledger_queries > 40:
+        raise ValueError("TRADE_LEDGER_QUERY_BUDGET_OUT_OF_RANGE")
+    trade_state = persistence.history_sync_state("TRADES")
+    ledger_state = persistence.history_sync_state("LEDGERS")
+    if trade_state is None or ledger_state is None:
+        return {
+            "status": "HISTORY_STATE_MISSING",
+            "trade_rows_queried": 0,
+            "trade_rows_recovered": 0,
+            "ledger_ids_requested": 0,
+            "ledger_rows_recovered": 0,
+            "missing_trade_references": 0,
+            "missing_ledger_references": 0,
+            "ledger_full_backfill_conflict": False,
+            "api_errors": ["REQUIRED_HISTORY_STATE_MISSING"],
+        }
+
+    trade_gaps_value = trade_state.get("quality_gaps", [])
+    trade_gaps = {
+        item for item in trade_gaps_value if isinstance(item, str) and item.strip()
+    } if isinstance(trade_gaps_value, list) else {"HISTORY_QUALITY_GAP_STATE_INVALID"}
+    ledger_gaps_value = ledger_state.get("quality_gaps", [])
+    ledger_gaps = {
+        item for item in ledger_gaps_value if isinstance(item, str) and item.strip()
+    } if isinstance(ledger_gaps_value, list) else {"HISTORY_QUALITY_GAP_STATE_INVALID"}
+
+    api_errors: list[str] = []
+    trade_rows_queried = 0
+    trade_rows_recovered = 0
+    ledger_ids_requested = 0
+    ledger_rows_recovered = 0
+    resolved_fingerprints: list[str] = []
+
+    initial_fills = persistence.fills()
+    missing_trade_rows: list[tuple[str, str]] = []
+    for fill in initial_fills:
+        trade_id = str(fill.get("trade_id", "")).strip()
+        raw = fill.get("raw")
+        if not trade_id or not isinstance(raw, dict):
+            continue
+        fingerprint = _trade_id_fingerprint(trade_id)
+        refs = _valid_ledger_references(raw.get("ledgers"))
+        gap_token = "TRADE_LEDGER_REFERENCES_MISSING:" + fingerprint
+        if refs is None:
+            trade_gaps.add(gap_token)
+            missing_trade_rows.append((trade_id, fingerprint))
+        else:
+            trade_gaps.discard(gap_token)
+
+    # Query exact trade IDs, not the entire historical cursor again. Kraken limits
+    # QueryTrades to 20 transaction IDs per request.
+    query_trades = missing_trade_rows[:max_trade_queries]
+    if query_trades:
+        trade_ids = [trade_id for trade_id, _fingerprint in query_trades]
+        trade_rows_queried = len(trade_ids)
+        try:
+            response = client.query_trades_info(trade_ids, include_ledgers=True)
+        except Exception as exc:
+            api_errors.append("QUERY_TRADES_FAILED:" + type(exc).__name__)
+            response = {}
+        if isinstance(response, dict):
+            for trade_id, fingerprint in query_trades:
+                row = response.get(trade_id)
+                refs = _valid_ledger_references(row.get("ledgers")) if isinstance(row, dict) else None
+                if refs is None or not isinstance(row, dict):
+                    continue
+                if _trade_validation_error(trade_id, row) is not None:
+                    continue
+                if not _save_trade(trade_id, row, persistence):
+                    continue
+                trade_rows_recovered += 1
+                resolved_fingerprints.append(fingerprint)
+
+    # Rebuild the set of referenced ledger IDs from corrected persistent fills.
+    current_fills = persistence.fills()
+    referenced_ledger_ids: set[str] = set()
+    missing_trade_fingerprints: set[str] = set()
+    for fill in current_fills:
+        trade_id = str(fill.get("trade_id", "")).strip()
+        raw = fill.get("raw")
+        if not trade_id or not isinstance(raw, dict):
+            continue
+        refs = _valid_ledger_references(raw.get("ledgers"))
+        if refs is None:
+            missing_trade_fingerprints.add(_trade_id_fingerprint(trade_id))
+        else:
+            referenced_ledger_ids.update(refs)
+
+    # QueryLedgers is limited to 20 IDs per call. A bounded number of targeted
+    # queries keeps this repair incremental and avoids starving the normal cycle.
+    existing_ledger_ids = {
+        str(item.get("ledger_id", "")).strip()
+        for item in persistence.ledger_events()
+        if str(item.get("ledger_id", "")).strip()
+    }
+    missing_ledger_ids = sorted(referenced_ledger_ids - existing_ledger_ids)
+    ledger_ids_to_query = missing_ledger_ids[:max_ledger_queries]
+    for batch_start in range(0, len(ledger_ids_to_query), 20):
+        batch = ledger_ids_to_query[batch_start:batch_start + 20]
+        ledger_ids_requested += len(batch)
+        try:
+            response = client.query_ledgers_info(batch)
+        except Exception as exc:
+            api_errors.append("QUERY_LEDGERS_FAILED:" + type(exc).__name__)
+            break
+        if not isinstance(response, dict):
+            api_errors.append("QUERY_LEDGERS_INVALID_RESPONSE")
+            break
+        for ledger_id in batch:
+            row = response.get(ledger_id)
+            if isinstance(row, dict) and _save_ledger(ledger_id, row, persistence):
+                ledger_rows_recovered += 1
+
+    # Re-evaluate coverage after any targeted ledger import. Missing IDs remain a
+    # durable quality gap, even when the trade itself has been recovered successfully.
+    final_fills = persistence.fills()
+    expected_ledger_ids: set[str] = set()
+    missing_trade_fingerprints = set()
+    for fill in final_fills:
+        trade_id = str(fill.get("trade_id", "")).strip()
+        raw = fill.get("raw")
+        if not trade_id or not isinstance(raw, dict):
+            continue
+        refs = _valid_ledger_references(raw.get("ledgers"))
+        fingerprint = _trade_id_fingerprint(trade_id)
+        gap_token = "TRADE_LEDGER_REFERENCES_MISSING:" + fingerprint
+        if refs is None:
+            missing_trade_fingerprints.add(fingerprint)
+            trade_gaps.add(gap_token)
+        else:
+            trade_gaps.discard(gap_token)
+            expected_ledger_ids.update(refs)
+
+    final_ledger_ids = {
+        str(item.get("ledger_id", "")).strip()
+        for item in persistence.ledger_events()
+        if str(item.get("ledger_id", "")).strip()
+    }
+    missing_ledger_references = sorted(expected_ledger_ids - final_ledger_ids)
+    coverage_gap = "TRADE_LEDGER_COVERAGE_INCOMPLETE:ALL_TRADES"
+    if missing_trade_fingerprints or missing_ledger_references or api_errors:
+        trade_gaps.add(coverage_gap)
+    else:
+        trade_gaps.discard(coverage_gap)
+
+    # An empty full-ledger backfill contradicts persisted trade references. Do not
+    # let count=0 make the ledger source appear complete. Restart its initial
+    # backfill from epoch zero; a current-window refresh cannot repair this conflict.
+    ledger_state = persistence.history_sync_state("LEDGERS") or ledger_state
+    expected_count = _count(ledger_state.get("expected_count"))
+    full_ledger_window = (
+        int(ledger_state.get("start_epoch", 0)) == 0
+        and ledger_state.get("initial_backfill_complete") is True
+        and ledger_state.get("generation_complete") is True
+        and ledger_state.get("last_error") is None
+    )
+    empty_full_ledger_conflict = bool(final_fills) and full_ledger_window and expected_count == 0
+    empty_ledger_gap = "LEDGER_HISTORY_COVERAGE_INCOMPLETE:EMPTY_FULL_BACKFILL"
+    if empty_full_ledger_conflict:
+        ledger_gaps.add(empty_ledger_gap)
+        ledger_state.update({
+            "start_epoch": 0,
+            "end_epoch": int(time.time()),
+            "next_offset": 0,
+            "next_cursor": None,
+            "expected_count": None,
+            "initial_backfill_complete": False,
+            "generation_complete": False,
+            "last_error": "LEDGER_HISTORY_COVERAGE_CONFLICT",
+        })
+    elif (
+        int(ledger_state.get("start_epoch", 0)) == 0
+        and ledger_state.get("initial_backfill_complete") is True
+        and ledger_state.get("generation_complete") is True
+        and ledger_state.get("last_error") is None
+        and expected_count is not None
+        and expected_count > 0
+    ):
+        ledger_gaps.discard(empty_ledger_gap)
+
+    trade_state["quality_gaps"] = sorted(trade_gaps)
+    ledger_state["quality_gaps"] = sorted(ledger_gaps)
+    persistence.save_history_sync_state(trade_state)
+    persistence.save_history_sync_state(ledger_state)
+
+    for fingerprint in sorted(set(resolved_fingerprints)):
+        persistence.record_event("KRAKEN_HISTORY_DATA_QUALITY_GAP_RESOLVED", {
+            "source": "TRADES",
+            "reason": "TRADE_LEDGER_REFERENCES_RECOVERED",
+            "trade_id_fingerprint": fingerprint,
+            "resolution_source": "QUERY_TRADES",
+            "new_risk_allowed": False,
+        })
+
+    final_trade_gaps = trade_state["quality_gaps"]
+    final_ledger_gaps = ledger_state["quality_gaps"]
+    missing_trade_references = len(missing_trade_fingerprints)
+    ledger_full_backfill_conflict = empty_ledger_gap in final_ledger_gaps
+    complete = (
+        missing_trade_references == 0
+        and not missing_ledger_references
+        and not ledger_full_backfill_conflict
+        and not api_errors
+        and not final_trade_gaps
+        and not final_ledger_gaps
+    )
+    return {
+        "status": "COMPLETE" if complete else "INCOMPLETE",
+        "trade_rows_queried": trade_rows_queried,
+        "trade_rows_recovered": trade_rows_recovered,
+        "ledger_ids_referenced": len(expected_ledger_ids),
+        "ledger_ids_requested": ledger_ids_requested,
+        "ledger_rows_recovered": ledger_rows_recovered,
+        "missing_trade_references": missing_trade_references,
+        "missing_ledger_references": len(missing_ledger_references),
+        "ledger_full_backfill_conflict": ledger_full_backfill_conflict,
+        "trade_quality_gap_count": len(final_trade_gaps),
+        "ledger_quality_gap_count": len(final_ledger_gaps),
+        "api_errors": sorted(set(api_errors)),
+    }
+
+
 def sync_history_source(
     *,
     client: Any,
