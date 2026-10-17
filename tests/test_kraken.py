@@ -123,8 +123,30 @@ def test_history_clients_validate_offsets_and_send_pagination_parameters():
     client.ledgers(offset=100, start=100, end=200, ledger_type="rollover", asset="USDC")
     assert calls[0] == ("TradesHistory", {"ofs": 50, "trades": True, "ledgers": True,
                                           "start": 100, "end": 200})
-    assert calls[1] == ("Ledgers", {"aclass": "currency", "type": "rollover",
-                                    "asset": "USDC", "ofs": 100, "start": 100, "end": 200})
+    assert calls[1] == ("Ledgers", {"type": "rollover", "asset": "USDC",
+                                    "ofs": 100, "start": 100, "end": 200})
+
+
+def test_query_trade_and_ledger_info_use_exact_bounded_ids():
+    import pytest
+    from app.kraken import KrakenClient
+
+    client = KrakenClient("k", "s")
+    calls = []
+    client.private = lambda method, params=None: calls.append((method, params)) or {}
+
+    client.query_trades_info(["T2", "T1", "T2"], include_ledgers=True)
+    client.query_ledgers_info(["L2", "L1"])
+
+    assert calls == [
+        ("QueryTrades", {"txid": "T2,T1", "trades": False, "ledgers": True}),
+        ("QueryLedgers", {"id": "L2,L1"}),
+    ]
+    with pytest.raises(ValueError, match="QUERY_TRADES_IDS_LIMIT_EXCEEDED"):
+        client.query_trades_info([f"T{i}" for i in range(21)])
+    with pytest.raises(ValueError, match="QUERY_LEDGERS_IDS_LIMIT_EXCEEDED"):
+        client.query_ledgers_info([f"L{i}" for i in range(21)])
+    assert len(calls) == 2
 
 
 def test_closed_orders_history_uses_validated_pagination_and_close_filter():
