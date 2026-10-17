@@ -29,7 +29,7 @@ def test_ohlc_parser_ignores_current_forming_candle():
 
 
 def test_market_universe_excludes_fiat_base_pairs_but_keeps_dynamic_crypto_usd_pairs():
-    def pair(base, base_id, wsname):
+    def pair(base_id, wsname):
         return {
             "altname": wsname.replace("/", ""),
             "wsname": wsname,
@@ -43,11 +43,11 @@ def test_market_universe_excludes_fiat_base_pairs_but_keeps_dynamic_crypto_usd_p
         }
 
     pairs = {
-        "ZEURZUSD": pair("EUR", "ZEUR", "EUR/USD"),
-        "ZGBPZUSD": pair("GBP", "ZGBP", "GBP/USD"),
-        "ZCADZUSD": pair("CAD", "ZCAD", "CAD/USD"),
-        "XBTZUSD": pair("XBT", "XXBT", "XBT/USD"),
-        "NEWCOINZUSD": pair("NEWCOIN", "NEWCOIN", "NEWCOIN/USD"),
+        "ZEURZUSD": pair("ZEUR", "EUR/USD"),
+        "ZGBPZUSD": pair("ZGBP", "GBP/USD"),
+        "ZCADZUSD": pair("ZCAD", "CAD/USD"),
+        "XBTZUSD": pair("XXBT", "XBT/USD"),
+        "NEWCOINZUSD": pair("NEWCOIN", "NEWCOIN/USD"),
     }
 
     instruments = usd_crypto_universe(pairs)
