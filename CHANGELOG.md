@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.20 — Kraken-API-Kompatibilität und Metadaten-Fallback
+
+- Der private REST-Transport serialisiert signierte Requests pro Client und schreibt Boolesche Formwerte als `true`/ `false`, bevor Nonce, Signatur und Request-Body erzeugt werden.
+- `GetApiKeyInfo` unterscheidet fehlende `validUntil`, `queryFrom` oder `queryTo`-Metadaten von einer tatsächlich abgelaufenen API-Key-Gültigkeit oder einem ausdrücklich eingeschränkten History-Zeitfenster.
+- Fehlen Metadaten, prüft die Runtime die wirklichen History-Endpunkte. Fehler werden je Quelle protokolliert und halten neue Risikoerhöhungen gesperrt, ohne die aktuelle Konto-/Positionsabfrage unnötig abzubrechen.
+- Regressionstests decken Boolesche Formserialisierung, unbekannte Metadaten, echten History-Fallback und explizite Query-Fensterrestriktionen ab.
+
+
 ## 0.1.19 — Aktuelle Positionsüberwachung trotz unvollständiger History-Metadaten
 
 - GetApiKeyInfo-Metadatenlücken oder begrenzte historische Abfragefenster sperren weiter neue Risikoerhöhungen und den historischen Backfill, blockieren aber nicht mehr automatisch aktuelle Balance-, OpenOrders- und OpenPositions-Abfragen.
