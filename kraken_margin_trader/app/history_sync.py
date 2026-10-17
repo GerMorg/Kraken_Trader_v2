@@ -364,6 +364,14 @@ def reconcile_trade_ledger_coverage(
         for item in persistence.ledger_events()
         if str(item.get("ledger_id", "")).strip()
     }
+    ledger_state_before_lookup = persistence.history_sync_state("LEDGERS") or ledger_state
+    ledger_source_empty_before_repair = (
+        not existing_ledger_ids
+        and bool(referenced_ledger_ids)
+        and ledger_state_before_lookup.get("initial_backfill_complete") is True
+        and ledger_state_before_lookup.get("generation_complete") is True
+        and ledger_state_before_lookup.get("last_error") is None
+    )
     missing_ledger_ids = sorted(referenced_ledger_ids - existing_ledger_ids)
     ledger_ids_to_query = missing_ledger_ids[:max_ledger_queries]
     for batch_start in range(0, len(ledger_ids_to_query), 20):
@@ -425,7 +433,11 @@ def reconcile_trade_ledger_coverage(
         and ledger_state.get("generation_complete") is True
         and ledger_state.get("last_error") is None
     )
-    empty_full_ledger_conflict = bool(final_fills) and full_ledger_window and expected_count == 0
+    empty_full_ledger_conflict = (
+        bool(final_fills)
+        and full_ledger_window
+        and expected_count == 0
+    ) or ledger_source_empty_before_repair
     empty_ledger_gap = "LEDGER_HISTORY_COVERAGE_INCOMPLETE:EMPTY_FULL_BACKFILL"
     if empty_full_ledger_conflict:
         ledger_gaps.add(empty_ledger_gap)
