@@ -27,7 +27,8 @@ FIAT_ASSET_CODES = frozenset({
     "USD", "UYU", "UZS", "VES", "VND", "VUV", "WST", "XAF", "XCD", "XOF",
     "XPF", "YER", "ZAR", "ZMW", "ZWG",
     # ISO special-purpose monetary units and precious metals are not crypto assets.
-    "CLF", "COU", "XAG", "XAU", "XDR", "XPD", "XPT", "XSU", "XUA", "UYI",
+    "BOV", "CHE", "CHW", "KID", "USN", "XXX", "XBA", "XBB", "XBC", "XBD",
+    "XTS", "CLF", "COU", "XAG", "XAU", "XDR", "XPD", "XPT", "XSU", "XUA", "UYI",
 })
 
 
@@ -44,6 +45,7 @@ def _is_fiat_base(asset_symbol: Any, asset_id: Any = None) -> bool:
         if len(token) == 4 and token[0] in {"X", "Z"} and token[1:] in FIAT_ASSET_CODES:
             return True
     return False
+
 
 def _d(value: Any, default: str = "0") -> Decimal:
     try:
