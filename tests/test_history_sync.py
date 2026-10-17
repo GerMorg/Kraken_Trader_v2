@@ -275,10 +275,11 @@ def test_full_ledger_refid_recovers_trade_links_when_querytrades_omits_them():
     assert recovered_raw["ledgers"] == ["L-REFID"]
     assert recovered_raw["_ledger_reference_evidence"]["source"] == "FULL_LEDGER_REFID_MATCH"
     assert db.history_sync_state("TRADES")["quality_gaps"] == []
-    assert any(
-        item["name"] == "KRAKEN_HISTORY_DATA_QUALITY_GAP_RESOLVED"
-        for item in db.events()
-    )
+    event_count = db.connection.execute(
+        "SELECT COUNT(*) AS n FROM events WHERE name=?",
+        ("KRAKEN_HISTORY_DATA_QUALITY_GAP_RESOLVED",),
+    ).fetchone()["n"]
+    assert event_count >= 1
     db.close()
 
 
