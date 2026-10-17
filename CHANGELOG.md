@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.24 — Fiat-Basismärkte aus dem Krypto-Universum ausschließen
+
+- Die AssetPair-Auswahl akzeptiert weiterhin nur Online-Märkte mit USD-Quote, schließt jetzt aber zusätzlich Fiat-Basiswährungen aus. Kraken klassifiziert sowohl reguläre Krypto-Assets als auch viele Fiat-Währungen mit `aclass_base: currency`; diese Klassifizierung allein reicht deshalb nicht, um einen Markt als Kryptowährung einzustufen.
+- Die Filterung prüft sowohl `wsname`-Basissymbole als auch Kraken-interne Base-Asset-IDs (zum Beispiel `ZEUR`/`ZGBP`). Regressionstests belegen, dass `EUR/USD`, `GBP/USD` und `CAD/USD` verworfen werden, während XBT/USD und ein neues dynamisch entdecktes Krypto/USD-Paar zugelassen bleiben.
+- Keine Coin-Whitelist; keine Veränderung am sicheren Shadow-/Reconciliation-Gate.
+
 ## 0.1.23 — Metadaten-Aliase und fortsetzbarer History-Import
 
 - `GetApiKeyInfo`-Metadaten werden sowohl als dokumentierte camelCase-Felder (`validUntil`, `queryFrom`, `queryTo`) als auch in der im Live-Log tatsächlich beobachteten snake_case-Form (`valid_until`, `query_from`, `query_to`) erkannt. Bei widersprüchlichen Aliaswerten gilt das Feld als ungültig und wird nicht freigegeben.

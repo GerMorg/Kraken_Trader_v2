@@ -7,6 +7,46 @@ from app.models import Instrument, Ticker
 
 D = Decimal
 
+
+FIAT_ASSET_CODES = frozenset({
+    # ISO 4217 fiat currencies that can appear as an AssetPairs base code.
+    "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN",
+    "BAM", "BBD", "BDT", "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BRL",
+    "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHF", "CLP", "CNY",
+    "COP", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD", "EGP",
+    "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD",
+    "GNF", "GTQ", "GYD", "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR",
+    "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF",
+    "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL",
+    "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR",
+    "MVR", "MWK", "MXN", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK", "NPR",
+    "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG", "QAR",
+    "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD",
+    "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB",
+    "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX",
+    "USD", "UYU", "UZS", "VES", "VND", "VUV", "WST", "XAF", "XCD", "XOF",
+    "XPF", "YER", "ZAR", "ZMW", "ZWG",
+    # ISO special-purpose monetary units and precious metals are not crypto assets.
+    "BOV", "CHE", "CHW", "KID", "USN", "XXX", "XBA", "XBB", "XBC", "XBD",
+    "XTS", "CLF", "COU", "XAG", "XAU", "XDR", "XPD", "XPT", "XSU", "XUA", "UYI",
+})
+
+
+def _is_fiat_base(asset_symbol: Any, asset_id: Any = None) -> bool:
+    """Reject fiat/special-purpose monetary assets while allowing dynamic crypto bases."""
+    for raw in (asset_symbol, asset_id):
+        token = str(raw or "").strip().upper()
+        if not token:
+            continue
+        if token in FIAT_ASSET_CODES:
+            return True
+        # Kraken's legacy IDs commonly prefix a fiat currency with X or Z
+        # (for example ZEUR / ZGBP); canonical crypto IDs such as XXBT remain allowed.
+        if len(token) == 4 and token[0] in {"X", "Z"} and token[1:] in FIAT_ASSET_CODES:
+            return True
+    return False
+
+
 def _d(value: Any, default: str = "0") -> Decimal:
     try:
         result = D(str(value))
@@ -48,7 +88,13 @@ def usd_crypto_universe(raw_pairs: dict[str, Any]) -> list[Instrument]:
         if "/" not in wsname:
             continue
         base, quote = wsname.rsplit("/", 1)
-        if quote.upper() != "USD" or not base or base.upper() in {"USD","USDC","USDT","EURC"}:
+        base_asset_id = raw.get("base")
+        if (
+            quote.upper() != "USD"
+            or not base
+            or base.upper() in {"USD", "USDC", "USDT", "EURC"}
+            or _is_fiat_base(base, base_asset_id)
+        ):
             continue
         try:
             minimum = _d(raw.get("ordermin","0"))
