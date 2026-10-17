@@ -62,6 +62,17 @@ def _nonnegative_epoch(value: Any) -> int | None:
     return epoch if epoch >= 0 else None
 
 
+def _normalize_form_value(value: Any) -> Any:
+    """Encode boolean form values as the lowercase literals accepted by Kraken."""
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, (list, tuple)):
+        return [_normalize_form_value(item) for item in value]
+    return value
+
+
 def api_key_permission_gate_reasons(
     assessment: dict[str, Any],
     *,
@@ -74,12 +85,10 @@ def api_key_permission_gate_reasons(
         reasons.append("REQUIRED_QUERY_PERMISSION_MISSING")
     if assessment.get("withdrawal_permissions_present"):
         reasons.append("WITHDRAWAL_PERMISSION_PRESENT")
-    if assessment.get("api_key_expired_or_expiry_unknown"):
-        reasons.append("API_KEY_EXPIRED_OR_EXPIRY_UNKNOWN")
-    if assessment.get("historical_query_window_restricted"):
+    if assessment.get("api_key_expired") is True:
+        reasons.append("API_KEY_EXPIRED")
+    if assessment.get("historical_query_window_restricted") is True:
         reasons.append("API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED")
-    if assessment.get("api_key_metadata_complete") is not True:
-        reasons.append("API_KEY_METADATA_INCOMPLETE")
     permissions = assessment.get("permissions")
     if not isinstance(permissions, list):
         permissions = []
@@ -90,9 +99,13 @@ def api_key_permission_gate_reasons(
         missing_write = assessment.get("missing_order_write_permissions")
         if not isinstance(missing_write, list) or missing_write:
             reasons.append("LIVE_ORDER_PERMISSIONS_MISSING")
-    if assessment.get("ready_for_account_reconciliation") is not True and not reasons:
-        # Fail closed if the assessment schema evolves or an inconsistent assessment
-        # is passed in; readiness must never be inferred from missing failure fields.
+    if (
+        assessment.get("ready_for_account_reconciliation") is not True
+        and assessment.get("api_key_metadata_complete") is True
+        and not reasons
+    ):
+        # A complete but internally inconsistent assessment is a hard failure.
+        # Missing optional metadata is verified against the actual history APIs.
         reasons.append("API_KEY_ASSESSMENT_NOT_READY")
     return list(dict.fromkeys(reasons))
 
@@ -123,17 +136,24 @@ def assess_api_key_info(
     query_to = _nonnegative_epoch(response.get("queryTo"))
     now = int(time.time()) if now_epoch is None else int(now_epoch)
 
-    metadata_complete = all(
-        value is not None for value in (valid_until, query_from, query_to)
+    metadata_values = {
+        "validUntil": valid_until,
+        "queryFrom": query_from,
+        "queryTo": query_to,
+    }
+    metadata_fields_missing = sorted(
+        field for field, value in metadata_values.items() if value is None
     )
-    key_expired = valid_until is None or (
-        valid_until != 0 and valid_until <= now
-    )
+    metadata_complete = not metadata_fields_missing
+    key_expiry_unknown = valid_until is None
+    key_expired = valid_until is not None and valid_until != 0 and valid_until <= now
+    history_window_unknown = query_from is None or query_to is None
+    # Absence of optional metadata does not prove that the key is expired or that
+    # the query window is restricted. Explicit restrictions remain hard blockers;
+    # missing values require probing the actual history endpoints.
     history_window_restricted = (
-        query_from is None
-        or query_to is None
-        or query_from > 0
-        or (query_to > 0 and query_to <= now)
+        (query_from is not None and query_from > 0)
+        or (query_to is not None and query_to > 0 and query_to <= now)
     )
     ready_for_account_reconciliation = (
         metadata_complete
@@ -148,7 +168,11 @@ def assess_api_key_info(
         "withdrawal_permissions_present": withdrawal,
         "missing_order_write_permissions": missing_order_write,
         "api_key_metadata_complete": metadata_complete,
+        "api_key_metadata_fields_missing": metadata_fields_missing,
+        "api_key_expiry_unknown": key_expiry_unknown,
+        "api_key_expired": key_expired,
         "api_key_expired_or_expiry_unknown": key_expired,
+        "historical_query_window_unknown": history_window_unknown,
         "historical_query_window_restricted": history_window_restricted,
         "api_key_valid_until": valid_until,
         "api_key_query_from": query_from,
@@ -174,6 +198,8 @@ class KrakenClient:
         self._clock = clock or time.monotonic
         self._sleeper = sleeper or time.sleep
         self._public_rate_lock = threading.Lock()
+        # Kraken requires nonce order to match request arrival order.
+        self._private_request_lock = threading.RLock()
         self._last_public_request_at: float | None = None
 
     def _wait_for_public_rate_limit(self) -> None:
@@ -209,49 +235,60 @@ class KrakenClient:
     def private(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.api_key or not self.api_secret:
             raise KrakenAPIError("KRAKEN_CREDENTIALS_MISSING")
-        path = f"/0/private/{method}"
-        payload = dict(params or {})
-        payload["nonce"] = str(self.nonce_provider())
-        encoded = urlencode(payload, doseq=True).encode("utf-8")
-        try:
-            signature = sign_spot(path, payload, self.api_secret)
-        except (ValueError, TypeError) as exc:
-            raise KrakenAPIError("KRAKEN_PRIVATE_SIGNING_CONFIGURATION_INVALID") from exc
-        request = Request(
-            SPOT_BASE + path, data=encoded, method="POST",
-            headers={"API-Key": self.api_key, "API-Sign": signature,
-                     "Content-Type":"application/x-www-form-urlencoded", "User-Agent":f"KrakenTraderV2/{__version__}"})
-        try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310 -- fixed Kraken HTTPS origin; endpoint names are static
-                try:
-                    value = _decode_response(response.read())
-                except KrakenAPIError as exc:
-                    if method == "AddOrder":
-                        raise KrakenAmbiguousError("ADD_ORDER_RESPONSE_PARSE_OUTCOME_UNKNOWN") from exc
-                    raise
-        except HTTPError as exc:
+        with self._private_request_lock:
+            path = f"/0/private/{method}"
+            payload = {
+                key: _normalize_form_value(value)
+                for key, value in dict(params or {}).items()
+            }
+            payload["nonce"] = str(self.nonce_provider())
+            encoded = urlencode(payload, doseq=True).encode("utf-8")
             try:
-                value = _decode_response(exc.read())
-            except (KrakenAPIError, TimeoutError, URLError, OSError) as body_exc:
+                signature = sign_spot(path, payload, self.api_secret)
+            except (ValueError, TypeError) as exc:
+                raise KrakenAPIError("KRAKEN_PRIVATE_SIGNING_CONFIGURATION_INVALID") from exc
+            request = Request(
+                SPOT_BASE + path,
+                data=encoded,
+                method="POST",
+                headers={
+                    "API-Key": self.api_key,
+                    "API-Sign": signature,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": f"KrakenTraderV2/{__version__}",
+                },
+            )
+            try:
+                with urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310 -- fixed Kraken HTTPS origin; endpoints are static
+                    try:
+                        value = _decode_response(response.read())
+                    except KrakenAPIError as exc:
+                        if method == "AddOrder":
+                            raise KrakenAmbiguousError("ADD_ORDER_RESPONSE_PARSE_OUTCOME_UNKNOWN") from exc
+                        raise
+            except HTTPError as exc:
+                try:
+                    value = _decode_response(exc.read())
+                except (KrakenAPIError, TimeoutError, URLError, OSError) as body_exc:
+                    if method == "AddOrder":
+                        raise KrakenAmbiguousError("ADD_ORDER_HTTP_OUTCOME_UNKNOWN") from body_exc
+                    raise KrakenAPIError("KRAKEN_PRIVATE_HTTP_ERROR") from body_exc
+                # A parsed, explicit Kraken error is a definite rejection. An HTTP
+                # error without one is not proof that the order was not accepted.
+                if method == "AddOrder" and not value.get("error"):
+                    raise KrakenAmbiguousError("ADD_ORDER_HTTP_STATUS_OUTCOME_UNKNOWN") from exc
+            except (TimeoutError, URLError, OSError) as exc:
                 if method == "AddOrder":
-                    raise KrakenAmbiguousError("ADD_ORDER_HTTP_OUTCOME_UNKNOWN") from body_exc
-                raise KrakenAPIError("KRAKEN_PRIVATE_HTTP_ERROR") from body_exc
-            # A parsed, explicit Kraken error is a definite rejection. An HTTP
-            # error without one is not proof that the order was not accepted.
-            if method == "AddOrder" and not value.get("error"):
-                raise KrakenAmbiguousError("ADD_ORDER_HTTP_STATUS_OUTCOME_UNKNOWN") from exc
-        except (TimeoutError, URLError, OSError) as exc:
-            if method == "AddOrder":
-                raise KrakenAmbiguousError("ADD_ORDER_NETWORK_OUTCOME_UNKNOWN") from exc
-            raise KrakenAPIError("KRAKEN_PRIVATE_NETWORK_ERROR") from exc
-        if value.get("error"):
-            raise KrakenAPIError("KRAKEN_PRIVATE:" + ";".join(str(x) for x in value["error"]))
-        result = value.get("result", {})
-        if not isinstance(result, dict):
-            if method == "AddOrder":
-                raise KrakenAmbiguousError("ADD_ORDER_RESULT_SHAPE_OUTCOME_UNKNOWN")
-            raise KrakenAPIError("KRAKEN_PRIVATE_RESULT_INVALID")
-        return result
+                    raise KrakenAmbiguousError("ADD_ORDER_NETWORK_OUTCOME_UNKNOWN") from exc
+                raise KrakenAPIError("KRAKEN_PRIVATE_NETWORK_ERROR") from exc
+            if value.get("error"):
+                raise KrakenAPIError("KRAKEN_PRIVATE:" + ";".join(str(x) for x in value["error"]))
+            result = value.get("result", {})
+            if not isinstance(result, dict):
+                if method == "AddOrder":
+                    raise KrakenAmbiguousError("ADD_ORDER_RESULT_SHAPE_OUTCOME_UNKNOWN")
+                raise KrakenAPIError("KRAKEN_PRIVATE_RESULT_INVALID")
+            return result
 
     def api_key_permission_assessment(self, *, now_epoch: int | None = None) -> dict[str, Any]:
         """Check required read scopes and reject overly privileged/limited API keys."""
