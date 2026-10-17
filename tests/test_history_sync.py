@@ -461,7 +461,9 @@ def test_forced_refresh_does_not_reset_an_incomplete_initial_backfill():
     db = Persistence(":memory:")
     client = FakeHistoryClient(ledger_pages={
         None: {"ledger": {"L1": ledger()}, "cursor": {"next": "LEDGER-CURSOR-2"}},
-        "LEDGER-CURSOR-2": {"ledger": {"L2": ledger()}},
+        "LEDGER-CURSOR-2": {
+            "ledger": {"L2": ledger()}, "cursor": {"next": "LEDGER-CURSOR-3"},
+        },
     })
     first = sync_history_source(
         client=client, persistence=db, source="LEDGERS", page_budget=1,
