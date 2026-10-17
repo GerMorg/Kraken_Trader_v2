@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import hashlib
 import time
 from zoneinfo import ZoneInfo
 from typing import Any
@@ -81,33 +82,52 @@ def _result_items(value: Any) -> dict[str, dict[str, Any]] | None:
     return value
 
 
-def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
-    stamp = _timestamp(row.get("time"))
-    try:
-        volume = D(str(row["vol"]))
-        price = D(str(row["price"]))
-        fee = D(str(row["fee"]))
-        margin_amount = D(str(row["margin"]))
-    except (KeyError, ArithmeticError, TypeError, ValueError):
-        # The margin field is required to distinguish a cash-spot fill from
-        # a margin fill. Missing data must never be silently classified as spot.
-        return False
-    ledger_refs = row.get("ledgers")
+def _trade_validation_error(row_id: str, row: dict[str, Any]) -> str | None:
+    if not row_id:
+        return "TRADE_ID_MISSING"
+    if _timestamp(row.get("time")) is None:
+        return "TRADE_TIME_INVALID"
+
+    numeric_fields: dict[str, Decimal] = {}
+    for field in ("vol", "price", "fee", "margin"):
+        try:
+            numeric_fields[field] = D(str(row[field]))
+        except (KeyError, ArithmeticError, TypeError, ValueError):
+            return f"TRADE_FIELD_MISSING_OR_INVALID:{field}"
+        value = numeric_fields[field]
+        if not value.is_finite():
+            return f"TRADE_FIELD_NOT_FINITE:{field}"
+        if field in {"vol", "price"} and value <= 0:
+            return f"TRADE_FIELD_OUT_OF_RANGE:{field}"
+        if field in {"fee", "margin"} and value < 0:
+            return f"TRADE_FIELD_OUT_OF_RANGE:{field}"
+
+    if "ledgers" not in row:
+        return "TRADE_LEDGER_REFERENCES_MISSING"
+    ledger_refs = row["ledgers"]
     if not isinstance(ledger_refs, list) or any(
         not isinstance(ledger_id, str) or not ledger_id.strip()
         for ledger_id in ledger_refs
     ):
+        return "TRADE_LEDGER_REFERENCES_INVALID"
+    if str(row.get("type", "")).lower() not in {"buy", "sell"}:
+        return "TRADE_SIDE_INVALID"
+    if not str(row.get("pair", "")).strip():
+        return "TRADE_PAIR_MISSING"
+    return None
+
+
+def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
+    if _trade_validation_error(row_id, row) is not None:
         return False
+    stamp = _timestamp(row.get("time"))
+    volume = D(str(row["vol"]))
+    price = D(str(row["price"]))
+    fee = D(str(row["fee"]))
+    margin_amount = D(str(row["margin"]))
+    ledger_refs = row["ledgers"]
     side = str(row.get("type", "")).lower()
     pair = str(row.get("pair", "")).strip()
-    if (
-        stamp is None or not volume.is_finite() or volume <= 0
-        or not price.is_finite() or price <= 0
-        or not fee.is_finite() or fee < 0
-        or not margin_amount.is_finite() or margin_amount < 0
-        or side not in {"buy", "sell"} or not pair or not row_id
-    ):
-        return False
     _, ts_iso, year = stamp
     persistence.upsert_fill_from_exchange({
         "trade_id": row_id, "order_id": row.get("ordertxid"), "pair": pair,
@@ -314,22 +334,35 @@ def sync_history_source(
                 break
 
         for row_id, row in items.items():
+            invalid_reason = (
+                _trade_validation_error(row_id, row) if normalized == "TRADES" else None
+            )
             if normalized == "TRADES":
-                valid = _save_trade(row_id, row, persistence)
+                valid = invalid_reason is None and _save_trade(row_id, row, persistence)
             elif normalized == "LEDGERS":
                 valid = _save_ledger(row_id, row, persistence)
             else:
                 valid = _save_closed_order(row_id, row, persistence)
             if not valid:
-                state["last_error"] = "HISTORY_ITEM_INVALID"
+                invalid_reason = invalid_reason or "HISTORY_ITEM_VALIDATION_FAILED"
+                state["last_error"] = (
+                    "HISTORY_ITEM_INVALID:" + invalid_reason
+                    if normalized == "TRADES" else "HISTORY_ITEM_INVALID"
+                )
                 persistence.save_history_sync_state(state)
-                return {
+                failure = {
                     "source": normalized, "pages": pages + 1, "items_saved": saved,
                     "expected_count": state["expected_count"], "next_offset": state["next_offset"],
                     "generation_complete": False,
                     "initial_backfill_complete": bool(state["initial_backfill_complete"]),
                     "cached_until_refresh": False, "last_error": state["last_error"],
+                    "invalid_item_reason": invalid_reason,
                 }
+                if normalized == "TRADES":
+                    failure["invalid_item_id_fingerprint"] = hashlib.sha256(
+                        row_id.encode("utf-8")
+                    ).hexdigest()[:12]
+                return failure
             saved += 1
 
         pages += 1
