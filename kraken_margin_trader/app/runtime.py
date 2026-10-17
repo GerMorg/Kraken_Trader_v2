@@ -183,6 +183,8 @@ class TraderRuntime:
         api_permissions_ready = False
         api_permission_gaps: list[str] = ["API_KEY_PERMISSION_CHECK_NOT_COMPLETED"]
         history_metadata_untrusted = False
+        history_window_unknown = False
+        closed_history_snapshot_allowed = False
         self.audit.emit("CYCLE_START",cycle_id=cycle_id,mode=self.settings.mode)
         try:
             self._refresh_tax_report()
@@ -242,6 +244,24 @@ class TraderRuntime:
                     live_requested=self.settings.live_requested,
                 )
                 api_permissions_ready = not api_permission_gaps
+                history_metadata_untrusted = bool(
+                    key_assessment.get("api_key_expired")
+                    or key_assessment.get("historical_query_window_restricted")
+                )
+                history_window_unknown = bool(
+                    key_assessment.get("api_key_expiry_unknown")
+                    or key_assessment.get("historical_query_window_unknown")
+                )
+                if key_assessment.get("api_key_metadata_complete") is not True:
+                    self.audit.emit(
+                        "KRAKEN_API_KEY_METADATA_INCOMPLETE",
+                        cycle_id=cycle_id,
+                        missing_fields=key_assessment.get("api_key_metadata_fields_missing", []),
+                        expiry_unknown=key_assessment.get("api_key_expiry_unknown", True),
+                        history_window_unknown=key_assessment.get("historical_query_window_unknown", True),
+                        history_api_probe_enabled=True,
+                        new_risk_requires_complete_history=True,
+                    )
                 if not api_permissions_ready:
                     private_read_access_invalid = any(
                         reason in api_permission_gaps
@@ -251,27 +271,18 @@ class TraderRuntime:
                             "API_KEY_ASSESSMENT_NOT_READY",
                         )
                     )
-                    history_metadata_untrusted = any(
-                        reason in api_permission_gaps
-                        for reason in (
-                            "API_KEY_EXPIRED_OR_EXPIRY_UNKNOWN",
-                            "API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED",
-                            "API_KEY_METADATA_INCOMPLETE",
-                        )
-                    )
                     self.audit.emit(
                         "API_KEY_PERMISSION_GATE_BLOCKED",
                         cycle_id=cycle_id,
                         reasons=api_permission_gaps,
                         existing_position_management_continues=not private_read_access_invalid,
                         operator_action=(
-                            "Correct API key scopes or history window; next cycle rechecks automatically."
+                            "Correct missing scopes or explicit key restrictions; missing optional metadata "
+                            "is checked by querying the actual history endpoints."
                         ),
                     )
                     if private_read_access_invalid:
-                        # Do not repeatedly call known-forbidden private endpoints and turn a
-                        # recoverable configuration issue into a permanent KRAKEN_API breaker.
-                        # Without reliable private reads, positions cannot be managed safely.
+                        # Without required read scopes, current account/position data cannot be trusted.
                         result = {
                             "cycle_id": cycle_id,
                             "status": "BLOCKED",
@@ -286,22 +297,52 @@ class TraderRuntime:
                 if history_metadata_untrusted:
                     history_ready_for_entries = False
                     history_evidence_gaps = list(api_permission_gaps)
-                    history_evidence_gaps.append("ACCOUNT_HISTORY_SYNC_SKIPPED_UNTRUSTED_KEY_METADATA")
+                    history_evidence_gaps.append("ACCOUNT_HISTORY_SYNC_SKIPPED_EXPLICIT_KEY_RESTRICTION")
                     self.audit.emit(
                         "KRAKEN_HISTORY_SYNC_SKIPPED",
                         cycle_id=cycle_id,
                         sources=["TRADES", "LEDGERS", "CLOSED_ORDERS"],
                         reasons=api_permission_gaps,
-                        existing_position_monitoring_continues=True,
+                        explicit_key_restriction=True,
+                        existing_position_management_continues=True,
                         new_risk_allowed=False,
                     )
                 else:
                     for history_source in ("TRADES", "LEDGERS", "CLOSED_ORDERS"):
-                        history_summary=sync_history_source(
-                            client=self.client,
-                            persistence=self.persistence,
-                            source=history_source,
-                        )
+                        try:
+                            history_summary=sync_history_source(
+                                client=self.client,
+                                persistence=self.persistence,
+                                source=history_source,
+                            )
+                        except KrakenAPIError as exc:
+                            state = self.persistence.history_sync_state(history_source)
+                            if state is not None:
+                                state["generation_complete"] = False
+                                state["last_error"] = exc.code
+                                self.persistence.save_history_sync_state(state)
+                            history_summary = {
+                                "source": history_source,
+                                "pages": 0,
+                                "items_saved": 0,
+                                "expected_count": state.get("expected_count") if state else None,
+                                "next_offset": state.get("next_offset", 0) if state else 0,
+                                "generation_complete": False,
+                                "initial_backfill_complete": bool(
+                                    state.get("initial_backfill_complete", False) if state else False
+                                ),
+                                "cached_until_refresh": False,
+                                "last_error": exc.code,
+                            }
+                            self.audit.emit(
+                                "KRAKEN_HISTORY_SYNC_FAILED",
+                                cycle_id=cycle_id,
+                                source=history_source,
+                                code=exc.code,
+                                retry_next_cycle=True,
+                                existing_position_monitoring_continues=True,
+                                new_risk_allowed=False,
+                            )
                         history_summaries.append(history_summary)
                         self.audit.emit(
                             "KRAKEN_HISTORY_SYNC",
@@ -310,6 +351,10 @@ class TraderRuntime:
                         )
                     history_ready_for_entries, history_evidence_gaps = history_sources_ready(
                         history_summaries
+                    )
+                    closed_history_snapshot_allowed = any(
+                        item.get("source") == "CLOSED_ORDERS" and not item.get("last_error")
+                        for item in history_summaries
                     )
                 if not history_ready_for_entries:
                     self.audit.emit(
@@ -333,7 +378,10 @@ class TraderRuntime:
                 # Fetch the account/position snapshot after history network calls so
                 # the risk gate uses a genuinely recent snapshot.
                 account = self.client.account_snapshot(
-                    include_closed_orders=not history_metadata_untrusted
+                    include_closed_orders=(
+                        not history_metadata_untrusted
+                        and (not history_window_unknown or closed_history_snapshot_allowed)
+                    )
                 )
                 persisted_snapshot = self.persistence.record_account_snapshot(account)
                 self.audit.emit(
@@ -360,10 +408,10 @@ class TraderRuntime:
                         "evidence_gaps": ["PREVIOUS_SNAPSHOT_TIMESTAMP_INVALID"],
                         "asset_results": [],
                     }
-                elif history_metadata_untrusted:
-                    # Do not call historical endpoints while queryFrom/queryTo or expiry
-                    # metadata is unknown. Use already imported ledger events but keep
-                    # reconciliation explicitly incomplete, which blocks new risk.
+                elif history_metadata_untrusted or history_window_unknown:
+                    # Do not make a second overlapping historical query when key restrictions
+                    # are explicit or the range metadata is absent. Keep the wallet delta
+                    # reconciliation incomplete even if some prior ledger rows are available.
                     wallet_reconciliation = reconcile_wallet_balance_deltas(
                         previous_account_snapshot,
                         account,
