@@ -128,30 +128,46 @@ def assess_api_key_info(
     missing_query = sorted(REQUIRED_ACCOUNT_QUERY_PERMISSIONS - permission_set)
     withdrawal = sorted(WITHDRAWAL_PERMISSIONS & permission_set)
     missing_order_write = sorted(ORDER_WRITE_PERMISSIONS - permission_set)
-    valid_until = _nonnegative_epoch(response.get("validUntil"))
-    query_from = _nonnegative_epoch(response.get("queryFrom"))
-    query_to = _nonnegative_epoch(response.get("queryTo"))
+    metadata_aliases = {
+        "validUntil": ("validUntil", "valid_until"),
+        "queryFrom": ("queryFrom", "query_from"),
+        "queryTo": ("queryTo", "query_to"),
+    }
+    metadata_values: dict[str, int | None] = {}
+    metadata_source_fields: dict[str, str] = {}
+    metadata_fields_missing: list[str] = []
+    metadata_fields_present: list[str] = []
+    metadata_fields_invalid: list[str] = []
+    for canonical, aliases in metadata_aliases.items():
+        present = [field for field in aliases if field in response]
+        if not present:
+            metadata_fields_missing.append(canonical)
+            metadata_values[canonical] = None
+            continue
+        metadata_fields_present.append(canonical)
+        metadata_source_fields[canonical] = present[0]
+        parsed = [(field, _nonnegative_epoch(response.get(field))) for field in present]
+        parsed_values = {value for _field, value in parsed}
+        if len(parsed_values) > 1 or parsed[0][1] is None:
+            metadata_fields_invalid.append(canonical)
+            metadata_values[canonical] = None
+        else:
+            metadata_values[canonical] = parsed[0][1]
+
+    valid_until = metadata_values["validUntil"]
+    query_from = metadata_values["queryFrom"]
+    query_to = metadata_values["queryTo"]
     now = int(time.time()) if now_epoch is None else int(now_epoch)
 
-    metadata_values = {
-        "validUntil": valid_until,
-        "queryFrom": query_from,
-        "queryTo": query_to,
-    }
-    metadata_fields_missing = sorted(
-        field for field, value in metadata_values.items() if value is None
-    )
-    metadata_fields_present = sorted(field for field in metadata_values if field in response)
-    metadata_fields_invalid = sorted(
-        field for field in metadata_fields_present if metadata_values[field] is None
-    )
     # Only field names are reported; response values, including apiKey, are never copied.
     response_fields_present = sorted(
         field for field in response
         if isinstance(field, str)
         and field.lower() not in {"apikey", "api_key", "secret", "apisecret", "privatekey"}
     )
-    metadata_complete = not metadata_fields_missing
+    metadata_fields_missing.sort()
+    metadata_fields_invalid.sort()
+    metadata_complete = not metadata_fields_missing and not metadata_fields_invalid
     key_expiry_unknown = valid_until is None
     key_expired = valid_until is not None and valid_until != 0 and valid_until <= now
     history_window_unknown = query_from is None or query_to is None
@@ -176,8 +192,9 @@ def assess_api_key_info(
         "missing_order_write_permissions": missing_order_write,
         "api_key_metadata_complete": metadata_complete,
         "api_key_metadata_fields_missing": metadata_fields_missing,
-        "api_key_metadata_fields_present": metadata_fields_present,
-        "api_key_metadata_fields_invalid": metadata_fields_invalid,
+        "api_key_metadata_fields_present": sorted(metadata_fields_present),
+        "api_key_metadata_fields_invalid": sorted(metadata_fields_invalid),
+        "api_key_metadata_source_fields": metadata_source_fields,
         "api_key_info_response_fields_present": response_fields_present,
         "api_key_expiry_unknown": key_expiry_unknown,
         "api_key_expired": key_expired,

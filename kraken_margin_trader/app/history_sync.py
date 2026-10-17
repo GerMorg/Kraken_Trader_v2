@@ -49,8 +49,21 @@ def history_sources_ready(summaries: list[dict[str, Any]]) -> tuple[bool, list[s
         error = summary.get("last_error")
         if error:
             gaps.append("HISTORY_SOURCE_ERROR:" + source + ":" + str(error)[:120])
+        quality_gaps = summary.get("quality_gaps", [])
+        if not isinstance(quality_gaps, list):
+            gaps.append("HISTORY_QUALITY_GAP_STATE_INVALID:" + source)
+        else:
+            seen_gap_types: set[str] = set()
+            for quality_gap in quality_gaps:
+                if not isinstance(quality_gap, str) or not quality_gap.strip():
+                    gaps.append("HISTORY_QUALITY_GAP_STATE_INVALID:" + source)
+                    continue
+                gap_type = quality_gap.split(":", 1)[0]
+                if gap_type not in seen_gap_types:
+                    gaps.append("HISTORY_DATA_QUALITY_GAP:" + source + ":" + gap_type)
+                    seen_gap_types.add(gap_type)
 
-    return not gaps, gaps
+    return not gaps, list(dict.fromkeys(gaps))
 
 
 def _count(value: Any) -> int | None:
@@ -82,6 +95,22 @@ def _result_items(value: Any) -> dict[str, dict[str, Any]] | None:
     return value
 
 
+def _trade_id_fingerprint(row_id: str) -> str:
+    return hashlib.sha256(row_id.encode("utf-8")).hexdigest()[:12]
+
+
+def _quality_gap_fields(state: dict[str, Any]) -> dict[str, Any]:
+    gaps = state.get("quality_gaps", [])
+    if not isinstance(gaps, list):
+        gaps = ["HISTORY_QUALITY_GAP_STATE_INVALID"]
+    clean_gaps = sorted({item for item in gaps if isinstance(item, str) and item.strip()})
+    return {
+        "quality_gaps": clean_gaps,
+        "quality_gap_count": len(clean_gaps),
+        "quality_gap_types": sorted({item.split(":", 1)[0] for item in clean_gaps}),
+    }
+
+
 def _trade_validation_error(row_id: str, row: dict[str, Any]) -> str | None:
     if not row_id:
         return "TRADE_ID_MISSING"
@@ -102,14 +131,17 @@ def _trade_validation_error(row_id: str, row: dict[str, Any]) -> str | None:
         if field in {"fee", "margin"} and value < 0:
             return f"TRADE_FIELD_OUT_OF_RANGE:{field}"
 
-    if "ledgers" not in row:
-        return "TRADE_LEDGER_REFERENCES_MISSING"
-    ledger_refs = row["ledgers"]
-    if not isinstance(ledger_refs, list) or any(
-        not isinstance(ledger_id, str) or not ledger_id.strip()
-        for ledger_id in ledger_refs
-    ):
-        return "TRADE_LEDGER_REFERENCES_INVALID"
+    # Kraken may omit an empty optional "ledgers" array from an individual trade.
+    # Import the otherwise valid record but persist a data-quality gap, which keeps
+    # new risk blocked until the missing relation has been independently resolved.
+    # A malformed field that is present remains a hard validation failure.
+    if "ledgers" in row:
+        ledger_refs = row.get("ledgers", [])
+        if not isinstance(ledger_refs, list) or any(
+            not isinstance(ledger_id, str) or not ledger_id.strip()
+            for ledger_id in ledger_refs
+        ):
+            return "TRADE_LEDGER_REFERENCES_INVALID"
     if str(row.get("type", "")).lower() not in {"buy", "sell"}:
         return "TRADE_SIDE_INVALID"
     if not str(row.get("pair", "")).strip():
@@ -127,7 +159,7 @@ def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
     price = D(str(row["price"]))
     fee = D(str(row["fee"]))
     margin_amount = D(str(row["margin"]))
-    ledger_refs = row["ledgers"]
+    ledger_refs = row.get("ledgers", [])
     side = str(row.get("type", "")).lower()
     pair = str(row.get("pair", "")).strip()
     _, ts_iso, year = stamp
@@ -149,6 +181,7 @@ def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
             "margin_amount": str(margin_amount),
             "product_type": "SPOT_MARGIN" if margin_amount > 0 else "CASH_SPOT",
             "related_ledger_ids": ledger_refs,
+            "related_ledger_ids_missing": "ledgers" not in row,
             "raw": row,
         },
     })
@@ -236,7 +269,7 @@ def sync_history_source(
             "source": normalized, "start_epoch": 0, "end_epoch": now,
             "next_offset": 0, "next_cursor": None, "expected_count": None,
             "initial_backfill_complete": False, "generation_complete": False,
-            "last_error": None,
+            "last_error": None, "quality_gaps": [],
         }
         persistence.save_history_sync_state(state)
     elif state["generation_complete"] and (
@@ -254,6 +287,7 @@ def sync_history_source(
             "end_epoch": now, "next_offset": 0, "expected_count": None,
             "initial_backfill_complete": bool(state["initial_backfill_complete"]),
             "generation_complete": False, "last_error": None,
+            "quality_gaps": list(state.get("quality_gaps", [])),
         }
         persistence.save_history_sync_state(state)
     elif state["generation_complete"]:
@@ -263,6 +297,7 @@ def sync_history_source(
             "generation_complete": True,
             "initial_backfill_complete": bool(state["initial_backfill_complete"]),
             "cached_until_refresh": True, "last_error": None,
+            **_quality_gap_fields(state),
         }
 
     cursor_source = normalized in {"TRADES", "CLOSED_ORDERS"}
@@ -361,10 +396,26 @@ def sync_history_source(
                     "invalid_item_reason": invalid_reason,
                 }
                 if normalized == "TRADES":
-                    failure["invalid_item_id_fingerprint"] = hashlib.sha256(
-                        row_id.encode("utf-8")
-                    ).hexdigest()[:12]
+                    failure["invalid_item_id_fingerprint"] = _trade_id_fingerprint(row_id)
+                failure.update(_quality_gap_fields(state))
                 return failure
+
+            if normalized == "TRADES":
+                fingerprint = _trade_id_fingerprint(row_id)
+                gap_token = "TRADE_LEDGER_REFERENCES_MISSING:" + fingerprint
+                quality_gaps = list(state.get("quality_gaps", []))
+                if "ledgers" not in row:
+                    if gap_token not in quality_gaps:
+                        quality_gaps.append(gap_token)
+                        persistence.record_event("KRAKEN_HISTORY_DATA_QUALITY_GAP", {
+                            "source": "TRADES",
+                            "reason": "TRADE_LEDGER_REFERENCES_MISSING",
+                            "trade_id_fingerprint": fingerprint,
+                            "new_risk_allowed": False,
+                        })
+                else:
+                    quality_gaps = [gap for gap in quality_gaps if gap != gap_token]
+                state["quality_gaps"] = sorted(set(quality_gaps))
             saved += 1
 
         pages += 1
@@ -384,4 +435,5 @@ def sync_history_source(
         "generation_complete": bool(state["generation_complete"]),
         "initial_backfill_complete": bool(state["initial_backfill_complete"]),
         "cached_until_refresh": False, "last_error": state["last_error"],
+        **_quality_gap_fields(state),
     }
