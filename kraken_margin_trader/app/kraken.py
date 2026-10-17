@@ -23,10 +23,18 @@ class KrakenAPIError(RuntimeError):
 class KrakenAmbiguousError(KrakenAPIError):
     """Private request outcome is unknown; never retry order submission blindly."""
 
-def sign_spot(uri_path: str, params: dict[str, Any], api_secret: str) -> str:
-    nonce = str(params["nonce"])
-    encoded = urlencode(params, doseq=True)
-    digest = hashlib.sha256((nonce + encoded).encode("utf-8")).digest()
+def sign_spot(uri_path: str, params: dict[str, Any] | str, api_secret: str) -> str:
+    """Sign a Kraken form payload or its exact JSON body representation."""
+    if isinstance(params, str):
+        try:
+            nonce = str(json.loads(params)["nonce"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("KRAKEN_JSON_SIGNING_PAYLOAD_MISSING_NONCE") from exc
+        post_data = params
+    else:
+        nonce = str(params["nonce"])
+        post_data = urlencode(params, doseq=True)
+    digest = hashlib.sha256((nonce + post_data).encode("utf-8")).digest()
     message = uri_path.encode("utf-8") + digest
     key = base64.b64decode(api_secret)
     return base64.b64encode(hmac.new(key, message, hashlib.sha512).digest()).decode("ascii")
@@ -241,10 +249,23 @@ class KrakenClient:
                 key: _normalize_form_value(value)
                 for key, value in dict(params or {}).items()
             }
-            payload["nonce"] = str(self.nonce_provider())
-            encoded = urlencode(payload, doseq=True).encode("utf-8")
+            nonce = self.nonce_provider()
+            # Current Kraken docs explicitly require application/json for GetApiKeyInfo.
+            # Its signature must be generated from nonce + the exact JSON body bytes,
+            # while the established private endpoints continue using form encoding.
+            if method == "GetApiKeyInfo":
+                payload["nonce"] = int(nonce)
+                json_body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+                encoded = json_body.encode("utf-8")
+                signing_payload: dict[str, Any] | str = json_body
+                content_type = "application/json"
+            else:
+                payload["nonce"] = str(nonce)
+                encoded = urlencode(payload, doseq=True).encode("utf-8")
+                signing_payload = payload
+                content_type = "application/x-www-form-urlencoded"
             try:
-                signature = sign_spot(path, payload, self.api_secret)
+                signature = sign_spot(path, signing_payload, self.api_secret)
             except (ValueError, TypeError) as exc:
                 raise KrakenAPIError("KRAKEN_PRIVATE_SIGNING_CONFIGURATION_INVALID") from exc
             request = Request(
@@ -254,7 +275,8 @@ class KrakenClient:
                 headers={
                     "API-Key": self.api_key,
                     "API-Sign": signature,
-                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Content-Type": content_type,
+                    "Accept": "application/json",
                     "User-Agent": f"KrakenTraderV2/{__version__}",
                 },
             )
