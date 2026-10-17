@@ -12,6 +12,42 @@ def test_signature_changes_when_nonce_changes():
     assert sign_spot("/0/private/Balance",{"nonce":"123"},secret)!=sign_spot("/0/private/Balance",{"nonce":"124"},secret)
 
 
+def test_private_form_booleans_are_lowercase_and_signed_payload_matches_request(monkeypatch):
+    import json
+
+    from app.kraken import KrakenClient
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"error": [], "result": {"count": 0, "trades": {}}}).encode("utf-8")
+
+    captured = []
+
+    def fake_urlopen(request, timeout):
+        captured.append(request)
+        return Response()
+
+    monkeypatch.setattr("app.kraken.urlopen", fake_urlopen)
+    client = KrakenClient(
+        "test-key",
+        base64.b64encode(b"test-secret").decode("ascii"),
+        nonce_provider=lambda: 123,
+    )
+
+    result = client.private("TradesHistory", {"trades": True, "ledgers": False})
+
+    assert result == {"count": 0, "trades": {}}
+    assert len(captured) == 1
+    assert captured[0].data.decode("utf-8") == "trades=true&ledgers=false&nonce=123"
+    assert captured[0].get_header("Content-type") == "application/x-www-form-urlencoded"
+
+
 
 def test_account_snapshot_does_not_claim_reconciliation_from_api_success():
     from app.kraken import KrakenClient
@@ -283,16 +319,40 @@ def test_api_key_permission_assessment_fails_closed_for_missing_scopes_and_withd
     ]
 
 
-def test_api_key_permission_assessment_detects_expiry_and_limited_history_window():
+def test_api_key_permission_assessment_detects_actual_expiry_and_limited_history_window():
     from app.kraken import assess_api_key_info
 
     result = assess_api_key_info(
         _api_key_info_fixture(validUntil="99", queryFrom="50"),
         now_epoch=100,
     )
+    assert result["api_key_expired"] is True
+    assert result["api_key_expiry_unknown"] is False
     assert result["api_key_expired_or_expiry_unknown"] is True
     assert result["historical_query_window_restricted"] is True
+    assert result["historical_query_window_unknown"] is False
     assert result["ready_for_account_reconciliation"] is False
+
+
+def test_api_key_metadata_omissions_are_unknown_not_proof_of_expiry_or_restriction():
+    from app.kraken import api_key_permission_gate_reasons, assess_api_key_info
+
+    response = _api_key_info_fixture()
+    response.pop("validUntil")
+    response.pop("queryFrom")
+    response.pop("queryTo")
+
+    assessment = assess_api_key_info(response, now_epoch=100)
+
+    assert assessment["api_key_metadata_complete"] is False
+    assert assessment["api_key_metadata_fields_missing"] == ["queryFrom", "queryTo", "validUntil"]
+    assert assessment["api_key_expiry_unknown"] is True
+    assert assessment["api_key_expired"] is False
+    assert assessment["api_key_expired_or_expiry_unknown"] is False
+    assert assessment["historical_query_window_unknown"] is True
+    assert assessment["historical_query_window_restricted"] is False
+    assert assessment["ready_for_account_reconciliation"] is False
+    assert api_key_permission_gate_reasons(assessment) == []
 
 
 def test_api_key_permission_assessment_does_not_expose_secret_fields():
