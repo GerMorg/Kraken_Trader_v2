@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.history_sync import history_sources_ready, sync_history_source
+from app.history_sync import history_sources_ready, reconcile_trade_ledger_coverage, sync_history_source
 from app.persistence import Persistence
 
 
@@ -235,6 +235,82 @@ def test_trade_history_missing_ledger_references_are_imported_but_block_new_risk
     assert ready is False
     assert "HISTORY_DATA_QUALITY_GAP:TRADES:TRADE_LEDGER_REFERENCES_MISSING" in gaps
     assert db.history_sync_state("TRADES")["quality_gaps"] == result["quality_gaps"]
+    db.close()
+
+
+def test_targeted_query_recovers_missing_trade_ledger_links_and_imports_ledgers():
+    db = Persistence(":memory:")
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-NO-LEDGERS": missing_refs}}},
+        ledger_pages={0: {"ledger": {"L1": ledger(), "L2": ledger()}, "count": 2}},
+    )
+    first = sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    assert first["quality_gap_count"] == 1
+    sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+
+    client.query_trades_info = lambda trade_ids, *, include_ledgers=True: {
+        "T-NO-LEDGERS": {**missing_refs, "ledgers": ["L1", "L2"]}
+    }
+    client.query_ledgers_info = lambda ledger_ids: {}
+
+    result = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert result["status"] == "COMPLETE"
+    assert result["trade_rows_queried"] == 1
+    assert result["trade_rows_recovered"] == 1
+    assert result["missing_trade_references"] == 0
+    assert result["missing_ledger_references"] == 0
+    assert db.history_sync_state("TRADES")["quality_gaps"] == []
+    assert {item["ledger_id"] for item in db.ledger_events()} == {"L1", "L2"}
+    fill = db.fills()[0]
+    assert fill["raw"]["ledgers"] == ["L1", "L2"]
+    event = next(item for item in db.tax_events_for_year(2026)
+                 if item["event_id"] == "TRADE:T-NO-LEDGERS")
+    assert event["payload"]["related_ledger_ids"] == ["L1", "L2"]
+    assert event["payload"]["related_ledger_ids_missing"] is False
+    db.close()
+
+
+def test_empty_full_ledger_backfill_cannot_pass_when_trades_reference_ledgers():
+    db = Persistence(":memory:")
+    row = {**trade(), "ledgers": ["L1"]}
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-REF": row}}},
+        ledger_pages={0: {"ledger": {}, "count": 0}},
+    )
+    sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    empty_backfill = sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+    assert empty_backfill["initial_backfill_complete"] is True
+    client.query_trades_info = lambda trade_ids, *, include_ledgers=True: {}
+    client.query_ledgers_info = lambda ledger_ids: {"L1": ledger()}
+
+    result = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert result["ledger_full_backfill_conflict"] is True
+    assert result["status"] == "INCOMPLETE"
+    ledger_state = db.history_sync_state("LEDGERS")
+    assert ledger_state["initial_backfill_complete"] is False
+    assert ledger_state["generation_complete"] is False
+    assert ledger_state["last_error"] == "LEDGER_HISTORY_COVERAGE_CONFLICT"
+    assert "LEDGER_HISTORY_COVERAGE_INCOMPLETE:EMPTY_FULL_BACKFILL" in ledger_state["quality_gaps"]
+    ready, gaps = history_sources_ready([
+        {**db.history_sync_state("TRADES"), "source": "TRADES"},
+        {**ledger_state, "source": "LEDGERS"},
+        {"source": "CLOSED_ORDERS", "initial_backfill_complete": True,
+         "generation_complete": True, "last_error": None, "quality_gaps": []},
+    ])
+    assert ready is False
+    assert any("LEDGERS" in gap for gap in gaps)
     db.close()
 
 
