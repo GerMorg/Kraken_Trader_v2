@@ -97,6 +97,7 @@ def test_history_cursor_is_persisted_across_reopen(tmp_path):
         "source": "TRADES", "start_epoch": 0, "end_epoch": 1769000000,
         "next_offset": 50, "next_cursor": "opaque-cursor-token", "expected_count": None,
         "initial_backfill_complete": False, "generation_complete": False, "last_error": None,
+        "quality_gaps": ["TRADE_LEDGER_REFERENCES_MISSING:46179196fa61"],
     }
     db.save_history_sync_state(state)
     db.close()
@@ -107,6 +108,7 @@ def test_history_cursor_is_persisted_across_reopen(tmp_path):
     assert stored["next_cursor"] == "opaque-cursor-token"
     assert stored["next_offset"] == 50
     assert stored["generation_complete"] is False
+    assert stored["quality_gaps"] == ["TRADE_LEDGER_REFERENCES_MISSING:46179196fa61"]
     reopened.close()
 
 
@@ -140,10 +142,16 @@ def test_existing_history_schema_is_migrated_to_cursor_column(tmp_path):
     assert state is not None
     assert state["next_offset"] == 12
     assert state["next_cursor"] is None
+    assert state["quality_gaps"] == []
     db.save_history_sync_state({
-        **state, "next_cursor": "migrated-cursor", "generation_complete": False,
+        **state,
+        "next_cursor": "migrated-cursor",
+        "generation_complete": False,
+        "quality_gaps": ["TRADE_LEDGER_REFERENCES_MISSING:abc123def456"],
     })
-    assert db.history_sync_state("TRADES")["next_cursor"] == "migrated-cursor"
+    migrated = db.history_sync_state("TRADES")
+    assert migrated["next_cursor"] == "migrated-cursor"
+    assert migrated["quality_gaps"] == ["TRADE_LEDGER_REFERENCES_MISSING:abc123def456"]
     db.close()
 
 
