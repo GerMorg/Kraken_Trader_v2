@@ -121,6 +121,8 @@ def _save_trade(row_id: str, row: dict[str, Any], persistence: Any) -> bool:
     if _trade_validation_error(row_id, row) is not None:
         return False
     stamp = _timestamp(row.get("time"))
+    if stamp is None:
+        return False
     volume = D(str(row["vol"]))
     price = D(str(row["price"]))
     fee = D(str(row["fee"]))
