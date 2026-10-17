@@ -353,6 +353,45 @@ def test_api_key_assessment_reports_only_safe_response_field_names():
     assert assessment["api_key_metadata_fields_invalid"] == []
 
 
+def test_api_key_permission_assessment_accepts_snake_case_metadata_from_live_response():
+    from app.kraken import assess_api_key_info
+
+    response = _api_key_info_fixture()
+    response.pop("validUntil")
+    response.pop("queryFrom")
+    response.pop("queryTo")
+    response.update({"valid_until": "0", "query_from": "0", "query_to": "0"})
+
+    result = assess_api_key_info(response, now_epoch=100)
+
+    assert result["api_key_metadata_complete"] is True
+    assert result["api_key_metadata_fields_missing"] == []
+    assert result["api_key_metadata_fields_invalid"] == []
+    assert result["api_key_metadata_source_fields"] == {
+        "validUntil": "valid_until",
+        "queryFrom": "query_from",
+        "queryTo": "query_to",
+    }
+    assert result["api_key_valid_until"] == 0
+    assert result["api_key_query_from"] == 0
+    assert result["api_key_query_to"] == 0
+    assert result["api_key_expiry_unknown"] is False
+    assert result["historical_query_window_unknown"] is False
+    assert result["ready_for_account_reconciliation"] is True
+
+
+def test_api_key_metadata_alias_conflict_is_treated_as_invalid():
+    from app.kraken import assess_api_key_info
+
+    response = _api_key_info_fixture(valid_until="123")
+
+    result = assess_api_key_info(response, now_epoch=100)
+
+    assert result["api_key_metadata_complete"] is False
+    assert result["api_key_metadata_fields_invalid"] == ["validUntil"]
+    assert result["api_key_expiry_unknown"] is True
+
+
 def test_api_key_permission_assessment_is_ready_for_complete_read_only_history_scope():
     from app.kraken import assess_api_key_info
 
