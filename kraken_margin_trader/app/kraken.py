@@ -165,6 +165,8 @@ def assess_api_key_info(
         if isinstance(field, str)
         and field.lower() not in {"apikey", "api_key", "secret", "apisecret", "privatekey"}
     )
+    metadata_fields_missing.sort()
+    metadata_fields_invalid.sort()
     metadata_complete = not metadata_fields_missing and not metadata_fields_invalid
     key_expiry_unknown = valid_until is None
     key_expired = valid_until is not None and valid_until != 0 and valid_until <= now
