@@ -15,8 +15,12 @@ class FakeHistoryClient:
         self.calls.append(("TRADES", offset, start, end, with_cursor, cursor))
         return self.trade_pages[cursor] if with_cursor else self.trade_pages[offset]
 
-    def ledgers(self, *, offset, start, end):
-        self.calls.append(("LEDGERS", offset, start, end))
+    def ledgers(self, *, offset, start, end, with_cursor=False, cursor=None):
+        self.calls.append(("LEDGERS", offset, start, end, with_cursor, cursor))
+        if with_cursor:
+            if cursor in self.ledger_pages:
+                return self.ledger_pages[cursor]
+            return self.ledger_pages[0]
         return self.ledger_pages[offset]
 
     def closed_orders(self, *, offset, start, end, close_time, include_trades,
@@ -105,15 +109,15 @@ def test_history_invalid_page_never_advances_cursor_or_marks_complete():
     db.close()
 
 
-def test_history_count_is_required_and_invalid_response_fails_closed():
+def test_ledger_history_rejects_invalid_cursor_shape_and_fails_closed():
     db = Persistence(":memory:")
     client = FakeHistoryClient(ledger_pages={
-        0: {"ledger": {}, "count": "NaN"},
+        0: {"ledger": {}, "cursor": "INVALID"},
     })
     result = sync_history_source(client=client, persistence=db, source="LEDGERS",
                                  page_budget=1, now_epoch=1769000000)
     assert result["generation_complete"] is False
-    assert result["last_error"] == "HISTORY_RESPONSE_SHAPE_OR_COUNT_INVALID"
+    assert result["last_error"] == "HISTORY_CURSOR_SHAPE_INVALID"
     assert result["next_offset"] == 0
     db.close()
 
@@ -407,7 +411,7 @@ def test_forced_ledger_refresh_can_scope_to_a_snapshot_interval():
         now_epoch=1769000010, force_refresh=True, start_epoch_override=1768999900,
     )
     assert forced["generation_complete"] is True
-    assert client.calls[-1] == ("LEDGERS", 0, 1768999899, 1769000010)
+    assert client.calls[-1] == ("LEDGERS", 0, 1768999899, 1769000010, True, None)
     assert forced["initial_backfill_complete"] is True
     db.close()
 
@@ -415,8 +419,8 @@ def test_forced_ledger_refresh_can_scope_to_a_snapshot_interval():
 def test_forced_refresh_does_not_reset_an_incomplete_initial_backfill():
     db = Persistence(":memory:")
     client = FakeHistoryClient(ledger_pages={
-        0: {"ledger": {"L1": ledger()}, "count": 3},
-        1: {"ledger": {"L2": ledger()}, "count": 3},
+        None: {"ledger": {"L1": ledger()}, "cursor": {"next": "LEDGER-CURSOR-2"}},
+        "LEDGER-CURSOR-2": {"ledger": {"L2": ledger()}},
     })
     first = sync_history_source(
         client=client, persistence=db, source="LEDGERS", page_budget=1,
@@ -430,7 +434,7 @@ def test_forced_refresh_does_not_reset_an_incomplete_initial_backfill():
     assert second["generation_complete"] is False
     assert second["next_offset"] == 2
     assert second["initial_backfill_complete"] is False
-    assert client.calls[-1] == ("LEDGERS", 1, 0, 1769000000)
+    assert client.calls[-1] == ("LEDGERS", 0, 0, 1769000000, True, "LEDGER-CURSOR-2")
     db.close()
 
 
