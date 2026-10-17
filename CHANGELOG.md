@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.23 — Metadaten-Aliase und fortsetzbarer History-Import
+
+- `GetApiKeyInfo`-Metadaten werden sowohl als dokumentierte camelCase-Felder (`validUntil`, `queryFrom`, `queryTo`) als auch in der im Live-Log tatsächlich beobachteten snake_case-Form (`valid_until`, `query_from`, `query_to`) erkannt. Bei widersprüchlichen Aliaswerten gilt das Feld als ungültig und wird nicht freigegeben.
+- Ein Trade-Datensatz ohne `ledgers`-Array blockiert nicht mehr dauerhaft das Voranschreiten des Backfills. Der Datensatz wird mit expliziter Kennzeichnung fehlender Ledger-Verknüpfung importiert; ein persistierter Fingerprint-Datenqualitäts-Gap blockiert weiterhin neue Risikoerhöhungen.
+- SQLite migriert bestehende `history_sync_state`-Tabellen automatisch um ein Feld für persistente Qualitätslücken. Ein Gap bleibt über Neustarts und zwischengespeicherte Synchronisierungen hinweg erhalten und kann automatisch entfernt werden, wenn derselbe Trade später mit gültigem `ledgers`-Feld erneut eingelesen wird.
+- Tests decken snake_case-Metadaten, widersprüchliche Aliaswerte, Migration/Persistenz der Qualitätslücken und die Trennung zwischen fortsetzbarem Import und gesperrtem neuen Risiko ab.
+
 ## 0.1.22 — Einheitlicher JSON-Transport und präzise History-Diagnose
 
 - Alle privaten Kraken-Spot-REST-Anfragen verwenden den dokumentierten JSON-Transport. JSON-Boolesche Werte bleiben Boolesche Werte; die Signatur basiert auf exakt dem kompakten JSON-Body einschließlich Nonce.
