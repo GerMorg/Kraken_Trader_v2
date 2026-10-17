@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.25 — Quellübergreifende Trade-/Ledger-Reconciliation
+     
+- Der Ledgers-Import verwendet nun die dokumentierte cursorbasierte Paginierung statt des veralteten Offset-Verfahrens und sendet keinen veralteten `aclass`-Filter mehr.
+- Fehlende oder leere Trade-Ledger-Referenzen werden begrenzt über `QueryTrades` nachgefragt. Referenzierte Ledger-Datensätze werden über `QueryLedgers` in Batches von höchstens 20 IDs nachgeladen.
+- Nach Abschluss der vollständigen Ledger-Historie gleicht die App Trade-Verknüpfungen anhand des von Kraken gelieferten Ledger-`refid` ab. Abgeleitete Zuordnungen bleiben im Datensatz mit ihrer Belegquelle gekennzeichnet.
+- Ein scheinbar vollständiger, aber leerer Ledger-Backfill widerspricht vorhandenen Trade-Daten: Die App persistiert einen Coverage-Konflikt, startet den vollständigen Ledger-Import erneut und hält neue Risikoerhöhungen gesperrt.
+- Logs unterscheiden den Fortschritt des eigentlichen initialen Backfills von weiterhin offenen Datenqualitätslücken. Erweiterte Regressionstests decken Cursor-Paginierung, gezielte Nachabfragen, `refid`-Reparatur und leere Ledger-Backfills ab. Das ist keine Live-Freigabe.
+
 ## 0.1.24 — Fiat-Basismärkte aus dem Krypto-Universum ausschließen
 
 - Die AssetPair-Auswahl akzeptiert weiterhin nur Online-Märkte mit USD-Quote, schließt jetzt aber zusätzlich Fiat-Basiswährungen aus. Kraken klassifiziert sowohl reguläre Krypto-Assets als auch viele Fiat-Währungen mit `aclass_base: currency`; diese Klassifizierung allein reicht deshalb nicht, um einen Markt als Kryptowährung einzustufen.

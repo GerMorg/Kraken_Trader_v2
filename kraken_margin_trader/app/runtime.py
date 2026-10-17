@@ -16,7 +16,7 @@ from app.kraken import (
     api_key_permission_gate_reasons,
 )
 from app.execution import LiveExecutionBlocked, OrderAuthority, OrderIntent
-from app.history_sync import history_sources_ready, sync_history_source
+from app.history_sync import history_sources_ready, reconcile_trade_ledger_coverage, sync_history_source
 from app.market import executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
@@ -355,6 +355,40 @@ class TraderRuntime:
                             cycle_id=cycle_id,
                             **history_summary,
                         )
+                    coverage_summary = reconcile_trade_ledger_coverage(
+                        client=self.client,
+                        persistence=self.persistence,
+                    )
+                    self.audit.emit(
+                        "KRAKEN_TRADE_LEDGER_RECONCILIATION",
+                        cycle_id=cycle_id,
+                        **coverage_summary,
+                    )
+                    # Targeted queries may correct fill/ledger records or reopen the
+                    # full ledger backfill. Refresh summaries before deciding on risk.
+                    for source_summary in history_summaries:
+                        source_name = str(source_summary.get("source", "")).upper()
+                        saved_state = self.persistence.history_sync_state(source_name)
+                        if saved_state is None:
+                            continue
+                        source_summary["next_offset"] = saved_state.get("next_offset", 0)
+                        source_summary["expected_count"] = saved_state.get("expected_count")
+                        source_summary["initial_backfill_complete"] = bool(
+                            saved_state.get("initial_backfill_complete", False)
+                        )
+                        source_summary["generation_complete"] = bool(
+                            saved_state.get("generation_complete", False)
+                        )
+                        source_summary["last_error"] = saved_state.get("last_error")
+                        saved_gaps = saved_state.get("quality_gaps", [])
+                        source_summary["quality_gaps"] = (
+                            list(saved_gaps) if isinstance(saved_gaps, list) else []
+                        )
+                        source_summary["quality_gap_count"] = len(source_summary["quality_gaps"])
+                        source_summary["quality_gap_types"] = sorted({
+                            str(gap).split(":", 1)[0]
+                            for gap in source_summary["quality_gaps"]
+                        })
                     history_ready_for_entries, history_evidence_gaps = history_sources_ready(
                         history_summaries
                     )
@@ -482,8 +516,8 @@ class TraderRuntime:
                         "POSITION_SNAPSHOT_SHAPE_INVALID",
                         {"cycle_id": cycle_id, "snapshot_id": persisted_snapshot["snapshot_id"]},
                     )
-                if not history_ready_for_entries or not all(
-                    item["initial_backfill_complete"] for item in history_summaries
+                if history_summaries and not all(
+                    item.get("initial_backfill_complete") is True for item in history_summaries
                 ):
                     self.audit.emit(
                         "KRAKEN_HISTORY_BACKFILL_INCOMPLETE",

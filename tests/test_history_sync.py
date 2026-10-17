@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.history_sync import history_sources_ready, sync_history_source
+from app.history_sync import history_sources_ready, reconcile_trade_ledger_coverage, sync_history_source
 from app.persistence import Persistence
 
 
@@ -15,8 +15,12 @@ class FakeHistoryClient:
         self.calls.append(("TRADES", offset, start, end, with_cursor, cursor))
         return self.trade_pages[cursor] if with_cursor else self.trade_pages[offset]
 
-    def ledgers(self, *, offset, start, end):
-        self.calls.append(("LEDGERS", offset, start, end))
+    def ledgers(self, *, offset, start, end, with_cursor=False, cursor=None):
+        self.calls.append(("LEDGERS", offset, start, end, with_cursor, cursor))
+        if with_cursor:
+            if cursor in self.ledger_pages:
+                return self.ledger_pages[cursor]
+            return self.ledger_pages[0]
         return self.ledger_pages[offset]
 
     def closed_orders(self, *, offset, start, end, close_time, include_trades,
@@ -105,15 +109,15 @@ def test_history_invalid_page_never_advances_cursor_or_marks_complete():
     db.close()
 
 
-def test_history_count_is_required_and_invalid_response_fails_closed():
+def test_ledger_history_rejects_invalid_cursor_shape_and_fails_closed():
     db = Persistence(":memory:")
     client = FakeHistoryClient(ledger_pages={
-        0: {"ledger": {}, "count": "NaN"},
+        0: {"ledger": {}, "cursor": "INVALID"},
     })
     result = sync_history_source(client=client, persistence=db, source="LEDGERS",
                                  page_budget=1, now_epoch=1769000000)
     assert result["generation_complete"] is False
-    assert result["last_error"] == "HISTORY_RESPONSE_SHAPE_OR_COUNT_INVALID"
+    assert result["last_error"] == "HISTORY_CURSOR_SHAPE_INVALID"
     assert result["next_offset"] == 0
     db.close()
 
@@ -238,6 +242,123 @@ def test_trade_history_missing_ledger_references_are_imported_but_block_new_risk
     db.close()
 
 
+def test_full_ledger_refid_recovers_trade_links_when_querytrades_omits_them():
+    db = Persistence(":memory:")
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    linked_ledger = {**ledger(), "refid": "T-REFID"}
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-REFID": missing_refs}}},
+        ledger_pages={0: {"ledger": {"L-REFID": linked_ledger}, "count": 1}},
+    )
+    trade_sync = sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    assert trade_sync["quality_gap_count"] == 1
+    ledger_sync = sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+    assert ledger_sync["generation_complete"] is True
+
+    # QueryTrades was asked for the missing relation but omitted the optional field.
+    client.query_trades_info = lambda trade_ids, *, include_ledgers=True: {
+        "T-REFID": {**missing_refs}
+    }
+    client.query_ledgers_info = lambda ledger_ids: {}
+    result = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert result["status"] == "COMPLETE"
+    assert result["missing_trade_references"] == 0
+    assert result["missing_ledger_references"] == 0
+    fill = db.fills()[0]
+    recovered_raw = fill["raw"]["raw"]
+    assert recovered_raw["ledgers"] == ["L-REFID"]
+    assert recovered_raw["_ledger_reference_evidence"]["source"] == "FULL_LEDGER_REFID_MATCH"
+    assert db.history_sync_state("TRADES")["quality_gaps"] == []
+    event_count = db.connection.execute(
+        "SELECT COUNT(*) AS n FROM events WHERE name=?",
+        ("KRAKEN_HISTORY_DATA_QUALITY_GAP_RESOLVED",),
+    ).fetchone()["n"]
+    assert event_count >= 1
+    db.close()
+
+
+def test_targeted_query_recovers_missing_trade_ledger_links_and_imports_ledgers():
+    db = Persistence(":memory:")
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-NO-LEDGERS": missing_refs}}},
+        ledger_pages={0: {"ledger": {"L1": ledger(), "L2": ledger()}, "count": 2}},
+    )
+    first = sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    assert first["quality_gap_count"] == 1
+    sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+
+    client.query_trades_info = lambda trade_ids, *, include_ledgers=True: {
+        "T-NO-LEDGERS": {**missing_refs, "ledgers": ["L1", "L2"]}
+    }
+    client.query_ledgers_info = lambda ledger_ids: {}
+
+    result = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert result["status"] == "COMPLETE"
+    assert result["trade_rows_queried"] == 1
+    assert result["trade_rows_recovered"] == 1
+    assert result["missing_trade_references"] == 0
+    assert result["missing_ledger_references"] == 0
+    assert db.history_sync_state("TRADES")["quality_gaps"] == []
+    assert {item["ledger_id"] for item in db.ledger_events()} == {"L1", "L2"}
+    fill = db.fills()[0]
+    assert fill["raw"]["raw"]["ledgers"] == ["L1", "L2"]
+    event = next(item for item in db.tax_events_for_year(2026)
+                 if item["event_id"] == "TRADE:T-NO-LEDGERS")
+    assert event["payload"]["related_ledger_ids"] == ["L1", "L2"]
+    assert event["payload"]["related_ledger_ids_missing"] is False
+    db.close()
+
+
+def test_empty_full_ledger_backfill_cannot_pass_when_trades_reference_ledgers():
+    db = Persistence(":memory:")
+    row = {**trade(), "ledgers": ["L1"]}
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-REF": row}}},
+        ledger_pages={0: {"ledger": {}, "count": 0}},
+    )
+    sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    empty_backfill = sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+    assert empty_backfill["initial_backfill_complete"] is True
+    client.query_trades_info = lambda trade_ids, *, include_ledgers=True: {}
+    client.query_ledgers_info = lambda ledger_ids: {"L1": ledger()}
+
+    result = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert result["ledger_full_backfill_conflict"] is True
+    assert result["status"] == "INCOMPLETE"
+    ledger_state = db.history_sync_state("LEDGERS")
+    assert ledger_state["initial_backfill_complete"] is False
+    assert ledger_state["generation_complete"] is False
+    assert ledger_state["last_error"] == "LEDGER_HISTORY_COVERAGE_CONFLICT"
+    assert "LEDGER_HISTORY_COVERAGE_INCOMPLETE:EMPTY_FULL_BACKFILL" in ledger_state["quality_gaps"]
+    ready, gaps = history_sources_ready([
+        {**db.history_sync_state("TRADES"), "source": "TRADES"},
+        {**ledger_state, "source": "LEDGERS"},
+        {"source": "CLOSED_ORDERS", "initial_backfill_complete": True,
+         "generation_complete": True, "last_error": None, "quality_gaps": []},
+    ])
+    assert ready is False
+    assert any("LEDGERS" in gap for gap in gaps)
+    db.close()
+
+
 def test_trade_history_missing_margin_field_is_incomplete_not_guessed_as_spot():
     db = Persistence(":memory:")
     missing_margin = trade()
@@ -331,7 +452,7 @@ def test_forced_ledger_refresh_can_scope_to_a_snapshot_interval():
         now_epoch=1769000010, force_refresh=True, start_epoch_override=1768999900,
     )
     assert forced["generation_complete"] is True
-    assert client.calls[-1] == ("LEDGERS", 0, 1768999899, 1769000010)
+    assert client.calls[-1] == ("LEDGERS", 0, 1768999899, 1769000010, True, None)
     assert forced["initial_backfill_complete"] is True
     db.close()
 
@@ -339,8 +460,10 @@ def test_forced_ledger_refresh_can_scope_to_a_snapshot_interval():
 def test_forced_refresh_does_not_reset_an_incomplete_initial_backfill():
     db = Persistence(":memory:")
     client = FakeHistoryClient(ledger_pages={
-        0: {"ledger": {"L1": ledger()}, "count": 3},
-        1: {"ledger": {"L2": ledger()}, "count": 3},
+        None: {"ledger": {"L1": ledger()}, "cursor": {"next": "LEDGER-CURSOR-2"}},
+        "LEDGER-CURSOR-2": {
+            "ledger": {"L2": ledger()}, "cursor": {"next": "LEDGER-CURSOR-3"},
+        },
     })
     first = sync_history_source(
         client=client, persistence=db, source="LEDGERS", page_budget=1,
@@ -354,7 +477,7 @@ def test_forced_refresh_does_not_reset_an_incomplete_initial_backfill():
     assert second["generation_complete"] is False
     assert second["next_offset"] == 2
     assert second["initial_backfill_complete"] is False
-    assert client.calls[-1] == ("LEDGERS", 1, 0, 1769000000)
+    assert client.calls[-1] == ("LEDGERS", 0, 0, 1769000000, True, "LEDGER-CURSOR-2")
     db.close()
 
 

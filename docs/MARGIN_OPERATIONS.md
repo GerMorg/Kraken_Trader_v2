@@ -8,7 +8,9 @@
 - Open Orders: https://docs.kraken.com/api-reference/account-data/get-open-orders
 - Closed Orders: https://docs.kraken.com/api-reference/account-data/get-closed-orders
 - Trade History: https://docs.kraken.com/api-reference/account-data/get-trades-history
-- Ledgers: https://docs.kraken.com/api-reference/account-data/query-ledgers
+- Query Trades Info: https://docs.kraken.com/api-reference/account-data/query-trades-info
+- Get Ledgers Info: https://docs.kraken.com/api-reference/account-data/get-ledgers-info
+- Query Ledgers: https://docs.kraken.com/api-reference/account-data/query-ledgers
 - EWR-Konvertierungen: https://support.kraken.com/articles/margin-conversion-eea
 - Margin-Gebühren: https://support.kraken.com/at/articles/206161568-what-are-the-fees-opening-and-rollover-for-trading-using-margin-
 - Margin-Settlement: https://support.kraken.com/at/articles/218741078-settling-a-spot-position-on-margin
@@ -58,6 +60,12 @@ Die Exchange-Antwort für Open Positions enthält Positionsdaten wie Pair, Type,
 ## Settlement ist keine Market-Close-Order
 
 `settle-position` ist ein eigener Kraken-Ordertyp, mit dem eine Margin-Verpflichtung durch Rückgabe des geliehenen Vermögenswerts ausgeglichen wird. Krakens Supportdokumentation beschreibt ausdrücklich die Auswahl der ganz oder teilweise abzuwickelnden Menge und die FIFO-Reihenfolge; bei mehreren Positionen desselben Paares wird die älteste zuerst abgewickelt. Die AddOrder-API erwähnt `volume=0` für Margin-Schließorders, doch der App-Settlementpfad verwendet diesen Sonderwert nicht: er verlangt eine positive, nachweisbare Menge und eine Evidenzkette mit konkreter Positions-ID, Währung, Kreditbetrag, Snapshot und abgestimmtem Ledger. Vor der tatsächlichen Freigabe muss außerdem auf einem Konto ohne echte Orderausführung bestätigt werden, wie die verfügbare API die gewünschte Settlement-Menge für dieses Produkt validiert. Keine lokale Position wird als geschlossen markiert, bevor OpenPositions- und Ledgeränderung bestätigt wurden. Settlement darf nicht als normaler Market-Fill und nicht mit gewöhnlicher Trade-Fee gleichgesetzt werden.
+
+## Trade-/Ledger-Reconciliation
+
+Der Trade-Historienimport, der Ledger-Historienimport und die punktuellen Abfragen sind getrennte Belegquellen. Die App prüft fehlende Trade-Referenzen über `QueryTrades`, lädt bekannte Ledger-IDs mit `QueryLedgers` nach und kann nach vollständig abgeschlossenem Ledger-Backfill fehlende Arrays aus Ledger-Records mit identischem `refid` rekonstruieren. Die Ledger-Paginierung verwendet `with_cursor`/`cursor`; `aclass` und `ofs` sind von Kraken als veraltet dokumentiert. Siehe aktuelle offizielle Verträge: Query Trades Info, Query Ledgers und Get Ledgers Info.
+
+Ein abgeschlossener Ledger-Backfill ohne einzige Ledger-Zeile ist bei vorhandenem Trade-Bestand ein Widerspruch und hält neue Risikoerhöhungen gesperrt. Einzelne erfolgreiche ID-Abfragen reichen nicht aus, um die vollständige Ledger-Historie zu bestätigen. Genauso wenig ist ein erfolgreicher Wallet-Balance-Delta-Abgleich eine vollständige Margin-/Portfolio-Reconciliation.
 
 ## Freigabestatus
 
