@@ -242,6 +242,46 @@ def test_trade_history_missing_ledger_references_are_imported_but_block_new_risk
     db.close()
 
 
+def test_full_ledger_refid_recovers_trade_links_when_querytrades_omits_them():
+    db = Persistence(":memory:")
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    linked_ledger = {**ledger(), "refid": "T-REFID"}
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-REFID": missing_refs}}},
+        ledger_pages={0: {"ledger": {"L-REFID": linked_ledger}, "count": 1}},
+    )
+    trade_sync = sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    assert trade_sync["quality_gap_count"] == 1
+    ledger_sync = sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+    assert ledger_sync["generation_complete"] is True
+
+    # QueryTrades was asked for the missing relation but omitted the optional field.
+    client.query_trades_info = lambda trade_ids, *, include_ledgers=True: {
+        "T-REFID": {**missing_refs}
+    }
+    client.query_ledgers_info = lambda ledger_ids: {}
+    result = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert result["status"] == "COMPLETE"
+    assert result["missing_trade_references"] == 0
+    assert result["missing_ledger_references"] == 0
+    fill = db.fills()[0]
+    recovered_raw = fill["raw"]["raw"]
+    assert recovered_raw["ledgers"] == ["L-REFID"]
+    assert recovered_raw["_ledger_reference_evidence"]["source"] == "FULL_LEDGER_REFID_MATCH"
+    assert db.history_sync_state("TRADES")["quality_gaps"] == []
+    assert any(
+        item["name"] == "KRAKEN_HISTORY_DATA_QUALITY_GAP_RESOLVED"
+        for item in db.events()
+    )
+    db.close()
+
+
 def test_targeted_query_recovers_missing_trade_ledger_links_and_imports_ledgers():
     db = Persistence(":memory:")
     missing_refs = trade()
