@@ -333,6 +333,12 @@ class TraderRuntime:
                                 ),
                                 "cached_until_refresh": False,
                                 "last_error": exc.code,
+                                "quality_gaps": list(state.get("quality_gaps", [])) if state else [],
+                                "quality_gap_count": len(state.get("quality_gaps", [])) if state else 0,
+                                "quality_gap_types": sorted({
+                                    str(gap).split(":", 1)[0]
+                                    for gap in (state.get("quality_gaps", []) if state else [])
+                                }),
                             }
                             self.audit.emit(
                                 "KRAKEN_HISTORY_SYNC_FAILED",
@@ -367,6 +373,8 @@ class TraderRuntime:
                                 "initial_backfill_complete": item.get("initial_backfill_complete"),
                                 "generation_complete": item.get("generation_complete"),
                                 "last_error": item.get("last_error"),
+                                "quality_gap_count": item.get("quality_gap_count", 0),
+                                "quality_gap_types": item.get("quality_gap_types", []),
                             }
                             for item in history_summaries
                         ],
