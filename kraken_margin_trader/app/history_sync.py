@@ -94,6 +94,7 @@ def _result_items(value: Any) -> dict[str, dict[str, Any]] | None:
         return None
     return value
 
+
 def _trade_id_fingerprint(row_id: str) -> str:
     return hashlib.sha256(row_id.encode("utf-8")).hexdigest()[:12]
 
@@ -108,9 +109,6 @@ def _quality_gap_fields(state: dict[str, Any]) -> dict[str, Any]:
         "quality_gap_count": len(clean_gaps),
         "quality_gap_types": sorted({item.split(":", 1)[0] for item in clean_gaps}),
     }
-
-
-
 
 
 def _trade_validation_error(row_id: str, row: dict[str, Any]) -> str | None:
