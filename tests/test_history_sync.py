@@ -314,7 +314,7 @@ def test_targeted_query_recovers_missing_trade_ledger_links_and_imports_ledgers(
     assert db.history_sync_state("TRADES")["quality_gaps"] == []
     assert {item["ledger_id"] for item in db.ledger_events()} == {"L1", "L2"}
     fill = db.fills()[0]
-    assert fill["raw"]["ledgers"] == ["L1", "L2"]
+    assert fill["raw"]["raw"]["ledgers"] == ["L1", "L2"]
     event = next(item for item in db.tax_events_for_year(2026)
                  if item["event_id"] == "TRADE:T-NO-LEDGERS")
     assert event["payload"]["related_ledger_ids"] == ["L1", "L2"]
