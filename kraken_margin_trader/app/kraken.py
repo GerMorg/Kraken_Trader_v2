@@ -396,17 +396,29 @@ class KrakenClient:
             params["end"] = end
         return self.private("TradesHistory", params)
 
-    def ledgers(self, *, offset: int = 0, start: int | None = None,
-                end: int | None = None, ledger_type: str = "all",
-                asset: str = "all") -> dict[str, Any]:
+    def ledgers(
+        self, *, offset: int = 0, start: int | None = None, end: int | None = None,
+        ledger_type: str = "all", asset: str = "all",
+        with_cursor: bool = False, cursor: str | None = None,
+    ) -> dict[str, Any]:
         if offset < 0:
             raise ValueError("LEDGERS_OFFSET_MUST_BE_NON_NEGATIVE")
-        if ledger_type not in {"all", "deposit", "withdrawal", "trade", "margin",
-                               "rollover", "credit", "transfer", "settled", "staking", "sale"}:
+        if with_cursor and offset != 0:
+            raise ValueError("LEDGERS_CURSOR_AND_OFFSET_MUTUALLY_EXCLUSIVE")
+        if ledger_type not in {
+            "all", "deposit", "withdrawal", "trade", "margin", "rollover",
+            "credit", "transfer", "settled", "staking", "sale",
+        }:
             raise ValueError("LEDGER_TYPE_INVALID")
-        # Current Kraken docs deprecate the aclass filter; asset="all" is the documented
-        # currency-history request and avoids combining legacy and current filters.
-        params: dict[str, Any] = {"type": ledger_type, "asset": asset, "ofs": offset}
+        # Current Kraken docs deprecate aclass and ofs; prefer asset
+        # filtering and cursor pagination for regular history synchronization.
+        params: dict[str, Any] = {"type": ledger_type, "asset": asset}
+        if with_cursor:
+            params["with_cursor"] = True
+            if cursor:
+                params["cursor"] = cursor
+        else:
+            params["ofs"] = offset
         if start is not None:
             params["start"] = start
         if end is not None:
