@@ -1,5 +1,11 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.29 – Laufzeit als unprivilegierter Benutzer
+
+Home Assistant kann den App-Container zunächst als root starten. `run.sh` nutzt diese Phase ausschließlich, um die App-Daten unter `/data` (außer `/data/options.json`) sowie `/config/reports/tax` für UID/GID `10001:10001` vorzubereiten. Die Supervisor-verwaltete Optionsdatei bleibt unverändert; eine temporäre Kopie unter `/run/kraken-trader-options.json` wird auf den App-Benutzer und Modus `0400` gesetzt. Anschließend startet Python als `uid=10001 gid=10001`. Der Start schlägt fehl, falls die nötigen Rechte nicht sicher vorbereitet werden können. In der Startdiagnose muss daher `uid=10001 gid=10001` stehen. Wenn weiterhin `uid=0 gid=0` erscheint, läuft noch ein älteres Image oder der neue Startpfad wurde nicht aktiviert.
+
+Der CI-Container-Test führt den normalen Entrypoint mit root-owned temporären `/data`- und `/config`-Mounts aus, prüft den UID-Wechsel und bestätigt, dass die App-Konfiguration geladen wurde. Ein separater Test prüft weiterhin den direkten Start mit einer vorgegebenen unprivilegierten UID. Beide sind Healthchecks und platzieren keine Kraken-Orders.
+
 ## Version 0.1.28 – kontrollierte erneute Abfrage fehlender Trade-Ledger-Referenzen
 
 Ungeklärte Antworten ohne `ledgers`-Feld werden nach sechs Stunden erneut über `QueryTrades` geprüft. Das Ereignis `KRAKEN_TRADE_LEDGER_RECONCILIATION` enthält `trade_rows_query_deferred` und `next_trade_query_retry_epoch`; das ist ein Statushinweis, kein Nachweis vollständiger Reconciliation. Datenqualitätslücken bleiben bestehen und neue Risikoerhöhungen bleiben blockiert, bis eine unabhängige Quelle die Zuordnung bestätigt.
@@ -12,7 +18,7 @@ Wenn `QueryTrades` eine gültige Trade-Zeile ohne `ledgers`-Feld liefert, persis
 
 1. In Home Assistant **Einstellungen → Apps → App-Repository hinzufügen** öffnen.
 2. `https://github.com/GerMorg/Kraken_Trader_v2` als benutzerdefiniertes Repository hinzufügen und den Store aktualisieren.
-3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.27` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.27` zeigen; andernfalls läuft noch nicht das neue Image. Anschließend starten und das App-Protokoll prüfen.
+3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.29` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.29` und die Python-Bootstrap-Diagnose `uid=10001 gid=10001` zeigen; andernfalls läuft noch nicht das neue Image oder der Privilegienwechsel ist fehlgeschlagen. Anschließend starten und das App-Protokoll prüfen.
 4. `mode: SHADOW`, `live_enabled: false` und `kill_switch: true` beibehalten.
 5. Für die erste Datenerfassung einen Kraken-API-Key mit den erforderlichen **Lese-Rechten** konfigurieren. Keine Auszahlungsrechte und zunächst keine Handelsrechte aktivieren.
 
