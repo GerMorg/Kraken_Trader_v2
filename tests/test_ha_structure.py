@@ -103,6 +103,9 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "legacy_probe" in workflow and "preserved" in workflow
     assert "10001:10001:700" in workflow and "0:0:400" in workflow
     assert "state/kraken_trader.sqlite3" in workflow
+    assert "--cap-drop DAC_OVERRIDE --cap-drop FOWNER" in workflow
+    assert "sudo chown 10001:10001" in workflow
+    assert "sudo chmod 0700" in workflow
     assert "state/private/kraken_trader.sqlite3" not in workflow
     assert "logs/private" not in workflow
     assert "SIMULATED_HA_MOUNT_CHMOD_DENIAL" in workflow
