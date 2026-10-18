@@ -7,65 +7,93 @@ APP_MAIN="${APP_DIR}/main.py"
 APP_INIT="${APP_DIR}/__init__.py"
 APP_UID=10001
 APP_GID=10001
+umask 077
+
+HEALTHCHECK_MODE=0
+for arg in "$@"; do
+  if [ "$arg" = "--healthcheck" ]; then
+    HEALTHCHECK_MODE=1
+  fi
+done
 
 # Home Assistant starts add-on containers as root by default. Root is used
 # only to migrate legacy SQLite state and prepare narrowly scoped writable dirs.
 # The mount root and Supervisor-managed options stay root-owned and non-writable
 # by the trading process; Python itself always runs as the dedicated UID/GID.
 if [ "$(id -u)" -eq 0 ]; then
-  mkdir -p /data/state /data/logs /config/reports/tax/AT /run
+  # HA's persistent /data mount may reject chmod even after a successful chown.
+  # Create private child directories atomically under umask 077; never chmod mount paths.
+  mkdir -p /data/state/private /data/logs/private /run
+  if [ "$HEALTHCHECK_MODE" -eq 0 ]; then
+    mkdir -p /config/reports/tax/AT
+  fi
 
-  # Move the legacy database into a private state subdirectory. A durable
-  # marker lets startup finish the migration safely after an interrupted restart.
   LEGACY_DB=/data/kraken_trader.sqlite3
-  STATE_DB=/data/state/kraken_trader.sqlite3
-  MIGRATION_MARKER=/data/state/.legacy_sqlite_migration
-  if [ -f "${LEGACY_DB}" ] && [ ! -f "${MIGRATION_MARKER}" ]; then
-    if [ -e "${STATE_DB}" ]; then
-      echo "FATAL: both legacy and state SQLite databases exist; manual reconciliation required." >&2
-      exit 1
+  PREVIOUS_DB=/data/state/kraken_trader.sqlite3
+  STATE_DB=/data/state/private/kraken_trader.sqlite3
+  LEGACY_MIGRATION_MARKER=/data/state/.legacy_sqlite_migration
+  PRIVATE_MIGRATION_MARKER=/data/state/.private_state_migration
+
+  migrate_database() {
+    source_db=$1
+    target_db=$2
+    marker=$3
+
+    if [ -f "${source_db}" ] && [ ! -f "${marker}" ]; then
+      if [ -e "${target_db}" ]; then
+        echo "FATAL: both source and destination SQLite databases exist; manual reconciliation required." >&2
+        exit 1
+      fi
+      for suffix in -wal -shm -journal; do
+        if [ -e "${target_db}${suffix}" ]; then
+          echo "FATAL: SQLite destination sidecar exists before migration; manual reconciliation required." >&2
+          exit 1
+        fi
+      done
+      : > "${marker}"
     fi
+
+    if [ -f "${marker}" ]; then
+      if [ -e "${source_db}" ] && [ -e "${target_db}" ]; then
+        echo "FATAL: source and destination SQLite databases both exist during migration." >&2
+        exit 1
+      fi
+      if [ -f "${source_db}" ]; then
+        mv "${source_db}" "${target_db}"
+      elif [ ! -f "${target_db}" ]; then
+        echo "FATAL: SQLite migration marker exists but neither database is present." >&2
+        exit 1
+      fi
+      for suffix in -wal -shm -journal; do
+        if [ -e "${source_db}${suffix}" ]; then
+          if [ -e "${target_db}${suffix}" ]; then
+            echo "FATAL: SQLite sidecar collision during migration; manual reconciliation required." >&2
+            exit 1
+          fi
+          mv "${source_db}${suffix}" "${target_db}${suffix}"
+        fi
+      done
+      rm "${marker}"
+    fi
+
     for suffix in -wal -shm -journal; do
-      if [ -e "/data/state/kraken_trader.sqlite3${suffix}" ]; then
-        echo "FATAL: destination SQLite sidecar exists before migration; manual reconciliation required." >&2
+      if [ -e "${source_db}${suffix}" ]; then
+        echo "FATAL: orphaned SQLite sidecar exists at source path; manual reconciliation required." >&2
         exit 1
       fi
     done
-    : > "${MIGRATION_MARKER}"
-  fi
-  if [ -f "${MIGRATION_MARKER}" ]; then
-    if [ -e "${LEGACY_DB}" ] && [ -e "${STATE_DB}" ]; then
-      echo "FATAL: legacy and state SQLite databases both exist during migration." >&2
-      exit 1
-    fi
-    if [ -f "${LEGACY_DB}" ]; then
-      mv "${LEGACY_DB}" "${STATE_DB}"
-    elif [ ! -f "${STATE_DB}" ]; then
-      echo "FATAL: SQLite migration marker exists but neither database is present." >&2
-      exit 1
-    fi
-    for suffix in -wal -shm -journal; do
-      if [ -e "${LEGACY_DB}${suffix}" ]; then
-        if [ -e "/data/state/kraken_trader.sqlite3${suffix}" ]; then
-          echo "FATAL: SQLite sidecar collision during migration; manual reconciliation required." >&2
-          exit 1
-        fi
-        mv "${LEGACY_DB}${suffix}" "/data/state/kraken_trader.sqlite3${suffix}"
-      fi
-    done
-    rm "${MIGRATION_MARKER}"
-  fi
-  for suffix in -wal -shm -journal; do
-    if [ -e "${LEGACY_DB}${suffix}" ]; then
-      echo "FATAL: orphaned legacy SQLite sidecar exists; manual reconciliation required." >&2
-      exit 1
-    fi
-  done
+  }
 
-  chown -R "${APP_UID}:${APP_GID}" /data/state /data/logs /config/reports/tax
-  su-exec "${APP_UID}:${APP_GID}" chmod -R go-rwx /data/state /data/logs
+  # First complete any older root-level migration, then move the database from
+  # v0.1.29/v0.1.30 into the private child directory without losing WAL sidecars.
+  migrate_database "${LEGACY_DB}" "${PREVIOUS_DB}" "${LEGACY_MIGRATION_MARKER}"
+  migrate_database "${PREVIOUS_DB}" "${STATE_DB}" "${PRIVATE_MIGRATION_MARKER}"
+
+  chown -R "${APP_UID}:${APP_GID}" /data/state /data/logs
+  if [ "$HEALTHCHECK_MODE" -eq 0 ]; then
+    chown -R "${APP_UID}:${APP_GID}" /config/reports/tax
+  fi
   chown 0:0 /data
-  chmod 0755 /data
 
   # Keep the Supervisor options file root-owned and unreadable to the app UID.
   # Pass only an ephemeral, owner-readable copy to the application process.
@@ -75,12 +103,25 @@ if [ "$(id -u)" -eq 0 ]; then
     chmod 0400 /run/kraken-trader-options.json
     export KRTR_OPTIONS_FILE=/run/kraken-trader-options.json
   fi
+  export KRTR_STATE_DIR=/data/state/private
+  export KRTR_LOG_DIR=/data/logs/private
 
   exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"
 fi
 
-if [ ! -w /data/state ] || [ ! -w /data/logs ] || [ ! -w /config/reports/tax/AT ]; then
-  echo "FATAL: non-root runtime cannot write its state, AppLog, or tax export directory." >&2
+STATE_DIR="${KRTR_STATE_DIR:-/data/state/private}"
+LOG_DIR="${KRTR_LOG_DIR:-/data/logs/private}"
+mkdir -p "$STATE_DIR" "$LOG_DIR"
+if [ "$HEALTHCHECK_MODE" -eq 0 ]; then
+  mkdir -p /config/reports/tax/AT
+fi
+
+if [ ! -w "$STATE_DIR" ] || [ ! -w "$LOG_DIR" ] || { [ "$HEALTHCHECK_MODE" -eq 0 ] && [ ! -w /config/reports/tax/AT ]; }; then
+  echo "FATAL: non-root runtime cannot write its private state, AppLog, or tax export directory." >&2
+  exit 1
+fi
+if [ -w /data ]; then
+  echo "FATAL: non-root runtime must not have write access to the /data mount root." >&2
   exit 1
 fi
 

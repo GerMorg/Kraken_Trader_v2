@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.31 — Kein `chmod` auf HA-Mountverzeichnissen
+
+- Behebt den erneut beobachteten Startabbruch `chmod: /data/state: Operation not permitted`. Die vorherige Korrektur führte `chmod` weiterhin auf dem eingebundenen `/data`-Volume aus und war daher für das tatsächliche Home-Assistant-Mountverhalten nicht robust genug.
+- Der Entrypoint erstellt `/data/state/private` und `/data/logs/private` mit `umask 077`; auf `/data`, `/data/state`, `/data/logs` und andere gemountete Verzeichnisse wird kein `chmod` ausgeführt. AppArmor bleibt aktiviert und `/data` muss für UID/GID `10001:10001` weiterhin nicht beschreibbar sein.
+- SQLite wird zuerst aus dem alten Pfad `/data/kraken_trader.sqlite3` in den bisherigen Pfad überführt und anschließend in `/data/state/private/kraken_trader.sqlite3` verschoben. WAL-, SHM- und Journal-Dateien werden mitgenommen; widersprüchliche Datenbanken oder Seitendateien blockieren den Start.
+- Der AppLog liegt künftig unter `/data/logs/private/events.jsonl`. Container- und Strukturtests prüfen neue Pfade, restriktive Verzeichnisanlage, Privilegienwechsel und Datenbankerhalt.
+
 ## 0.1.30 — Rechteänderung auf HA-Mounts ohne Root-CAP_FOWNER
 
 - Behebt den Startabbruch `chmod: /data/state: Operation not permitted` und die entsprechende Meldung für `/data/logs`.
