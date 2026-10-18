@@ -9,6 +9,13 @@ APP_UID=10001
 APP_GID=10001
 umask 077
 
+HEALTHCHECK_MODE=0
+for arg in "$@"; do
+  if [ "$arg" = "--healthcheck" ]; then
+    HEALTHCHECK_MODE=1
+  fi
+done
+
 # Home Assistant starts add-on containers as root by default. Root is used
 # only to migrate legacy SQLite state and prepare narrowly scoped writable dirs.
 # The mount root and Supervisor-managed options stay root-owned and non-writable
@@ -16,7 +23,10 @@ umask 077
 if [ "$(id -u)" -eq 0 ]; then
   # HA's persistent /data mount may reject chmod even after a successful chown.
   # Create private child directories atomically under umask 077; never chmod mount paths.
-  mkdir -p /data/state/private /data/logs/private /config/reports/tax/AT /run
+  mkdir -p /data/state/private /data/logs/private /run
+  if [ "$HEALTHCHECK_MODE" -eq 0 ]; then
+    mkdir -p /config/reports/tax/AT
+  fi
 
   LEGACY_DB=/data/kraken_trader.sqlite3
   PREVIOUS_DB=/data/state/kraken_trader.sqlite3
@@ -79,7 +89,10 @@ if [ "$(id -u)" -eq 0 ]; then
   migrate_database "${LEGACY_DB}" "${PREVIOUS_DB}" "${LEGACY_MIGRATION_MARKER}"
   migrate_database "${PREVIOUS_DB}" "${STATE_DB}" "${PRIVATE_MIGRATION_MARKER}"
 
-  chown -R "${APP_UID}:${APP_GID}" /data/state /data/logs /config/reports/tax
+  chown -R "${APP_UID}:${APP_GID}" /data/state /data/logs
+  if [ "$HEALTHCHECK_MODE" -eq 0 ]; then
+    chown -R "${APP_UID}:${APP_GID}" /config/reports/tax
+  fi
   chown 0:0 /data
 
   # Keep the Supervisor options file root-owned and unreadable to the app UID.
@@ -98,9 +111,12 @@ fi
 
 STATE_DIR="${KRTR_STATE_DIR:-/data/state/private}"
 LOG_DIR="${KRTR_LOG_DIR:-/data/logs/private}"
-mkdir -p "$STATE_DIR" "$LOG_DIR" /config/reports/tax/AT
+mkdir -p "$STATE_DIR" "$LOG_DIR"
+if [ "$HEALTHCHECK_MODE" -eq 0 ]; then
+  mkdir -p /config/reports/tax/AT
+fi
 
-if [ ! -w "$STATE_DIR" ] || [ ! -w "$LOG_DIR" ] || [ ! -w /config/reports/tax/AT ]; then
+if [ ! -w "$STATE_DIR" ] || [ ! -w "$LOG_DIR" ] || { [ "$HEALTHCHECK_MODE" -eq 0 ] && [ ! -w /config/reports/tax/AT ]; }; then
   echo "FATAL: non-root runtime cannot write its private state, AppLog, or tax export directory." >&2
   exit 1
 fi
