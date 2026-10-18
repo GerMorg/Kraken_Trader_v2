@@ -1,5 +1,5 @@
 name: Kraken Margin Trader
-version: 0.1.32
+version: 0.1.33
 slug: kraken_margin_trader
 description: >-
   Eigenständiger Kraken Spot- und Spot-Margin-Trader mit Auditspur.

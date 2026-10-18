@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.33 — History-Qualitätslücken auch in der Positions-Reconciliation sperren
+
+- Die Positions-/Fill-Reconciliation behandelt verbleibende `quality_gaps` jetzt wie eine unvollständige Historie, auch wenn die Pagination technisch abgeschlossen ist.
+- Das strukturierte Ereignis weist betroffene Quellen unter `history_quality_gap_sources` aus und verwendet `HISTORY_DATA_QUALITY_GAP` statt fälschlich `history_ready: true` zu melden.
+- Regressionstest für abgeschlossene Synchronisierung mit ungelöster Trade-/Ledger-Abdeckungslücke; keine Änderung an Orderausführung oder Freigabe von Live-Trading.
+
 ## 0.1.32 — Vorhandene HA-Mountverzeichnisse direkt verwenden
 
 - Behebt `mkdir: can't create directory '/data/state/private': Permission denied`: Es werden keine zusätzlichen Verzeichnisse unter den gemounteten `/data/state`- und `/data/logs`-Pfaden mehr erstellt.
