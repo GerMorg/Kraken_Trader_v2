@@ -8,6 +8,8 @@ LABEL \
   io.hass.type="app" \
   io.hass.arch="${BUILD_ARCH}"
 
+RUN apk add --no-cache su-exec
+
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/opt/kraken-trader APP_VERSION=${BUILD_VERSION}
 WORKDIR /opt/kraken-trader
 COPY app/ /opt/kraken-trader/app/
