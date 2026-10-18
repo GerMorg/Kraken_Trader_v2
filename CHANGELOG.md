@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.26 — Explizit leere Trade-Ledger-Relationen sicher prüfen
+
+- Der bisherige Logstatus zeigte drei Abfragen über `QueryTrades`, aber null wiederhergestellte Beziehungen und keine Erklärung, ob Kraken die IDs nicht zurückgab, das `ledgers`-Feld fehlte oder eine leere Liste zurückkam.
+- Die Reconciliation protokolliert nun diese Ausgänge getrennt und ausschließlich mit nicht umkehrbaren Trade-ID-Fingerprints.
+- Eine explizit leere `ledgers`-Liste wird erst dann als geklärt persistiert, wenn Trades- und Ledger-Historien vollständig sind und kein Ledger-Eintrag mit derselben Trade-`refid` existiert. Taucht eine solche Ledger-Referenz dennoch auf, entsteht ein harter Quellenkonflikt und neue Risikoerhöhungen bleiben gesperrt.
+- Fehlende API-Antworten, fehlende Ledger-Felder, ungültige Zeilen und nicht reparierbare Referenzen bleiben unvollständig. Keine leeren Felder oder IDs werden künstlich ergänzt, und keine Sperren werden nur aufgrund einer erfolgreichen HTTP-Antwort entfernt.
+- Versionsmetadaten, Dokumentation und Regressionstests aktualisiert. Keine Live-Freigabe.
+
 ## 0.1.25 — Quellübergreifende Trade-/Ledger-Reconciliation
      
 - Der Ledgers-Import verwendet nun die dokumentierte cursorbasierte Paginierung statt des veralteten Offset-Verfahrens und sendet keinen veralteten `aclass`-Filter mehr.
