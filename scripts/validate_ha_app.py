@@ -144,8 +144,8 @@ else:
         errors.append("data mount root must remain root-owned without chmod on the HA mount")
     if "umask 077" not in run_script or "LEGACY_DB=/data/kraken_trader.sqlite3" not in run_script or "PREVIOUS_DB=/data/state/kraken_trader.sqlite3" not in run_script:
         errors.append("SQLite state must be migrated and private child directories created under a restrictive umask")
-    if "chmod -R go-rwx /data/state /data/logs" in run_script or "chmod -R go-rwx /data/state/private /data/logs/private" in run_script:
-        errors.append("entrypoint must not invoke chmod on mounted state or log paths")
+    if any(line.strip().startswith("chmod ") and "/data" in line for line in run_script.splitlines()):
+        errors.append("entrypoint must not invoke chmod on mounted /data paths")
     if 'export KRTR_STATE_DIR=/data/state/private' not in run_script or 'export KRTR_LOG_DIR=/data/logs/private' not in run_script:
         errors.append("entrypoint must pass private state and log paths to the runtime")
     if '[ ! -w "$STATE_DIR" ]' not in run_script or "[ ! -w /config/reports/tax/AT ]" not in run_script or "[ -w /data ]" not in run_script:
