@@ -96,7 +96,7 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "apk add --no-cache su-exec" in dockerfile
 
     workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "docker run --rm --user 10001:10001 --tmpfs /data/state:rw,uid=10001,gid=10001,mode=700 --tmpfs /data/logs:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" in workflow
+    assert "docker run --rm --user 10001:10001 --tmpfs /data/state:rw,uid=10001,gid=10001,mode=700 --tmpfs /data/logs:rw,uid=10001,gid=10001,mode=700 --tmpfs /config:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" in workflow
     assert "docker run --rm --mount type=bind,source=" in workflow
     assert "target=/data --tmpfs /config:rw,uid=0,gid=0,mode=755 kraken-trader-v2:ci --healthcheck 2>&1" in workflow
     assert 'grep -F "uid=10001 gid=10001"' in workflow
@@ -104,6 +104,8 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "10001:10001:700" in workflow and "0:0:400" in workflow
     assert "state/private/kraken_trader.sqlite3" in workflow
     assert "logs/private" in workflow
+    assert "SIMULATED_HA_MOUNT_CHMOD_DENIAL" in workflow
+    assert "deny-mounted-chmod" in workflow
     assert "sudo python3 -" in workflow
     assert "docker run --rm --entrypoint /run.sh" not in workflow
     assert "&& /run.sh --healthcheck" in dockerfile
