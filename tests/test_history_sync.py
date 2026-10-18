@@ -392,7 +392,10 @@ def test_query_trades_empty_ledger_list_is_confirmed_only_after_full_ledger_chec
     assert saved["ledgers"] == []
     assert saved["_ledger_reference_evidence"]["source"] == "QUERY_TRADES_EMPTY_CONFIRMED"
     assert saved["_ledger_reference_evidence"]["full_ledger_history_checked"] is True
-    tax_event = db.tax_events_for_year(2026)[0]
+    tax_event = next(
+        item for item in db.tax_events_for_year(2026)
+        if item["event_id"] == "TRADE:T-EMPTY-RELATION"
+    )
     assert tax_event["payload"]["related_ledger_ids"] == []
     assert tax_event["payload"]["related_ledger_ids_missing"] is False
     resolved = db.connection.execute(
