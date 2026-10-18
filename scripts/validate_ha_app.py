@@ -136,6 +136,12 @@ else:
         errors.append("run.sh must log image version and import-failure diagnostics")
     if "APP_VERSION=${BUILD_VERSION}" not in dockerfile:
         errors.append("Dockerfile must expose BUILD_VERSION for startup diagnostics")
+    if "mkdir -p /data/state /data/logs" not in dockerfile:
+        errors.append("Dockerfile must create dedicated state and log directories")
+    if "STATE_DB=/data/state/kraken_trader.sqlite3" not in run_script or "MIGRATION_MARKER=/data/state/.legacy_sqlite_migration" not in run_script:
+        errors.append("entrypoint must migrate legacy SQLite state before dropping root")
+    if "chown 0:0 /data" not in run_script or "chmod 0755 /data" not in run_script:
+        errors.append("data mount root must remain non-writable by the app process")
     if "apk add --no-cache su-exec" not in dockerfile or 'exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"' not in run_script:
         errors.append("default container startup must drop root privileges with su-exec")
     if 'if [ "$(id -u)" -eq 0 ]; then' not in run_script:
@@ -150,6 +156,9 @@ else:
         "/opt/kraken-trader/app/ r,",
         "/opt/kraken-trader/app/** r,",
         "/config/** rwk,",
+        "/data/ rw,",
+        "/data/state/ rwk,",
+        "/data/logs/ rwk,",
         "/data/** rwk,",
         "network inet stream,",
         "network inet dgram,",
@@ -168,7 +177,7 @@ else:
 
     ci_path = root / ".github" / "workflows" / "ci.yml"
     ci_workflow = ci_path.read_text(encoding="utf-8")
-    if "docker run --rm --user 10001:10001 --tmpfs /data:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" not in ci_workflow:
+    if "docker run --rm --user 10001:10001 --tmpfs /data/state:rw,uid=10001,gid=10001,mode=700 --tmpfs /data/logs:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" not in ci_workflow:
         errors.append("CI must run the entrypoint directly as an unprivileged user with writable temporary data")
     if "docker run --rm --mount type=bind,source=" not in ci_workflow or "target=/data --tmpfs /config:rw,uid=0,gid=0,mode=700 kraken-trader-v2:ci --healthcheck 2>&1" not in ci_workflow:
         errors.append("CI must exercise privilege dropping with root-owned writable mounts")
