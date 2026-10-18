@@ -89,7 +89,7 @@ jobs:
           PY
           sudo chown -R 0:0 "${RUNNER_TEMP}/kraken-data"
           sudo chmod 0400 "${RUNNER_TEMP}/kraken-data/options.json"
-          output="$(docker run --rm --mount type=bind,source="${RUNNER_TEMP}/kraken-data",target=/data --tmpfs /config:rw,uid=0,gid=0,mode=700 kraken-trader-v2:ci --healthcheck 2>&1)"
+          output="$(docker run --rm --mount type=bind,source="${RUNNER_TEMP}/kraken-data",target=/data --tmpfs /config:rw,uid=0,gid=0,mode=755 kraken-trader-v2:ci --healthcheck 2>&1)"
           printf '%s\n' "$output"
           printf '%s\n' "$output" | grep -F "uid=10001 gid=10001"
           printf '%s\n' "$output" | grep -F '"credentials_present":true'
