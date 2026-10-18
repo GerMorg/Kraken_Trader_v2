@@ -93,12 +93,12 @@ jobs:
           printf '%s\n' "$output"
           printf '%s\n' "$output" | grep -F "uid=10001 gid=10001"
           printf '%s\n' "$output" | grep -F '"credentials_present":true'
-          test -f "${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3"
-          test ! -e "${RUNNER_TEMP}/kraken-data/kraken_trader.sqlite3"
-          test "$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data")" = "0:0:755"
-          test "$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/options.json")" = "0:0:400"
-          test "$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/state")" = "10001:10001:700"
-          test "$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/logs")" = "10001:10001:700"
+          test -f "${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3" || { echo "FAIL: migrated database missing"; exit 1; }
+          test ! -e "${RUNNER_TEMP}/kraken-data/kraken_trader.sqlite3" || { echo "FAIL: legacy database path still exists"; exit 1; }
+          actual="$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data")"; echo "data mount mode=$actual"; test "$actual" = "0:0:755" || { echo "FAIL: data mount root not protected"; exit 1; }
+          actual="$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/options.json")"; echo "options mode=$actual"; test "$actual" = "0:0:400" || { echo "FAIL: Supervisor options file changed"; exit 1; }
+          actual="$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/state")"; echo "state directory mode=$actual"; test "$actual" = "10001:10001:700" || { echo "FAIL: private state directory permissions"; exit 1; }
+          actual="$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/logs")"; echo "logs directory mode=$actual"; test "$actual" = "10001:10001:700" || { echo "FAIL: private logs directory permissions"; exit 1; }
           sudo python3 - "${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3" <<'PY'
           import sqlite3, sys
           connection = sqlite3.connect(sys.argv[1])
