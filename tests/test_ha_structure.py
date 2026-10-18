@@ -91,6 +91,7 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "[ ! -w /config/reports/tax/AT ]" in run_script
     assert "LEGACY_DB=/data/kraken_trader.sqlite3" in run_script
     assert "KRTR_OPTIONS_FILE=/run/kraken-trader-options.json" in run_script
+    assert run_script.index("chmod 0400 /run/kraken-trader-options.json") < run_script.index('chown "${APP_UID}:${APP_GID}" /run/kraken-trader-options.json')
     assert "apk add --no-cache su-exec" in dockerfile
 
     workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
