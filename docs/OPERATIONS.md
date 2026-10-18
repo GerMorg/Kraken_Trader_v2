@@ -1,5 +1,9 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.30 – `chmod` auf Home-Assistant-Mounts
+
+Der Fehler `chmod: /data/state: Operation not permitted` beziehungsweise dieselbe Meldung für `/data/logs` trat auf, weil der Root-Prozess auf den von Home Assistant eingebundenen Pfaden nicht zuverlässig über die nötigen Eigentümer-Capabilities verfügt. Nach dem rekursiven `chown` führt `run.sh` die Rechtebeschränkung nun als Eigentümer mit `su-exec 10001:10001` aus. Python bleibt unprivilegiert. Wenn Datenbank-, Log- oder Steuerexportpfad weiterhin nicht beschreibbar sind, scheitert der Start kontrolliert; es gibt keinen Root-Fallback. Aktualisiere auf Version `0.1.30` und prüfe im Startprotokoll `version=0.1.30` sowie `uid=10001 gid=10001`.
+
 ## Version 0.1.29 – Laufzeit als unprivilegierter Benutzer
 
 Home Assistant kann den App-Container zunächst als root starten. `run.sh` nutzt diese Phase nur, um `/data/state`, `/data/logs` und `/config/reports/tax` für UID/GID `10001:10001` vorzubereiten. Das Verzeichnis `/data` selbst bleibt root-owned und für die App nicht beschreibbar; `/data/options.json` bleibt root-owned und unverändert. Eine temporäre Kopie unter `/run/kraken-trader-options.json` wird dem App-Benutzer mit Modus `0400` übergeben. Anschließend startet Python als `uid=10001 gid=10001`. Beim ersten Start ab 0.1.29 wird die bisherige SQLite-Datei `/data/kraken_trader.sqlite3` mitsamt vorhandenen `-wal`, `-shm`- und `-journal`-Dateien nach `/data/state/kraken_trader.sqlite3` migriert. Ein persistenter Migrationsmarker ermöglicht die kontrollierte Fortsetzung nach einem unterbrochenen Neustart; doppelte Datenbanken, Seitendatei-Kollisionen und verwaiste Dateien führen zu einem Fehler und werden nicht stillschweigend überschrieben. In der Startdiagnose muss `uid=10001 gid=10001` stehen. Wenn weiterhin `uid=0 gid=0` erscheint, läuft noch ein älteres Image oder der neue Startpfad wurde nicht aktiviert.
@@ -18,7 +22,7 @@ Wenn `QueryTrades` eine gültige Trade-Zeile ohne `ledgers`-Feld liefert, persis
 
 1. In Home Assistant **Einstellungen → Apps → App-Repository hinzufügen** öffnen.
 2. `https://github.com/GerMorg/Kraken_Trader_v2` als benutzerdefiniertes Repository hinzufügen und den Store aktualisieren.
-3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.29` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.29` und die Python-Bootstrap-Diagnose `uid=10001 gid=10001` zeigen; andernfalls läuft noch nicht das neue Image oder der Privilegienwechsel ist fehlgeschlagen. Anschließend starten und das App-Protokoll prüfen.
+3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.30` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.30` und die Python-Bootstrap-Diagnose `uid=10001 gid=10001` zeigen; andernfalls läuft noch nicht das neue Image oder der Privilegienwechsel ist fehlgeschlagen. Anschließend starten und das App-Protokoll prüfen.
 4. `mode: SHADOW`, `live_enabled: false` und `kill_switch: true` beibehalten.
 5. Für die erste Datenerfassung einen Kraken-API-Key mit den erforderlichen **Lese-Rechten** konfigurieren. Keine Auszahlungsrechte und zunächst keine Handelsrechte aktivieren.
 
