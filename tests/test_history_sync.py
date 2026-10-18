@@ -695,12 +695,74 @@ def test_query_trades_missing_ledgers_field_is_persisted_and_not_requeried():
     assert "ledgers" not in saved
     assert saved["_ledger_reference_evidence"]["source"] == "QUERY_TRADES_LEDGER_FIELD_MISSING"
     assert saved["_ledger_reference_evidence"]["ledgers_field_present"] is False
+    assert saved["_ledger_reference_evidence"]["attempt_count"] == 1
+    assert (
+        saved["_ledger_reference_evidence"]["retry_after_epoch"]
+        > saved["_ledger_reference_evidence"]["last_attempt_epoch"]
+    )
     assert db.history_sync_state("TRADES")["quality_gaps"]
 
     second = reconcile_trade_ledger_coverage(client=client, persistence=db)
     assert second["status"] == "INCOMPLETE"
     assert second["trade_rows_queried"] == 0
+    assert second["trade_rows_query_deferred"] == 1
+    assert (
+        second["next_trade_query_retry_epoch"]
+        == saved["_ledger_reference_evidence"]["retry_after_epoch"]
+    )
     assert second["missing_trade_references"] == 1
     assert len(calls) == 1
     assert db.history_sync_state("TRADES")["quality_gaps"]
+    db.close()
+
+
+def test_missing_trade_ledger_field_is_retried_after_cooldown_and_can_recover():
+    db = Persistence(":memory:")
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    missing_refs["_ledger_reference_evidence"] = {
+        "source": "QUERY_TRADES_LEDGER_FIELD_MISSING",
+        "ledgers_field_present": False,
+        "attempt_count": 1,
+        "last_attempt_epoch": 1769000000,
+        "retry_after_epoch": 0,
+    }
+    unrelated_ledger = {**ledger(), "refid": "UNRELATED-TRADE"}
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-MISSING-FIELD-RETRY": missing_refs}}},
+        ledger_pages={0: {"ledger": {"L-RECOVERED": unrelated_ledger}, "count": 1}},
+    )
+    sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+
+    calls = []
+    recovered_row = {
+        key: value for key, value in missing_refs.items()
+        if key != "_ledger_reference_evidence"
+    }
+    recovered_row["ledgers"] = ["L-RECOVERED"]
+
+    def query_trades_info(trade_ids, *, include_ledgers=True):
+        calls.append((list(trade_ids), include_ledgers))
+        return {"T-MISSING-FIELD-RETRY": recovered_row}
+
+    client.query_trades_info = query_trades_info
+    client.query_ledgers_info = lambda ledger_ids: {}
+
+    result = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert result["status"] == "COMPLETE"
+    assert result["trade_rows_queried"] == 1
+    assert result["trade_rows_query_deferred"] == 0
+    assert result["trade_rows_recovered"] == 1
+    assert result["missing_trade_references"] == 0
+    assert calls == [(["T-MISSING-FIELD-RETRY"], True)]
+    saved = db.fills()[0]["raw"]["raw"]
+    assert saved["ledgers"] == ["L-RECOVERED"]
+    assert "_ledger_reference_evidence" not in saved
+    assert db.history_sync_state("TRADES")["quality_gaps"] == []
     db.close()

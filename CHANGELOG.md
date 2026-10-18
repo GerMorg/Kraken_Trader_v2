@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.28 — Geplante erneute Prüfung fehlender Trade-Ledger-Referenzen
+
+- Persistierte `QueryTrades`-Antworten ohne `ledgers`-Feld werden nicht mehr unbegrenzt nur als Cache behandelt: Die App versucht nach sechs Stunden erneut, die optionale Relation abzufragen.
+- Jeder Versuch speichert den Versuchszähler, den letzten Abfragezeitpunkt, das Ergebnis und den nächsten Prüfzeitpunkt. Fehlgeschlagene oder unvollständige Antworten werden ebenfalls gedrosselt.
+- `KRAKEN_TRADE_LEDGER_RECONCILIATION` zeigt nun, wie viele Abfragen wegen des Backoff-Fensters zurückgestellt wurden und wann die nächste erneute Prüfung fällig ist.
+- Ungeklärte Beziehungen bleiben Datenqualitätslücken und sperren neue Risikoerhöhungen. Kein Ledger wird geraten oder erfunden; das ist keine Live-Freigabe.
+- Regressionstests decken Abkühlzeit, Persistenz, erneute Abfrage und erfolgreiche unabhängige Auflösung ab.
+
 ## 0.1.27 — Fehlendes Trade-Ledger-Feld persistent diagnostizieren
 
 - Eine gültige `QueryTrades`-Antwort ohne `ledgers`-Feld wird nun mit einem expliziten Diagnose-Fingerprint und `QUERY_TRADES_LEDGER_FIELD_MISSING` persistiert.
