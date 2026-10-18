@@ -77,18 +77,15 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "except OSError as exc:" in run_script
     assert 'if [ "$(id -u)" -eq 0 ]; then' in run_script
     assert 'exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"' in run_script
-    assert "STATE_DB=/data/state/private/kraken_trader.sqlite3" in run_script
-    assert "LEGACY_MIGRATION_MARKER=/data/state/.legacy_sqlite_migration" in run_script
-    assert "PRIVATE_MIGRATION_MARKER=/data/state/.private_state_migration" in run_script
-    assert "PREVIOUS_DB=/data/state/kraken_trader.sqlite3" in run_script
+    assert "STATE_DB=/data/state/kraken_trader.sqlite3" in run_script
+    assert "MIGRATION_MARKER=/data/state/.legacy_sqlite_migration" in run_script
     assert "umask 077" in run_script
-    assert "mkdir -p /data/state/private /data/logs/private" in run_script
-    assert "chown 0:0 /data" in run_script
+    assert "mkdir -p /data/state /data/logs /run" in run_script
+    assert "chown 0:0 /data/state /data/logs" in run_script
     assert "chmod 0755 /data" not in run_script
-    assert "chmod -R go-rwx /data/state /data/logs" not in run_script
     assert not any(line.strip().startswith("chmod ") and "/data" in line for line in run_script.splitlines())
-    assert "KRTR_STATE_DIR=/data/state/private" in run_script
-    assert "KRTR_LOG_DIR=/data/logs/private" in run_script
+    assert "KRTR_STATE_DIR=/data/state" in run_script
+    assert "KRTR_LOG_DIR=/data/logs" in run_script
     assert '[ ! -w "$STATE_DIR" ]' in run_script and '[ ! -w "$LOG_DIR" ]' in run_script
     assert "[ -w /data ]" in run_script
     assert "[ ! -w /config/reports/tax/AT ]" in run_script
@@ -105,8 +102,9 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert 'grep -F "uid=10001 gid=10001"' in workflow
     assert "legacy_probe" in workflow and "preserved" in workflow
     assert "10001:10001:700" in workflow and "0:0:400" in workflow
-    assert "state/private/kraken_trader.sqlite3" in workflow
-    assert "logs/private" in workflow
+    assert "state/kraken_trader.sqlite3" in workflow
+    assert "state/private/kraken_trader.sqlite3" not in workflow
+    assert "logs/private" not in workflow
     assert "SIMULATED_HA_MOUNT_CHMOD_DENIAL" in workflow
     assert "deny-mounted-chmod" in workflow
     assert "sudo python3 -" in workflow
@@ -128,9 +126,7 @@ def test_apparmor_profile_grants_runtime_paths_without_disabling_confinement():
     assert "/config/** rwk," in profile
     assert "/data/ rw," in profile
     assert "/data/state/ rwk," in profile
-    assert "/data/state/private/ rwk," in profile
     assert "/data/logs/ rwk," in profile
-    assert "/data/logs/private/ rwk," in profile
     assert "/data/** rwk," in profile
     assert "#include <abstractions/nameservice>" in profile
     assert "network inet stream," in profile
