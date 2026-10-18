@@ -15,7 +15,7 @@ if [ "$(id -u)" -eq 0 ]; then
   mkdir -p /data/logs /config/reports/tax/AT /run
   chown "${APP_UID}:${APP_GID}" /data
   find /data -mindepth 1 -maxdepth 1 ! -name options.json \
-    -exec chown -R "${APP_UID}:${APP_GID}" {} +
+    -exec chown -R "${APP_UID}:${APP_GID}" {} \;
   chown -R "${APP_UID}:${APP_GID}" /config/reports/tax
 
   # options.json can contain exchange credentials. Copy it to the container's
