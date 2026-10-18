@@ -81,6 +81,8 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "MIGRATION_MARKER=/data/state/.legacy_sqlite_migration" in run_script
     assert "chown 0:0 /data" in run_script
     assert "chmod 0755 /data" in run_script
+    assert "chmod -R go-rwx /data/state /data/logs" in run_script
+    assert "LEGACY_DB=/data/kraken_trader.sqlite3" in run_script
     assert "KRTR_OPTIONS_FILE=/run/kraken-trader-options.json" in run_script
     assert "apk add --no-cache su-exec" in dockerfile
 
@@ -89,6 +91,9 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "docker run --rm --mount type=bind,source=" in workflow
     assert "target=/data --tmpfs /config:rw,uid=0,gid=0,mode=700 kraken-trader-v2:ci --healthcheck 2>&1" in workflow
     assert 'grep -F "uid=10001 gid=10001"' in workflow
+    assert "legacy_probe" in workflow and "preserved" in workflow
+    assert "10001:10001:700" in workflow and "0:0:400" in workflow
+    assert "sudo python3 -" in workflow
     assert "docker run --rm --entrypoint /run.sh" not in workflow
     assert "&& /run.sh --healthcheck" in dockerfile
 
