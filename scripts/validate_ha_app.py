@@ -144,6 +144,8 @@ else:
         errors.append("data mount root must remain non-writable by the app process")
     if "chmod -R go-rwx /data/state /data/logs" not in run_script or "LEGACY_DB=/data/kraken_trader.sqlite3" not in run_script:
         errors.append("SQLite state must be migrated and restricted before running as non-root")
+    if "[ ! -w /data/state ]" not in run_script or "[ ! -w /config/reports/tax/AT ]" not in run_script:
+        errors.append("entrypoint must verify unprivileged state and tax paths are writable")
     if "apk add --no-cache su-exec" not in dockerfile or 'exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"' not in run_script:
         errors.append("default container startup must drop root privileges with su-exec")
     if 'if [ "$(id -u)" -eq 0 ]; then' not in run_script:
@@ -181,7 +183,7 @@ else:
     ci_workflow = ci_path.read_text(encoding="utf-8")
     if "docker run --rm --user 10001:10001 --tmpfs /data/state:rw,uid=10001,gid=10001,mode=700 --tmpfs /data/logs:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" not in ci_workflow:
         errors.append("CI must run the entrypoint directly as an unprivileged user with writable temporary data")
-    if "docker run --rm --mount type=bind,source=" not in ci_workflow or "target=/data --tmpfs /config:rw,uid=0,gid=0,mode=700 kraken-trader-v2:ci --healthcheck 2>&1" not in ci_workflow:
+    if "docker run --rm --mount type=bind,source=" not in ci_workflow or "target=/data --tmpfs /config:rw,uid=0,gid=0,mode=755 kraken-trader-v2:ci --healthcheck 2>&1" not in ci_workflow:
         errors.append("CI must exercise privilege dropping with root-owned writable mounts")
     if 'grep -F "uid=10001 gid=10001"' not in ci_workflow:
         errors.append("CI must assert that Python starts as the dedicated unprivileged UID")
