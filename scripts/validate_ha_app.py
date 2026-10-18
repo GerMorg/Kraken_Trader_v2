@@ -144,6 +144,8 @@ else:
         errors.append("data mount root must remain non-writable by the app process")
     if "chmod -R go-rwx /data/state /data/logs" not in run_script or "LEGACY_DB=/data/kraken_trader.sqlite3" not in run_script:
         errors.append("SQLite state must be migrated and restricted before running as non-root")
+    if 'su-exec "${APP_UID}:${APP_GID}" chmod -R go-rwx /data/state /data/logs' not in run_script:
+        errors.append("mounted state permissions must be changed by the unprivileged directory owner")
     if "[ ! -w /data/state ]" not in run_script or "[ ! -w /config/reports/tax/AT ]" not in run_script:
         errors.append("entrypoint must verify unprivileged state and tax paths are writable")
     if "apk add --no-cache su-exec" not in dockerfile or 'exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"' not in run_script:

@@ -63,7 +63,7 @@ if [ "$(id -u)" -eq 0 ]; then
   done
 
   chown -R "${APP_UID}:${APP_GID}" /data/state /data/logs /config/reports/tax
-  chmod -R go-rwx /data/state /data/logs
+  su-exec "${APP_UID}:${APP_GID}" chmod -R go-rwx /data/state /data/logs
   chown 0:0 /data
   chmod 0755 /data
 
