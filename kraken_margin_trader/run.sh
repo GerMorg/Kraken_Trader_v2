@@ -79,6 +79,11 @@ if [ "$(id -u)" -eq 0 ]; then
   exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"
 fi
 
+if [ ! -w /data/state ] || [ ! -w /data/logs ] || [ ! -w /config/reports/tax/AT ]; then
+  echo "FATAL: non-root runtime cannot write its state, AppLog, or tax export directory." >&2
+  exit 1
+fi
+
 echo "Kraken Trader container entrypoint: version=${APP_VERSION:-unknown} root=${APP_ROOT} cwd=$(pwd) python=$(command -v python || echo MISSING)" >&2
 
 if [ ! -d "${APP_DIR}" ] || [ ! -f "${APP_MAIN}" ] || [ ! -f "${APP_INIT}" ]; then
