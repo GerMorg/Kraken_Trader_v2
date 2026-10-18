@@ -361,11 +361,18 @@ def reconcile_trade_ledger_coverage(
         refs = _valid_ledger_references(row.get("ledgers"))
         gap_token = "TRADE_LEDGER_REFERENCES_MISSING:" + fingerprint
         evidence = row.get("_ledger_reference_evidence")
-        previously_confirmed_empty = (
+        empty_query_evidence = (
             isinstance(evidence, dict)
-            and evidence.get("source") == "QUERY_TRADES_EMPTY_CONFIRMED"
+            and evidence.get("source") in {
+                "QUERY_TRADES_EMPTY_PENDING_LEDGER_CHECK",
+                "QUERY_TRADES_EMPTY_CONFIRMED",
+            }
             and evidence.get("ledgers_field_present") is True
             and evidence.get("ledgers_count") == 0
+        )
+        previously_confirmed_empty = (
+            empty_query_evidence
+            and evidence.get("source") == "QUERY_TRADES_EMPTY_CONFIRMED"
             and evidence.get("full_ledger_history_checked") is True
         )
         if refs:
@@ -373,6 +380,10 @@ def reconcile_trade_ledger_coverage(
         elif previously_confirmed_empty and trade_history_complete and ledger_history_complete:
             trade_gaps.discard(gap_token)
             confirmed_empty_fingerprints.add(fingerprint)
+        elif empty_query_evidence:
+            # The exact QueryTrades response is already persisted. Do not repeat the
+            # same API call every cycle while waiting for complete Ledger evidence.
+            trade_gaps.add(gap_token)
         else:
             trade_gaps.add(gap_token)
             missing_trade_rows.append((trade_id, fingerprint))
@@ -589,7 +600,6 @@ def reconcile_trade_ledger_coverage(
                         conflicting_empty_fingerprints.discard(fingerprint)
                         confirmed_empty_fingerprints.add(fingerprint)
                         if not already_confirmed:
-                            trade_rows_confirmed_empty += 1
                             resolved_fingerprints[fingerprint] = "QUERY_TRADES_EMPTY_CONFIRMED"
                     continue
 
@@ -650,9 +660,6 @@ def reconcile_trade_ledger_coverage(
         or missing_ledger_references
         or api_errors
         or conflicting_empty_fingerprints
-        or trade_rows_query_missing
-        or trade_rows_query_ledger_field_missing
-        or trade_rows_query_invalid
     ):
         trade_gaps.add(coverage_gap)
     else:
