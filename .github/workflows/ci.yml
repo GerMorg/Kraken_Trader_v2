@@ -71,7 +71,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -f kraken_margin_trader/Dockerfile -t kraken-trader-v2:ci kraken_margin_trader
       # Verify the application also starts if Docker is explicitly configured for an unprivileged UID.
-      - run: docker run --rm --user 10001:10001 --tmpfs /data/state:rw,uid=10001,gid=10001,mode=700 --tmpfs /data/logs:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck
+      - run: docker run --rm --user 10001:10001 --tmpfs /data/state:rw,uid=10001,gid=10001,mode=700 --tmpfs /data/logs:rw,uid=10001,gid=10001,mode=700 --tmpfs /config:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck
       # Home Assistant normally starts the container as root. The real entrypoint must
       # prepare root-owned persistent mounts, preserve private options, and drop to UID 10001.
       - name: Verify default entrypoint drops root before Python startup
@@ -89,7 +89,22 @@ jobs:
           PY
           sudo chown -R 0:0 "${RUNNER_TEMP}/kraken-data"
           sudo chmod 0400 "${RUNNER_TEMP}/kraken-data/options.json"
-          output="$(docker run --rm --mount type=bind,source="${RUNNER_TEMP}/kraken-data",target=/data --tmpfs /config:rw,uid=0,gid=0,mode=755 kraken-trader-v2:ci --healthcheck 2>&1)"
+          mkdir -p "${RUNNER_TEMP}/deny-mounted-chmod"
+          cat > "${RUNNER_TEMP}/deny-mounted-chmod/chmod" <<'SH'
+          #!/bin/sh
+          for path in "$@"; do
+            case "$path" in
+              /data|/data/*)
+                echo "SIMULATED_HA_MOUNT_CHMOD_DENIAL: $path" >&2
+                exit 1
+                ;;
+            esac
+          done
+          exec /bin/chmod "$@"
+          SH
+          chmod 0755 "${RUNNER_TEMP}/deny-mounted-chmod/chmod"
+          echo "Mounted-path chmod denial guard enabled for container startup."
+          output="$(docker run --rm --mount type=bind,source="${RUNNER_TEMP}/kraken-data",target=/data --mount type=bind,source="${RUNNER_TEMP}/deny-mounted-chmod",target=/probe,readonly -e PATH=/probe:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --tmpfs /config:rw,uid=0,gid=0,mode=755 kraken-trader-v2:ci --healthcheck 2>&1)"
           printf '%s\n' "$output"
           printf '%s\n' "$output" | grep -F "uid=10001 gid=10001"
           printf '%s\n' "$output" | grep -F '"credentials_present":true'
@@ -100,7 +115,7 @@ jobs:
           actual="$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/options.json")"; echo "options mode=$actual"; test "$actual" = "0:0:400" || { echo "FAIL: Supervisor options file changed"; exit 1; }
           actual="$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/state/private")"; echo "private state directory mode=$actual"; test "$actual" = "10001:10001:700" || { echo "FAIL: private state directory permissions"; exit 1; }
           actual="$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/logs/private")"; echo "private logs directory mode=$actual"; test "$actual" = "10001:10001:700" || { echo "FAIL: private logs directory permissions"; exit 1; }
-          sudo python3 - "${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3" <<'PY'
+          sudo python3 - "${RUNNER_TEMP}/kraken-data/state/private/kraken_trader.sqlite3" <<'PY'
           import sqlite3, sys
           connection = sqlite3.connect(sys.argv[1])
           value = connection.execute("SELECT value FROM legacy_probe").fetchone()[0]
