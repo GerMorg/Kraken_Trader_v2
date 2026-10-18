@@ -82,6 +82,8 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "chown 0:0 /data" in run_script
     assert "chmod 0755 /data" in run_script
     assert "chmod -R go-rwx /data/state /data/logs" in run_script
+    assert "[ ! -w /data/state ]" in run_script and "[ ! -w /data/logs ]" in run_script
+    assert "[ ! -w /config/reports/tax/AT ]" in run_script
     assert "LEGACY_DB=/data/kraken_trader.sqlite3" in run_script
     assert "KRTR_OPTIONS_FILE=/run/kraken-trader-options.json" in run_script
     assert "apk add --no-cache su-exec" in dockerfile
@@ -89,7 +91,7 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "docker run --rm --user 10001:10001 --tmpfs /data/state:rw,uid=10001,gid=10001,mode=700 --tmpfs /data/logs:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" in workflow
     assert "docker run --rm --mount type=bind,source=" in workflow
-    assert "target=/data --tmpfs /config:rw,uid=0,gid=0,mode=700 kraken-trader-v2:ci --healthcheck 2>&1" in workflow
+    assert "target=/data --tmpfs /config:rw,uid=0,gid=0,mode=755 kraken-trader-v2:ci --healthcheck 2>&1" in workflow
     assert 'grep -F "uid=10001 gid=10001"' in workflow
     assert "legacy_probe" in workflow and "preserved" in workflow
     assert "10001:10001:700" in workflow and "0:0:400" in workflow
