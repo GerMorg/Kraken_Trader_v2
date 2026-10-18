@@ -557,6 +557,8 @@ def reconcile_trade_ledger_coverage(
             if refs:
                 continue
             related_ids = sorted(ledger_ids_by_trade.get(trade_id, set()))
+            order_txid = str(row.get("ordertxid", "")).strip()
+            matching_order_refid_ids = sorted(ledger_ids_by_trade.get(order_txid, set()))
             evidence = row.get("_ledger_reference_evidence")
             query_explicit_empty = (
                 isinstance(evidence, dict)
@@ -569,17 +571,21 @@ def reconcile_trade_ledger_coverage(
             )
 
             if query_explicit_empty:
+                conflict_outcome = None
                 if related_ids:
-                    # QueryTrades explicitly reported no related ledgers, while the
-                    # complete Ledger source has rows referencing this exact trade.
-                    # Treat that disagreement as a hard conflict, not as permission
-                    # to overwrite one exchange source with the other.
+                    conflict_outcome = "QUERY_TRADES_EMPTY_BUT_LEDGER_REFID_MATCHES"
+                elif matching_order_refid_ids:
+                    # A refid that matches the order ID may cover multiple partial
+                    # fills. It is not safe to assign those ledger IDs to one fill,
+                    # but its existence contradicts an asserted empty relation.
+                    conflict_outcome = "QUERY_TRADES_EMPTY_BUT_LEDGER_ORDER_REFID_MATCHES"
+                if conflict_outcome is not None:
                     conflicting_empty_fingerprints.add(fingerprint)
                     confirmed_empty_fingerprints.discard(fingerprint)
                     trade_gaps.add("TRADE_LEDGER_REFERENCE_SOURCE_CONFLICT:" + fingerprint)
                     query_outcomes.append({
                         "trade_id_fingerprint": fingerprint,
-                        "outcome": "QUERY_TRADES_EMPTY_BUT_LEDGER_REFID_MATCHES",
+                        "outcome": conflict_outcome,
                     })
                     continue
                 if can_confirm_empty_relations:
