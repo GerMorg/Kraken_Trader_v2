@@ -7,6 +7,7 @@ APP_MAIN="${APP_DIR}/main.py"
 APP_INIT="${APP_DIR}/__init__.py"
 APP_UID=10001
 APP_GID=10001
+umask 077
 
 # Home Assistant starts add-on containers as root by default. Root is used
 # only to migrate legacy SQLite state and prepare narrowly scoped writable dirs.
@@ -15,7 +16,6 @@ APP_GID=10001
 if [ "$(id -u)" -eq 0 ]; then
   # HA's persistent /data mount may reject chmod even after a successful chown.
   # Create private child directories atomically under umask 077; never chmod mount paths.
-  umask 077
   mkdir -p /data/state/private /data/logs/private /config/reports/tax/AT /run
 
   LEGACY_DB=/data/kraken_trader.sqlite3
@@ -96,7 +96,11 @@ if [ "$(id -u)" -eq 0 ]; then
   exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"
 fi
 
-if [ ! -w "${KRTR_STATE_DIR:-/data/state/private}" ] || [ ! -w "${KRTR_LOG_DIR:-/data/logs/private}" ] || [ ! -w /config/reports/tax/AT ]; then
+STATE_DIR="${KRTR_STATE_DIR:-/data/state/private}"
+LOG_DIR="${KRTR_LOG_DIR:-/data/logs/private}"
+mkdir -p "$STATE_DIR" "$LOG_DIR"
+
+if [ ! -w "$STATE_DIR" ] || [ ! -w "$LOG_DIR" ] || [ ! -w /config/reports/tax/AT ]; then
   echo "FATAL: non-root runtime cannot write its private state, AppLog, or tax export directory." >&2
   exit 1
 fi
