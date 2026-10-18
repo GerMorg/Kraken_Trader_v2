@@ -5,6 +5,30 @@ APP_ROOT="/opt/kraken-trader"
 APP_DIR="${APP_ROOT}/app"
 APP_MAIN="${APP_DIR}/main.py"
 APP_INIT="${APP_DIR}/__init__.py"
+APP_UID=10001
+APP_GID=10001
+
+# Home Assistant starts add-on containers as root by default. Prepare only the
+# add-on's writable state/export directories, keep Supervisor-managed options
+# root-owned, then re-enter this wrapper as the dedicated unprivileged user.
+if [ "$(id -u)" -eq 0 ]; then
+  mkdir -p /data/logs /config/reports/tax/AT /run
+  chown "${APP_UID}:${APP_GID}" /data
+  find /data -mindepth 1 -maxdepth 1 ! -name options.json \
+    -exec chown -R "${APP_UID}:${APP_GID}" {} +
+  chown -R "${APP_UID}:${APP_GID}" /config/reports/tax
+
+  # options.json can contain exchange credentials. Copy it to the container's
+  # ephemeral /run and make the copy readable only by the application UID.
+  if [ -f /data/options.json ]; then
+    cp /data/options.json /run/kraken-trader-options.json
+    chown "${APP_UID}:${APP_GID}" /run/kraken-trader-options.json
+    chmod 0400 /run/kraken-trader-options.json
+    export KRTR_OPTIONS_FILE=/run/kraken-trader-options.json
+  fi
+
+  exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"
+fi
 
 echo "Kraken Trader container entrypoint: version=${APP_VERSION:-unknown} root=${APP_ROOT} cwd=$(pwd) python=$(command -v python || echo MISSING)" >&2
 
