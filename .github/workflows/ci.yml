@@ -77,8 +77,11 @@ jobs:
       - name: Verify default entrypoint drops root before Python startup
         shell: bash
         run: |
-          printf '{"kraken_api_key":"ci-test-key","kraken_api_secret":"ci-test-secret"}\n' > "${RUNNER_TEMP}/kraken-trader-options.json"
-          output="$(docker run --rm --tmpfs /data:rw,uid=0,gid=0,mode=700 --tmpfs /config:rw,uid=0,gid=0,mode=700 --mount type=bind,source="${RUNNER_TEMP}/kraken-trader-options.json",target=/data/options.json,readonly kraken-trader-v2:ci --healthcheck 2>&1)"
+          mkdir -p "${RUNNER_TEMP}/kraken-data"
+          printf '{"kraken_api_key":"ci-test-key","kraken_api_secret":"ci-test-secret"}\n' > "${RUNNER_TEMP}/kraken-data/options.json"
+          sudo chown -R 0:0 "${RUNNER_TEMP}/kraken-data"
+          sudo chmod 0400 "${RUNNER_TEMP}/kraken-data/options.json"
+          output="$(docker run --rm --mount type=bind,source="${RUNNER_TEMP}/kraken-data",target=/data --tmpfs /config:rw,uid=0,gid=0,mode=700 kraken-trader-v2:ci --healthcheck 2>&1)"
           printf '%s\n' "$output"
           printf '%s\n' "$output" | grep -F "uid=10001 gid=10001"
           printf '%s\n' "$output" | grep -F '"credentials_present":true'
