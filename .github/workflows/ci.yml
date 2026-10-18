@@ -70,6 +70,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -f kraken_margin_trader/Dockerfile -t kraken-trader-v2:ci kraken_margin_trader
-      # Verify package readability and startup when the process is not root.
-      # The temporary /data avoids changing persistent data permissions and sends no orders.
+      # Verify the application also starts if Docker is explicitly configured for an unprivileged UID.
       - run: docker run --rm --user 10001:10001 --tmpfs /data:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck
+      # Home Assistant normally starts the container as root. The real entrypoint must
+      # prepare root-owned persistent mounts, preserve private options, and drop to UID 10001.
+      - name: Verify default entrypoint drops root before Python startup
+        shell: bash
+        run: |
+          output="$(docker run --rm --tmpfs /data:rw,uid=0,gid=0,mode=700 --tmpfs /config:rw,uid=0,gid=0,mode=700 kraken-trader-v2:ci --healthcheck 2>&1)"
+          printf '%s\\n' "$output"
+          printf '%s\\n' "$output" | grep -F "uid=10001 gid=10001"
