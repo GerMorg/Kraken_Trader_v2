@@ -438,6 +438,37 @@ def test_query_trades_empty_ledger_list_conflicts_with_matching_ledger_refid():
     db.close()
 
 
+def test_query_trades_empty_ledger_list_conflicts_with_matching_order_refid():
+    db = Persistence(":memory:")
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    order_ledger = {**ledger(), "refid": "ORDER-1"}
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-ORDER-REFID": missing_refs}}},
+        ledger_pages={0: {"ledger": {"L-ORDER": order_ledger}}},
+    )
+    sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+    client.query_trades_info = lambda trade_ids, *, include_ledgers=True: {
+        "T-ORDER-REFID": {**missing_refs, "ledgers": []}
+    }
+    client.query_ledgers_info = lambda ledger_ids: {}
+
+    result = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["missing_trade_references"] == 1
+    assert any(
+        item["outcome"] == "QUERY_TRADES_EMPTY_BUT_LEDGER_ORDER_REFID_MATCHES"
+        for item in result["trade_query_outcomes"]
+    )
+    db.close()
+
+
 def test_trade_history_missing_margin_field_is_incomplete_not_guessed_as_spot():
     db = Persistence(":memory:")
     missing_margin = trade()
