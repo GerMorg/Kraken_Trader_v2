@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.27 — Fehlendes Trade-Ledger-Feld persistent diagnostizieren
+
+- Eine gültige `QueryTrades`-Antwort ohne `ledgers`-Feld wird nun mit einem expliziten Diagnose-Fingerprint und `QUERY_TRADES_LEDGER_FIELD_MISSING` persistiert.
+- Wiederholte identische ID-Abfragen werden vermieden, solange die fehlende Relation nicht durch eine unabhängige Quelle geklärt wurde.
+- Die Reconciliation bleibt `INCOMPLETE`; Qualitätslücken und die Sperre für neue Risikoerhöhungen bleiben bestehen. Kein Feld wird erfunden und keine Live-Freigabe erteilt.
+- Regressionstest deckt Persistenz, idempotente Wiederholung und unveränderte Sperre ab.
+
+
 ## 0.1.26 — Explizit leere Trade-Ledger-Relationen sicher prüfen
 
 - Der bisherige Logstatus zeigte drei Abfragen über `QueryTrades`, aber null wiederhergestellte Beziehungen und keine Erklärung, ob Kraken die IDs nicht zurückgab, das `ledgers`-Feld fehlte oder eine leere Liste zurückkam.

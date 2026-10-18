@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kraken-margin-trader"
-version = "0.1.26"
+version = "0.1.27"
 description = "Auditable Kraken Spot and Spot Margin Home Assistant add-on"
 requires-python = ">=3.12"
 dependencies = []
