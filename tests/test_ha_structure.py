@@ -107,6 +107,10 @@ def test_apparmor_profile_grants_runtime_paths_without_disabling_confinement():
     assert "network inet dgram," in profile
     assert "network inet6 stream," in profile
     assert "network inet6 dgram," in profile
+    assert "/sbin/su-exec ix," in profile
+    assert "capability chown," in profile
+    assert "capability setgid," in profile
+    assert "capability setuid," in profile
     assert "file," not in profile
     assert "full_access: true" not in (root / "kraken_margin_trader" / "config.yaml").read_text(encoding="utf-8")
 
