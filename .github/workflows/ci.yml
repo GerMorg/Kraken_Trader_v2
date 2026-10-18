@@ -95,7 +95,10 @@ jobs:
           printf '%s\n' "$output" | grep -F '"credentials_present":true'
           test -f "${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3"
           test ! -e "${RUNNER_TEMP}/kraken-data/kraken_trader.sqlite3"
+          test "$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data")" = "0:0:755"
           test "$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/options.json")" = "0:0:400"
+          test "$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/state")" = "10001:10001:700"
+          test "$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/logs")" = "10001:10001:700"
           sudo python3 - "${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3" <<'PY'
           import sqlite3, sys
           connection = sqlite3.connect(sys.argv[1])
