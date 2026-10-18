@@ -657,3 +657,50 @@ def test_new_risk_history_gate_fails_closed_for_errors_and_unexpected_sources():
     assert ready is False
     assert "HISTORY_SOURCE_ERROR:TRADES:HISTORY_PAGE_INVALID" in gaps
     assert "UNEXPECTED_HISTORY_SOURCE:BALANCES" in gaps
+
+
+
+def test_query_trades_missing_ledgers_field_is_persisted_and_not_requeried():
+    db = Persistence(":memory:")
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    unrelated_ledger = {**ledger(), "refid": "UNRELATED-TRADE"}
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-MISSING-FIELD": missing_refs}}},
+        ledger_pages={0: {"ledger": {"L-UNRELATED": unrelated_ledger}, "count": 1}},
+    )
+    sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+
+    calls = []
+    def query_trades_info(trade_ids, *, include_ledgers=True):
+        calls.append((list(trade_ids), include_ledgers))
+        return {"T-MISSING-FIELD": dict(missing_refs)}
+
+    client.query_trades_info = query_trades_info
+    client.query_ledgers_info = lambda ledger_ids: {}
+
+    first = reconcile_trade_ledger_coverage(client=client, persistence=db)
+    assert first["status"] == "INCOMPLETE"
+    assert first["trade_rows_queried"] == 1
+    assert first["trade_rows_query_ledger_field_missing"] == 1
+    assert first["missing_trade_references"] == 1
+    assert len(calls) == 1
+
+    saved = db.fills()[0]["raw"]["raw"]
+    assert "ledgers" not in saved
+    assert saved["_ledger_reference_evidence"]["source"] == "QUERY_TRADES_LEDGER_FIELD_MISSING"
+    assert saved["_ledger_reference_evidence"]["ledgers_field_present"] is False
+    assert db.history_sync_state("TRADES")["quality_gaps"]
+
+    second = reconcile_trade_ledger_coverage(client=client, persistence=db)
+    assert second["status"] == "INCOMPLETE"
+    assert second["trade_rows_queried"] == 0
+    assert second["missing_trade_references"] == 1
+    assert len(calls) == 1
+    assert db.history_sync_state("TRADES")["quality_gaps"]
+    db.close()
