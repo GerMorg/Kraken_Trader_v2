@@ -136,8 +136,14 @@ else:
         errors.append("run.sh must log image version and import-failure diagnostics")
     if "APP_VERSION=${BUILD_VERSION}" not in dockerfile:
         errors.append("Dockerfile must expose BUILD_VERSION for startup diagnostics")
+    if "apk add --no-cache su-exec" not in dockerfile or 'exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"' not in run_script:
+        errors.append("default container startup must drop root privileges with su-exec")
+    if 'if [ "$(id -u)" -eq 0 ]; then' not in run_script:
+        errors.append("run.sh must prepare writable mounts before dropping root")
+    if "KRTR_OPTIONS_FILE=/run/kraken-trader-options.json" not in run_script:
+        errors.append("runtime must pass a private options copy to the unprivileged process")
     # A custom AppArmor profile is mandatory because application code, DNS sockets,
-    # Python runtime libraries, and the writable tax-report mount need explicit access.
+    # Python runtime libraries, privilege dropping, and the writable tax-report mount need explicit access.
     if "profile kraken_margin_trader " not in apparmor_profile:
         errors.append("AppArmor profile name must match the Home Assistant add-on profile")
     for permission in (
@@ -150,6 +156,10 @@ else:
         "network inet6 stream,",
         "network inet6 dgram,",
         "#include <abstractions/nameservice>",
+        "/sbin/su-exec ix,",
+        "capability chown,",
+        "capability setgid,",
+        "capability setuid,",
     ):
         if permission not in apparmor_profile:
             errors.append(f"AppArmor profile missing required permission: {permission}")
@@ -159,7 +169,11 @@ else:
     ci_path = root / ".github" / "workflows" / "ci.yml"
     ci_workflow = ci_path.read_text(encoding="utf-8")
     if "docker run --rm --user 10001:10001 --tmpfs /data:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" not in ci_workflow:
-        errors.append("CI must run the default entrypoint as an unprivileged user with writable temporary data")
+        errors.append("CI must run the entrypoint directly as an unprivileged user with writable temporary data")
+    if "docker run --rm --tmpfs /data:rw,uid=0,gid=0,mode=700 --tmpfs /config:rw,uid=0,gid=0,mode=700 kraken-trader-v2:ci --healthcheck 2>&1" not in ci_workflow:
+        errors.append("CI must exercise privilege dropping with root-owned writable mounts")
+    if 'grep -F "uid=10001 gid=10001"' not in ci_workflow:
+        errors.append("CI must assert that Python starts as the dedicated unprivileged UID")
     if "&& /run.sh --healthcheck" not in dockerfile:
         errors.append("Dockerfile build must execute the real startup bootstrap healthcheck")
     if "docker run --rm --entrypoint /run.sh" in ci_workflow:
