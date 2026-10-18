@@ -12,6 +12,7 @@ D = Decimal
 PAGE_BUDGET_PER_SOURCE = 2
 REFRESH_OVERLAP_SECONDS = 3600
 REFRESH_INTERVAL_SECONDS = 300
+QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS = 6 * 60 * 60
 
 
 REQUIRED_HISTORY_SOURCES = ("TRADES", "LEDGERS", "CLOSED_ORDERS")
@@ -329,6 +330,7 @@ def reconcile_trade_ledger_coverage(
     trade_rows_query_missing = 0
     trade_rows_query_ledger_field_missing = 0
     trade_rows_query_invalid = 0
+    trade_rows_query_deferred = 0
     ledger_ids_requested = 0
     ledger_rows_recovered = 0
     resolved_fingerprints: dict[str, str] = {}
@@ -338,6 +340,9 @@ def reconcile_trade_ledger_coverage(
 
     initial_fills = persistence.fills()
     initial_ledger_events = persistence.ledger_events()
+    now_epoch = int(time.time())
+    initial_trade_rows_by_trade_id: dict[str, dict[str, Any]] = {}
+    cached_query_evidence_by_trade_id: dict[str, dict[str, Any]] = {}
     trade_history_complete = (
         trade_state.get("initial_backfill_complete") is True
         and trade_state.get("generation_complete") is True
@@ -358,6 +363,7 @@ def reconcile_trade_ledger_coverage(
         if not trade_id or row is None:
             continue
         fingerprint = _trade_id_fingerprint(trade_id)
+        initial_trade_rows_by_trade_id[trade_id] = row
         refs = _valid_ledger_references(row.get("ledgers"))
         gap_token = "TRADE_LEDGER_REFERENCES_MISSING:" + fingerprint
         evidence = row.get("_ledger_reference_evidence")
@@ -365,10 +371,13 @@ def reconcile_trade_ledger_coverage(
             isinstance(evidence, dict)
             and evidence.get("source") in {
                 "QUERY_TRADES_LEDGER_FIELD_MISSING",
+                "QUERY_TRADES_LOOKUP_PENDING",
                 "QUERY_TRADES_EMPTY_PENDING_LEDGER_CHECK",
                 "QUERY_TRADES_EMPTY_CONFIRMED",
             }
         )
+        if cached_query_evidence and isinstance(evidence, dict):
+            cached_query_evidence_by_trade_id[trade_id] = evidence
         previously_confirmed_empty = (
             isinstance(evidence, dict)
             and evidence.get("source") == "QUERY_TRADES_EMPTY_CONFIRMED"
@@ -382,9 +391,19 @@ def reconcile_trade_ledger_coverage(
             trade_gaps.discard(gap_token)
             confirmed_empty_fingerprints.add(fingerprint)
         elif cached_query_evidence:
-            # A prior exact QueryTrades response is persisted. Do not repeat an
-            # unchanged lookup every cycle while independent Ledger evidence is pending.
+            # Preserve the data-quality block, but retry a missing/unknown QueryTrades
+            # lookup after a bounded cooldown. Identical requests must not repeat every cycle.
             trade_gaps.add(gap_token)
+            retry_source = evidence.get("source") if isinstance(evidence, dict) else None
+            if retry_source in {
+                "QUERY_TRADES_LEDGER_FIELD_MISSING",
+                "QUERY_TRADES_LOOKUP_PENDING",
+            }:
+                retry_after = _count(evidence.get("retry_after_epoch"))
+                if retry_after is None or retry_after <= now_epoch:
+                    missing_trade_rows.append((trade_id, fingerprint))
+                else:
+                    trade_rows_query_deferred += 1
         else:
             trade_gaps.add(gap_token)
             missing_trade_rows.append((trade_id, fingerprint))
@@ -394,22 +413,67 @@ def reconcile_trade_ledger_coverage(
     if query_trades:
         trade_ids = [trade_id for trade_id, _fingerprint in query_trades]
         trade_rows_queried = len(trade_ids)
+        retry_evidence_by_trade_id: dict[str, dict[str, Any]] = {}
+        for trade_id in trade_ids:
+            previous_evidence = cached_query_evidence_by_trade_id.get(trade_id)
+            previous_attempts = (
+                _count(previous_evidence.get("attempt_count"))
+                if isinstance(previous_evidence, dict) else None
+            )
+            retry_evidence = {
+                "source": "QUERY_TRADES_LOOKUP_PENDING",
+                "attempt_count": (previous_attempts or 0) + 1,
+                "last_attempt_epoch": now_epoch,
+                "retry_after_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+                "last_attempt_outcome": "QUERY_IN_PROGRESS",
+            }
+            retry_evidence_by_trade_id[trade_id] = retry_evidence
+            previous_row = initial_trade_rows_by_trade_id.get(trade_id)
+            if previous_row is not None:
+                _save_trade(
+                    trade_id,
+                    {**previous_row, "_ledger_reference_evidence": retry_evidence},
+                    persistence,
+                )
+        query_request_failed = False
         try:
             response = client.query_trades_info(trade_ids, include_ledgers=True)
         except Exception as exc:
             api_errors.append("QUERY_TRADES_FAILED:" + type(exc).__name__)
             response = {}
+            query_request_failed = True
         if not isinstance(response, dict):
             api_errors.append("QUERY_TRADES_INVALID_RESPONSE")
             response = {}
+            query_request_failed = True
         for trade_id, fingerprint in query_trades:
             row = response.get(trade_id)
             if not isinstance(row, dict):
                 trade_rows_query_missing += 1
                 query_outcomes.append({
                     "trade_id_fingerprint": fingerprint,
-                    "outcome": "TRADE_ID_NOT_RETURNED_BY_QUERY_TRADES",
+                    "outcome": (
+                        "QUERY_TRADES_REQUEST_FAILED" if query_request_failed
+                        else "TRADE_ID_NOT_RETURNED_BY_QUERY_TRADES"
+                    ),
                 })
+                previous_row = initial_trade_rows_by_trade_id.get(trade_id)
+                retry_evidence = retry_evidence_by_trade_id.get(trade_id)
+                if previous_row is not None and retry_evidence is not None:
+                    _save_trade(
+                        trade_id,
+                        {
+                            **previous_row,
+                            "_ledger_reference_evidence": {
+                                **retry_evidence,
+                                "last_attempt_outcome": (
+                                    "QUERY_TRADES_REQUEST_FAILED" if query_request_failed
+                                    else "TRADE_ID_NOT_RETURNED_BY_QUERY_TRADES"
+                                ),
+                            },
+                        },
+                        persistence,
+                    )
                 continue
             if "ledgers" not in row:
                 trade_rows_query_ledger_field_missing += 1
@@ -431,8 +495,10 @@ def reconcile_trade_ledger_coverage(
                 row_to_save = {
                     **row,
                     "_ledger_reference_evidence": {
+                        **retry_evidence_by_trade_id.get(trade_id, {}),
                         "source": "QUERY_TRADES_LEDGER_FIELD_MISSING",
                         "ledgers_field_present": False,
+                        "last_attempt_outcome": "QUERY_TRADES_LEDGER_FIELD_MISSING",
                     },
                 }
                 if not _save_trade(trade_id, row_to_save, persistence):
@@ -465,9 +531,11 @@ def reconcile_trade_ledger_coverage(
                 # the risk gate until a complete Ledger history independently confirms
                 # that no Ledger row has this trade's reference ID.
                 row_to_save["_ledger_reference_evidence"] = {
+                    **retry_evidence_by_trade_id.get(trade_id, {}),
                     "source": "QUERY_TRADES_EMPTY_PENDING_LEDGER_CHECK",
                     "ledgers_field_present": True,
                     "ledgers_count": 0,
+                    "last_attempt_outcome": "QUERY_TRADES_RETURNED_EMPTY_LEDGER_LIST",
                 }
                 trade_rows_query_empty_ledgers += 1
                 query_outcomes.append({
@@ -745,9 +813,24 @@ def reconcile_trade_ledger_coverage(
         and not final_trade_gaps
         and not final_ledger_gaps
     )
+    pending_retry_epochs: list[int] = []
+    for fill in final_fills:
+        row = _trade_row_from_fill(fill)
+        evidence = row.get("_ledger_reference_evidence") if row is not None else None
+        if not isinstance(evidence, dict) or evidence.get("source") not in {
+            "QUERY_TRADES_LEDGER_FIELD_MISSING", "QUERY_TRADES_LOOKUP_PENDING",
+        }:
+            continue
+        retry_after = _count(evidence.get("retry_after_epoch"))
+        if retry_after is not None and retry_after > now_epoch:
+            pending_retry_epochs.append(retry_after)
+    next_trade_query_retry_epoch = min(pending_retry_epochs) if pending_retry_epochs else None
+
     return {
         "status": "COMPLETE" if complete else "INCOMPLETE",
         "trade_rows_queried": trade_rows_queried,
+        "trade_rows_query_deferred": trade_rows_query_deferred,
+        "next_trade_query_retry_epoch": next_trade_query_retry_epoch,
         "trade_rows_recovered": trade_rows_recovered,
         "trade_rows_query_empty_ledgers": trade_rows_query_empty_ledgers,
         "trade_rows_query_missing": trade_rows_query_missing,
