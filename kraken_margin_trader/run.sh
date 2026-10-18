@@ -95,8 +95,8 @@ if [ "$(id -u)" -eq 0 ]; then
   # owner-readable copy. Keep this transient chmod away from persistent mounts.
   if [ -f /data/options.json ]; then
     cp /data/options.json /run/kraken-trader-options.json
-    chown "${APP_UID}:${APP_GID}" /run/kraken-trader-options.json
     chmod 0400 /run/kraken-trader-options.json
+    chown "${APP_UID}:${APP_GID}" /run/kraken-trader-options.json
     export KRTR_OPTIONS_FILE=/run/kraken-trader-options.json
   fi
   export KRTR_STATE_DIR=/data/state
