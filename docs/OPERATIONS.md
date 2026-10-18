@@ -1,10 +1,14 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.27 – fehlendes `ledgers`-Feld
+
+Wenn `QueryTrades` eine gültige Trade-Zeile ohne `ledgers`-Feld liefert, persistiert die App jetzt die Antwort mit `QUERY_TRADES_LEDGER_FIELD_MISSING`. Das verhindert redundante Abfragen in jedem Zyklus, ohne die Historie als vollständig zu markieren. `missing_trade_references` und der History-Quality-Gap bleiben bestehen, bis eine unabhängige Quelle die Relation repariert. Ein gecachtes Diagnoseergebnis ist ausdrücklich kein Beleg für vollständige Reconciliation und erlaubt keine neuen Risikoerhöhungen.
+
 ## Repository/App installieren
 
 1. In Home Assistant **Einstellungen → Apps → App-Repository hinzufügen** öffnen.
 2. `https://github.com/GerMorg/Kraken_Trader_v2` als benutzerdefiniertes Repository hinzufügen und den Store aktualisieren.
-3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.26` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.26` zeigen; andernfalls läuft noch nicht das neue Image. Anschließend starten und das App-Protokoll prüfen.
+3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.27` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.27` zeigen; andernfalls läuft noch nicht das neue Image. Anschließend starten und das App-Protokoll prüfen.
 4. `mode: SHADOW`, `live_enabled: false` und `kill_switch: true` beibehalten.
 5. Für die erste Datenerfassung einen Kraken-API-Key mit den erforderlichen **Lese-Rechten** konfigurieren. Keine Auszahlungsrechte und zunächst keine Handelsrechte aktivieren.
 
