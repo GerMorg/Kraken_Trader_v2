@@ -95,7 +95,7 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
 
     workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "docker run --rm --user 10001:10001 --tmpfs /data/state:rw,uid=10001,gid=10001,mode=700 --tmpfs /data/logs:rw,uid=10001,gid=10001,mode=700 --tmpfs /config:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" in workflow
-    assert "docker run --rm --mount type=bind,source=" in workflow
+    assert "docker run --rm --cap-drop DAC_OVERRIDE --cap-drop FOWNER --mount type=bind,source=" in workflow
     assert "target=/data" in workflow
     assert "--tmpfs /config:rw,uid=0,gid=0,mode=755" in workflow
     assert "kraken-trader-v2:ci --healthcheck 2>&1" in workflow
