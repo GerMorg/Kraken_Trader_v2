@@ -2,7 +2,7 @@
 
 ## Version 0.1.29 – Laufzeit als unprivilegierter Benutzer
 
-Home Assistant kann den App-Container zunächst als root starten. `run.sh` nutzt diese Phase ausschließlich, um die App-Daten unter `/data` (außer `/data/options.json`) sowie `/config/reports/tax` für UID/GID `10001:10001` vorzubereiten. Die Supervisor-verwaltete Optionsdatei bleibt unverändert; eine temporäre Kopie unter `/run/kraken-trader-options.json` wird auf den App-Benutzer und Modus `0400` gesetzt. Anschließend startet Python als `uid=10001 gid=10001`. Der Start schlägt fehl, falls die nötigen Rechte nicht sicher vorbereitet werden können. In der Startdiagnose muss daher `uid=10001 gid=10001` stehen. Wenn weiterhin `uid=0 gid=0` erscheint, läuft noch ein älteres Image oder der neue Startpfad wurde nicht aktiviert.
+Home Assistant kann den App-Container zunächst als root starten. `run.sh` nutzt diese Phase nur, um `/data/state`, `/data/logs` und `/config/reports/tax` für UID/GID `10001:10001` vorzubereiten. Das Verzeichnis `/data` selbst bleibt root-owned und für die App nicht beschreibbar; `/data/options.json` bleibt root-owned und unverändert. Eine temporäre Kopie unter `/run/kraken-trader-options.json` wird dem App-Benutzer mit Modus `0400` übergeben. Anschließend startet Python als `uid=10001 gid=10001`. Beim ersten Start ab 0.1.29 wird die bisherige SQLite-Datei `/data/state/kraken_trader.sqlite3` mitsamt vorhandenen `-wal`, `-shm`- und `-journal`-Dateien nach `/data/state/kraken_trader.sqlite3` migriert. Ein persistenter Migrationsmarker ermöglicht die kontrollierte Fortsetzung nach einem unterbrochenen Neustart; doppelte Datenbanken, Seitendatei-Kollisionen und verwaiste Dateien führen zu einem Fehler und werden nicht stillschweigend überschrieben. In der Startdiagnose muss `uid=10001 gid=10001` stehen. Wenn weiterhin `uid=0 gid=0` erscheint, läuft noch ein älteres Image oder der neue Startpfad wurde nicht aktiviert.
 
 Der CI-Container-Test führt den normalen Entrypoint mit root-owned temporären `/data`- und `/config`-Mounts aus, prüft den UID-Wechsel und bestätigt, dass die App-Konfiguration geladen wurde. Ein separater Test prüft weiterhin den direkten Start mit einer vorgegebenen unprivilegierten UID. Beide sind Healthchecks und platzieren keine Kraken-Orders.
 
@@ -65,7 +65,7 @@ Für die aktuelle Shadow-Datenerfassung sind keine Handelsrechte erforderlich. H
 
 - Home-Assistant-App-Log: Laufzeitereignisse.
 - `/data/logs/events.jsonl`: rotierende strukturierte UTC-Auditspur.
-- `/data/kraken_trader.sqlite3`: persistente Historie, Intents, Snapshots und Reconciliation-Evidenz.
+- `/data/state/kraken_trader.sqlite3`: persistente Historie, Intents, Snapshots und Reconciliation-Evidenz.
 - `/config/reports/tax/AT/<Jahr>/`: JSON-, CSV- und Markdown-Steuerexporte im beschreibbaren App-Konfigurationsordner.
 
 Nützliche Ereignisse sind `API_KEY_PERMISSION_GATE_BLOCKED`, `KRAKEN_HISTORY_SYNC`, `NEW_RISK_BLOCKED_HISTORY_INCOMPLETE`, `WALLET_BALANCE_RECONCILIATION_SUMMARY`, `ORDER_RECONCILIATION_SUMMARY`, `POSITION_FILL_RECONCILIATION_SUMMARY`, `NO_TRADE`, `RISK_GATE_REJECTED` und `CYCLE_FAILED_CIRCUIT_BREAKER`. API-Key, Secret, Signatur und Auth-Header gehören niemals in Logs oder GitHub-Issues.
