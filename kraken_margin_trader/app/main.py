@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import os
 import signal
 import sys
 import time
@@ -21,7 +22,7 @@ def main() -> int:
     )
     parser=argparse.ArgumentParser(description="Kraken Trader v2 HA app")
     parser.add_argument("--healthcheck",action="store_true")
-    parser.add_argument("--options",default="/data/options.json")
+    parser.add_argument("--options",default=os.environ.get("KRTR_OPTIONS_FILE", "/data/options.json"))
     args=parser.parse_args()
     settings=Settings.from_file(args.options)
     db=Persistence("/data/kraken_trader.sqlite3")
