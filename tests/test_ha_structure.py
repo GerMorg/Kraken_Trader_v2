@@ -86,6 +86,7 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "chown 0:0 /data" in run_script
     assert "chmod 0755 /data" not in run_script
     assert "chmod -R go-rwx /data/state /data/logs" not in run_script
+    assert not any(line.strip().startswith("chmod ") and "/data" in line for line in run_script.splitlines())
     assert "KRTR_STATE_DIR=/data/state/private" in run_script
     assert "KRTR_LOG_DIR=/data/logs/private" in run_script
     assert '[ ! -w "$STATE_DIR" ]' in run_script and '[ ! -w "$LOG_DIR" ]' in run_script
