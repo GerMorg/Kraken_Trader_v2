@@ -98,7 +98,7 @@ fi
 
 STATE_DIR="${KRTR_STATE_DIR:-/data/state/private}"
 LOG_DIR="${KRTR_LOG_DIR:-/data/logs/private}"
-mkdir -p "$STATE_DIR" "$LOG_DIR"
+mkdir -p "$STATE_DIR" "$LOG_DIR" /config/reports/tax/AT
 
 if [ ! -w "$STATE_DIR" ] || [ ! -w "$LOG_DIR" ] || [ ! -w /config/reports/tax/AT ]; then
   echo "FATAL: non-root runtime cannot write its private state, AppLog, or tax export directory." >&2
