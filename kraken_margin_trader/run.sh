@@ -81,7 +81,12 @@ if [ "$(id -u)" -eq 0 ]; then
     fi
   done
 
-  chown -R "${APP_UID}:${APP_GID}" /data/state /data/logs
+  # Reassign files at the mount roots without traversing any historical nested
+  # directory whose mode may deny root traversal. Keep the directories themselves
+  # writable for APP_UID while preserving their existing mode bits.
+  find /data/state -mindepth 1 -maxdepth 1 -type f -exec chown "${APP_UID}:${APP_GID}" {} +
+  find /data/logs -mindepth 1 -maxdepth 1 -type f -exec chown "${APP_UID}:${APP_GID}" {} +
+  chown "${APP_UID}:${APP_GID}" /data/state /data/logs
   if [ "$HEALTHCHECK_MODE" -eq 0 ]; then
     chown -R "${APP_UID}:${APP_GID}" /config/reports/tax
   fi
