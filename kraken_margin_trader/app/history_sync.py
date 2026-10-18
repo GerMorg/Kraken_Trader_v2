@@ -395,7 +395,7 @@ def reconcile_trade_ledger_coverage(
             # lookup after a bounded cooldown. Identical requests must not repeat every cycle.
             trade_gaps.add(gap_token)
             retry_source = evidence.get("source") if isinstance(evidence, dict) else None
-            if retry_source in {
+            if isinstance(evidence, dict) and retry_source in {
                 "QUERY_TRADES_LEDGER_FIELD_MISSING",
                 "QUERY_TRADES_LOOKUP_PENDING",
             }:
@@ -458,14 +458,14 @@ def reconcile_trade_ledger_coverage(
                     ),
                 })
                 previous_row = initial_trade_rows_by_trade_id.get(trade_id)
-                retry_evidence = retry_evidence_by_trade_id.get(trade_id)
-                if previous_row is not None and retry_evidence is not None:
+                pending_retry_evidence = retry_evidence_by_trade_id.get(trade_id)
+                if previous_row is not None and pending_retry_evidence is not None:
                     _save_trade(
                         trade_id,
                         {
                             **previous_row,
                             "_ledger_reference_evidence": {
-                                **retry_evidence,
+                                **pending_retry_evidence,
                                 "last_attempt_outcome": (
                                     "QUERY_TRADES_REQUEST_FAILED" if query_request_failed
                                     else "TRADE_ID_NOT_RETURNED_BY_QUERY_TRADES"
