@@ -2,6 +2,7 @@
 
 ## Tatsächliche Bausteine
 
+- `run.sh`/Container: Der Entrypoint kann von Home Assistant als root gestartet werden, bereitet nur die App-Daten- und Steuerexport-Unterordner vor und wechselt vor Ausführung des Python-Traders über `su-exec` auf UID/GID `10001:10001`. `/data/options.json` bleibt root-owned und wird für den Prozess als temporäre Datei mit Modus `0400` unter `/run` bereitgestellt. Ein fehlgeschlagener Besitzwechsel stoppt den Start.
 - `app/config.py`: Konfigurationsparsing und source-owned absolute Risikodeckel.
 - `app/kraken.py`: Kraken Spot Public-/Private-REST, Signatur, persistente Nonce-Schnittstelle, Mehrdeutigkeit nach Submit-Timeout und History-Endpunkte `TradesHistory`/`Ledgers`.
 - `app/history_sync.py`: persistente offsetbasierte, paginierte und idempotente Erst- und Folgesynchronisierung von Trades und Ledger, mit festem Zeitfenster, begrenztem Seitenbudget je Zyklus und Fail-Closed bei ungültigen Ergebnissen.
@@ -13,7 +14,7 @@
 - `app/risk.py`: risikobasierte Notionalgröße und unabhängiges Entry-Gate.
 - `app/execution.py`: Order-Intent, strikte Parametervalidierung, persistente Order-State-Machine und zentrale Order Authority. Es gibt keinen separaten Compile-Time-Release-Schalter; unabhängige Laufzeit-Gates blockieren aktuell reguläre Entries.
 - `app/portfolio.py`: richtungsgetrennte Brutto-/Nettoexposure-Aggregation, streng geprüfte Margin-Lots, paarbezogene Mengensicherheit und Kennzeichnung erwarteter (nicht kontobestätigter) EWR-Finanzierungswährung.
-- `app/persistence.py`: SQLite/WAL, Bar-/Ereignis-/Intent-/Fill-/Ledger-/Steuerhistorie und persistente Circuit Breaker.
+- `app/persistence.py`: SQLite/WAL unter `/data/state/kraken_trader.sqlite3`, Bar-/Ereignis-/Intent-/Fill-/Ledger-/Steuerhistorie und persistente Circuit Breaker. Das Container-Entrypoint migriert den älteren Datenbankpfad samt SQLite-Seitendateien vor dem UID-Wechsel, erhält Root-Eigentum des Mount-Parents und bricht bei widersprüchlichen Datenbankzuständen ab.
 - `app/audit.py`: JSONL in stdout und rotierender Datei mit Secret-Redaktion.
 - `app/backtest.py`: eingeschränkter OHLCV-Szenario-Simulator.
 - `app/tax.py`: Jahres-Export JSON/CSV/Markdown mit Datenlücken- und manuellen Prüfhinweisen.

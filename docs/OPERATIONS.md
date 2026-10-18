@@ -1,5 +1,11 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.29 – Laufzeit als unprivilegierter Benutzer
+
+Home Assistant kann den App-Container zunächst als root starten. `run.sh` nutzt diese Phase nur, um `/data/state`, `/data/logs` und `/config/reports/tax` für UID/GID `10001:10001` vorzubereiten. Das Verzeichnis `/data` selbst bleibt root-owned und für die App nicht beschreibbar; `/data/options.json` bleibt root-owned und unverändert. Eine temporäre Kopie unter `/run/kraken-trader-options.json` wird dem App-Benutzer mit Modus `0400` übergeben. Anschließend startet Python als `uid=10001 gid=10001`. Beim ersten Start ab 0.1.29 wird die bisherige SQLite-Datei `/data/kraken_trader.sqlite3` mitsamt vorhandenen `-wal`, `-shm`- und `-journal`-Dateien nach `/data/state/kraken_trader.sqlite3` migriert. Ein persistenter Migrationsmarker ermöglicht die kontrollierte Fortsetzung nach einem unterbrochenen Neustart; doppelte Datenbanken, Seitendatei-Kollisionen und verwaiste Dateien führen zu einem Fehler und werden nicht stillschweigend überschrieben. In der Startdiagnose muss `uid=10001 gid=10001` stehen. Wenn weiterhin `uid=0 gid=0` erscheint, läuft noch ein älteres Image oder der neue Startpfad wurde nicht aktiviert.
+
+Der CI-Container-Test führt den normalen Entrypoint mit root-owned temporären `/data`- und `/config`-Mounts aus, prüft den UID-Wechsel und bestätigt, dass die App-Konfiguration geladen wurde. Ein separater Test prüft weiterhin den direkten Start mit einer vorgegebenen unprivilegierten UID. Beide sind Healthchecks und platzieren keine Kraken-Orders.
+
 ## Version 0.1.28 – kontrollierte erneute Abfrage fehlender Trade-Ledger-Referenzen
 
 Ungeklärte Antworten ohne `ledgers`-Feld werden nach sechs Stunden erneut über `QueryTrades` geprüft. Das Ereignis `KRAKEN_TRADE_LEDGER_RECONCILIATION` enthält `trade_rows_query_deferred` und `next_trade_query_retry_epoch`; das ist ein Statushinweis, kein Nachweis vollständiger Reconciliation. Datenqualitätslücken bleiben bestehen und neue Risikoerhöhungen bleiben blockiert, bis eine unabhängige Quelle die Zuordnung bestätigt.
@@ -12,7 +18,7 @@ Wenn `QueryTrades` eine gültige Trade-Zeile ohne `ledgers`-Feld liefert, persis
 
 1. In Home Assistant **Einstellungen → Apps → App-Repository hinzufügen** öffnen.
 2. `https://github.com/GerMorg/Kraken_Trader_v2` als benutzerdefiniertes Repository hinzufügen und den Store aktualisieren.
-3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.27` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.27` zeigen; andernfalls läuft noch nicht das neue Image. Anschließend starten und das App-Protokoll prüfen.
+3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.29` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.29` und die Python-Bootstrap-Diagnose `uid=10001 gid=10001` zeigen; andernfalls läuft noch nicht das neue Image oder der Privilegienwechsel ist fehlgeschlagen. Anschließend starten und das App-Protokoll prüfen.
 4. `mode: SHADOW`, `live_enabled: false` und `kill_switch: true` beibehalten.
 5. Für die erste Datenerfassung einen Kraken-API-Key mit den erforderlichen **Lese-Rechten** konfigurieren. Keine Auszahlungsrechte und zunächst keine Handelsrechte aktivieren.
 
@@ -59,7 +65,7 @@ Für die aktuelle Shadow-Datenerfassung sind keine Handelsrechte erforderlich. H
 
 - Home-Assistant-App-Log: Laufzeitereignisse.
 - `/data/logs/events.jsonl`: rotierende strukturierte UTC-Auditspur.
-- `/data/kraken_trader.sqlite3`: persistente Historie, Intents, Snapshots und Reconciliation-Evidenz.
+- `/data/state/kraken_trader.sqlite3`: persistente Historie, Intents, Snapshots und Reconciliation-Evidenz.
 - `/config/reports/tax/AT/<Jahr>/`: JSON-, CSV- und Markdown-Steuerexporte im beschreibbaren App-Konfigurationsordner.
 
 Nützliche Ereignisse sind `API_KEY_PERMISSION_GATE_BLOCKED`, `KRAKEN_HISTORY_SYNC`, `NEW_RISK_BLOCKED_HISTORY_INCOMPLETE`, `WALLET_BALANCE_RECONCILIATION_SUMMARY`, `ORDER_RECONCILIATION_SUMMARY`, `POSITION_FILL_RECONCILIATION_SUMMARY`, `NO_TRADE`, `RISK_GATE_REJECTED` und `CYCLE_FAILED_CIRCUIT_BREAKER`. API-Key, Secret, Signatur und Auth-Header gehören niemals in Logs oder GitHub-Issues.

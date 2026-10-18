@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.29 — Standardstart als unprivilegierter Benutzer
+
+- Das HA-Container-Entrypoint bereitet nur `/data/state`, `/data/logs` und `/config/reports/tax` für UID/GID `10001:10001` vor und startet danach den Python-Prozess als diesen unprivilegierten Benutzer.
+- `/data` selbst und die von Home Assistant verwaltete `/data/options.json` bleiben root-owned; die App kann die Optionsdatei weder lesen noch über die beschreibbare Elternablage austauschen. Sie liest eine temporäre Kopie mit Modus `0400` unter `/run/kraken-trader-options.json`.
+- Die bisherige Datenbank `/data/kraken_trader.sqlite3` und vorhandene SQLite-Seitendateien werden in `/data/state/kraken_trader.sqlite3` migriert. Ein persistenter Marker ermöglicht die sichere Fortsetzung einer unterbrochenen Migration. Bei doppelten Datenbanken, kollidierenden Seitendateien oder verwaisten Altdateien startet die App nicht, statt einen Bestand zu überschreiben oder still auszuwählen.
+- Der AppArmor-Policy werden ausschließlich die für den Besitzwechsel nötigen Fähigkeiten und der `su-exec`-Übergang ergänzt; die breite Dateifähigkeit bleibt verboten.
+- CI prüft den Standardstart mit root-owned Daten-Mount, überprüft die resultierende UID/GID, das unveränderte Optionsdatei-Rechtemodell, die Konfigurationsaufnahme und den Erhalt eines SQLite-Sentinels nach der Migration.
+- Wenn Mount-Rechte nicht sicher vorbereitet werden können, scheitert der Start, statt still als root weiterzulaufen.
+
 ## 0.1.28 — Geplante erneute Prüfung fehlender Trade-Ledger-Referenzen
 
 - Persistierte `QueryTrades`-Antworten ohne `ledgers`-Feld werden nicht mehr unbegrenzt nur als Cache behandelt: Die App versucht nach sechs Stunden erneut, die optionale Relation abzufragen.

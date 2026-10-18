@@ -5,6 +5,84 @@ APP_ROOT="/opt/kraken-trader"
 APP_DIR="${APP_ROOT}/app"
 APP_MAIN="${APP_DIR}/main.py"
 APP_INIT="${APP_DIR}/__init__.py"
+APP_UID=10001
+APP_GID=10001
+
+# Home Assistant starts add-on containers as root by default. Root is used
+# only to migrate legacy SQLite state and prepare narrowly scoped writable dirs.
+# The mount root and Supervisor-managed options stay root-owned and non-writable
+# by the trading process; Python itself always runs as the dedicated UID/GID.
+if [ "$(id -u)" -eq 0 ]; then
+  mkdir -p /data/state /data/logs /config/reports/tax/AT /run
+
+  # Move the legacy database into a private state subdirectory. A durable
+  # marker lets startup finish the migration safely after an interrupted restart.
+  LEGACY_DB=/data/kraken_trader.sqlite3
+  STATE_DB=/data/state/kraken_trader.sqlite3
+  MIGRATION_MARKER=/data/state/.legacy_sqlite_migration
+  if [ -f "${LEGACY_DB}" ] && [ ! -f "${MIGRATION_MARKER}" ]; then
+    if [ -e "${STATE_DB}" ]; then
+      echo "FATAL: both legacy and state SQLite databases exist; manual reconciliation required." >&2
+      exit 1
+    fi
+    for suffix in -wal -shm -journal; do
+      if [ -e "/data/state/kraken_trader.sqlite3${suffix}" ]; then
+        echo "FATAL: destination SQLite sidecar exists before migration; manual reconciliation required." >&2
+        exit 1
+      fi
+    done
+    : > "${MIGRATION_MARKER}"
+  fi
+  if [ -f "${MIGRATION_MARKER}" ]; then
+    if [ -e "${LEGACY_DB}" ] && [ -e "${STATE_DB}" ]; then
+      echo "FATAL: legacy and state SQLite databases both exist during migration." >&2
+      exit 1
+    fi
+    if [ -f "${LEGACY_DB}" ]; then
+      mv "${LEGACY_DB}" "${STATE_DB}"
+    elif [ ! -f "${STATE_DB}" ]; then
+      echo "FATAL: SQLite migration marker exists but neither database is present." >&2
+      exit 1
+    fi
+    for suffix in -wal -shm -journal; do
+      if [ -e "${LEGACY_DB}${suffix}" ]; then
+        if [ -e "/data/state/kraken_trader.sqlite3${suffix}" ]; then
+          echo "FATAL: SQLite sidecar collision during migration; manual reconciliation required." >&2
+          exit 1
+        fi
+        mv "${LEGACY_DB}${suffix}" "/data/state/kraken_trader.sqlite3${suffix}"
+      fi
+    done
+    rm "${MIGRATION_MARKER}"
+  fi
+  for suffix in -wal -shm -journal; do
+    if [ -e "${LEGACY_DB}${suffix}" ]; then
+      echo "FATAL: orphaned legacy SQLite sidecar exists; manual reconciliation required." >&2
+      exit 1
+    fi
+  done
+
+  chown -R "${APP_UID}:${APP_GID}" /data/state /data/logs /config/reports/tax
+  chmod -R go-rwx /data/state /data/logs
+  chown 0:0 /data
+  chmod 0755 /data
+
+  # Keep the Supervisor options file root-owned and unreadable to the app UID.
+  # Pass only an ephemeral, owner-readable copy to the application process.
+  if [ -f /data/options.json ]; then
+    cp /data/options.json /run/kraken-trader-options.json
+    chown "${APP_UID}:${APP_GID}" /run/kraken-trader-options.json
+    chmod 0400 /run/kraken-trader-options.json
+    export KRTR_OPTIONS_FILE=/run/kraken-trader-options.json
+  fi
+
+  exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"
+fi
+
+if [ ! -w /data/state ] || [ ! -w /data/logs ] || [ ! -w /config/reports/tax/AT ]; then
+  echo "FATAL: non-root runtime cannot write its state, AppLog, or tax export directory." >&2
+  exit 1
+fi
 
 echo "Kraken Trader container entrypoint: version=${APP_VERSION:-unknown} root=${APP_ROOT} cwd=$(pwd) python=$(command -v python || echo MISSING)" >&2
 

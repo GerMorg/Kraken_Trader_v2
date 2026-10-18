@@ -29,7 +29,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 class Persistence:
-    def __init__(self, path: str = "/data/kraken_trader.sqlite3") -> None:
+    def __init__(self, path: str = "/data/state/kraken_trader.sqlite3") -> None:
         self.path = path
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
