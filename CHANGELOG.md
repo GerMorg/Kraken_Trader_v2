@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.32 — Vorhandene HA-Mountverzeichnisse direkt verwenden
+
+- Behebt `mkdir: can't create directory '/data/state/private': Permission denied`: Es werden keine zusätzlichen Verzeichnisse unter den gemounteten `/data/state`- und `/data/logs`-Pfaden mehr erstellt.
+- Verwendet die bisherigen stabilen Pfade `/data/state/kraken_trader.sqlite3` und `/data/logs/events.jsonl`. Es gibt weder einen `chmod`-Aufruf auf `/data` noch rekursive Verzeichnisdurchläufe in möglichen alten, nicht durchsuchbaren Unterverzeichnissen.
+- Der Entrypoint übernimmt die Eigentümerschaft der existierenden Mount-Verzeichnisse für den kontrollierten Migrationsschritt und gibt sie danach an UID/GID `10001:10001` zurück. Die vorhandenen Modusbits werden nicht verändert. SQLite-Datenbank, WAL-/SHM-/Journal-Dateien und Legacy-Migrationsschutz bleiben erhalten.
+- CI präpariert State-/Log-Mounts als UID/GID `10001:10001` mit Modus `0700`, entfernt `DAC_OVERRIDE` und `FOWNER` aus dem Container und verbietet `chmod` auf persistenten `/data`-Pfaden.
+
 ## 0.1.31 — Kein `chmod` auf HA-Mountverzeichnissen
 
 - Behebt den erneut beobachteten Startabbruch `chmod: /data/state: Operation not permitted`. Die vorherige Korrektur führte `chmod` weiterhin auf dem eingebundenen `/data`-Volume aus und war daher für das tatsächliche Home-Assistant-Mountverhalten nicht robust genug.
