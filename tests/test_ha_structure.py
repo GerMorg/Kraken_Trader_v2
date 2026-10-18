@@ -82,6 +82,7 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "chown 0:0 /data" in run_script
     assert "chmod 0755 /data" in run_script
     assert "chmod -R go-rwx /data/state /data/logs" in run_script
+    assert 'su-exec "${APP_UID}:${APP_GID}" chmod -R go-rwx /data/state /data/logs' in run_script
     assert "[ ! -w /data/state ]" in run_script and "[ ! -w /data/logs ]" in run_script
     assert "[ ! -w /config/reports/tax/AT ]" in run_script
     assert "LEGACY_DB=/data/kraken_trader.sqlite3" in run_script
