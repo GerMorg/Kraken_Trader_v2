@@ -107,8 +107,12 @@ jobs:
           SH
           chmod 0755 "${RUNNER_TEMP}/deny-mounted-chmod/chmod"
           echo "Mounted-path chmod denial guard enabled for container startup."
+          set +e
           output="$(docker run --rm --cap-drop DAC_OVERRIDE --cap-drop FOWNER --mount type=bind,source="${RUNNER_TEMP}/kraken-data",target=/data --mount type=bind,source="${RUNNER_TEMP}/deny-mounted-chmod",target=/probe,readonly -e PATH=/probe:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --tmpfs /config:rw,uid=0,gid=0,mode=755 kraken-trader-v2:ci --healthcheck 2>&1)"
+          container_status=$?
+          set -e
           printf '%s\n' "$output"
+          test "$container_status" -eq 0 || { echo "FAIL: restricted-capability container startup exited $container_status"; exit "$container_status"; }
           printf '%s\n' "$output" | grep -F "uid=10001 gid=10001"
           printf '%s\n' "$output" | grep -F '"credentials_present":true'
           sudo test -f "${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3" || { echo "FAIL: migrated database missing"; sudo find "${RUNNER_TEMP}/kraken-data" -maxdepth 4 -printf "%u:%g %m %p\n"; exit 1; }
