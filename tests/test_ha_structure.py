@@ -77,12 +77,15 @@ def test_container_startup_has_explicit_module_path_and_build_smoke_test():
     assert "except OSError as exc:" in run_script
     assert 'if [ "$(id -u)" -eq 0 ]; then' in run_script
     assert 'exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"' in run_script
-    assert "find /data -mindepth 1 -maxdepth 1 ! -name options.json" in run_script
+    assert "STATE_DB=/data/state/kraken_trader.sqlite3" in run_script
+    assert "MIGRATION_MARKER=/data/state/.legacy_sqlite_migration" in run_script
+    assert "chown 0:0 /data" in run_script
+    assert "chmod 0755 /data" in run_script
     assert "KRTR_OPTIONS_FILE=/run/kraken-trader-options.json" in run_script
     assert "apk add --no-cache su-exec" in dockerfile
 
     workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "docker run --rm --user 10001:10001 --tmpfs /data:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" in workflow
+    assert "docker run --rm --user 10001:10001 --tmpfs /data/state:rw,uid=10001,gid=10001,mode=700 --tmpfs /data/logs:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" in workflow
     assert "docker run --rm --mount type=bind,source=" in workflow
     assert "target=/data --tmpfs /config:rw,uid=0,gid=0,mode=700 kraken-trader-v2:ci --healthcheck 2>&1" in workflow
     assert 'grep -F "uid=10001 gid=10001"' in workflow
@@ -102,6 +105,9 @@ def test_apparmor_profile_grants_runtime_paths_without_disabling_confinement():
     assert "/opt/kraken-trader/app/ r," in profile
     assert "/opt/kraken-trader/app/** r," in profile
     assert "/config/** rwk," in profile
+    assert "/data/ rw," in profile
+    assert "/data/state/ rwk," in profile
+    assert "/data/logs/ rwk," in profile
     assert "/data/** rwk," in profile
     assert "#include <abstractions/nameservice>" in profile
     assert "network inet stream," in profile
