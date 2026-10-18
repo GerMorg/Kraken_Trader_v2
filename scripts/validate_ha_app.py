@@ -138,18 +138,18 @@ else:
         errors.append("Dockerfile must expose BUILD_VERSION for startup diagnostics")
     if "mkdir -p /data/state /data/logs" not in dockerfile:
         errors.append("Dockerfile must create dedicated state and log directories")
-    if "STATE_DB=/data/state/private/kraken_trader.sqlite3" not in run_script or "LEGACY_MIGRATION_MARKER=/data/state/.legacy_sqlite_migration" not in run_script or "PRIVATE_MIGRATION_MARKER=/data/state/.private_state_migration" not in run_script:
-        errors.append("entrypoint must migrate legacy SQLite state into the private directory before dropping root")
-    if "chown 0:0 /data" not in run_script or "chmod 0755 /data" in run_script:
-        errors.append("data mount root must remain root-owned without chmod on the HA mount")
-    if "umask 077" not in run_script or "LEGACY_DB=/data/kraken_trader.sqlite3" not in run_script or "PREVIOUS_DB=/data/state/kraken_trader.sqlite3" not in run_script:
-        errors.append("SQLite state must be migrated and private child directories created under a restrictive umask")
+    if "STATE_DB=/data/state/kraken_trader.sqlite3" not in run_script or "MIGRATION_MARKER=/data/state/.legacy_sqlite_migration" not in run_script:
+        errors.append("entrypoint must migrate legacy SQLite state before dropping root")
+    if "chown 0:0 /data/state /data/logs" not in run_script or "chmod 0755 /data" in run_script:
+        errors.append("entrypoint must prepare existing state/log mountpoints without chmod on the /data mount")
+    if "umask 077" not in run_script or "LEGACY_DB=/data/kraken_trader.sqlite3" not in run_script:
+        errors.append("state creation must use a restrictive umask and migrate the legacy database")
     if any(line.strip().startswith("chmod ") and "/data" in line for line in run_script.splitlines()):
         errors.append("entrypoint must not invoke chmod on mounted /data paths")
-    if 'export KRTR_STATE_DIR=/data/state/private' not in run_script or 'export KRTR_LOG_DIR=/data/logs/private' not in run_script:
-        errors.append("entrypoint must pass private state and log paths to the runtime")
+    if 'export KRTR_STATE_DIR=/data/state' not in run_script or 'export KRTR_LOG_DIR=/data/logs' not in run_script:
+        errors.append("entrypoint must pass the existing state and log mountpoints to the runtime")
     if '[ ! -w "$STATE_DIR" ]' not in run_script or "[ ! -w /config/reports/tax/AT ]" not in run_script or "[ -w /data ]" not in run_script:
-        errors.append("entrypoint must verify writable private paths and a non-writable data mount root")
+        errors.append("entrypoint must verify writable state/log mountpoints and a non-writable data mount root")
     if "apk add --no-cache su-exec" not in dockerfile or 'exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"' not in run_script:
         errors.append("default container startup must drop root privileges with su-exec")
     if 'if [ "$(id -u)" -eq 0 ]; then' not in run_script:
@@ -166,9 +166,7 @@ else:
         "/config/** rwk,",
         "/data/ rw,",
         "/data/state/ rwk,",
-        "/data/state/private/ rwk,",
         "/data/logs/ rwk,",
-        "/data/logs/private/ rwk,",
         "/data/** rwk,",
         "network inet stream,",
         "network inet dgram,",
@@ -195,8 +193,8 @@ else:
         errors.append("CI must assert that Python starts as the dedicated unprivileged UID")
     if 'grep -F \'"credentials_present":true\'' not in ci_workflow:
         errors.append("CI must verify the private options copy is parsed without exposing secret values")
-    if "legacy_probe" not in ci_workflow or "preserved" not in ci_workflow or "0:0:400" not in ci_workflow or "state/private/kraken_trader.sqlite3" not in ci_workflow or "state/private" not in ci_workflow or "logs/private" not in ci_workflow:
-        errors.append("CI must verify legacy SQLite migration preserves data and protects options.json")
+    if "legacy_probe" not in ci_workflow or "preserved" not in ci_workflow or "0:0:400" not in ci_workflow or "state/kraken_trader.sqlite3" not in ci_workflow or "state/private" in ci_workflow or "logs/private" in ci_workflow:
+        errors.append("CI must verify legacy SQLite migration to the existing state mount preserves data and protects options.json")
     if "SIMULATED_HA_MOUNT_CHMOD_DENIAL" not in ci_workflow or "deny-mounted-chmod" not in ci_workflow:
         errors.append("CI must simulate EPERM for chmod on mounted /data paths")
     if "&& /run.sh --healthcheck" not in dockerfile:
