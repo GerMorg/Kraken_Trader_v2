@@ -361,14 +361,13 @@ def reconcile_trade_ledger_coverage(
         refs = _valid_ledger_references(row.get("ledgers"))
         gap_token = "TRADE_LEDGER_REFERENCES_MISSING:" + fingerprint
         evidence = row.get("_ledger_reference_evidence")
-        empty_query_evidence = (
+        cached_query_evidence = (
             isinstance(evidence, dict)
             and evidence.get("source") in {
+                "QUERY_TRADES_LEDGER_FIELD_MISSING",
                 "QUERY_TRADES_EMPTY_PENDING_LEDGER_CHECK",
                 "QUERY_TRADES_EMPTY_CONFIRMED",
             }
-            and evidence.get("ledgers_field_present") is True
-            and evidence.get("ledgers_count") == 0
         )
         previously_confirmed_empty = (
             isinstance(evidence, dict)
@@ -382,9 +381,9 @@ def reconcile_trade_ledger_coverage(
         elif previously_confirmed_empty and trade_history_complete and ledger_history_complete:
             trade_gaps.discard(gap_token)
             confirmed_empty_fingerprints.add(fingerprint)
-        elif empty_query_evidence:
-            # The exact QueryTrades response is already persisted. Do not repeat the
-            # same API call every cycle while waiting for complete Ledger evidence.
+        elif cached_query_evidence:
+            # A prior exact QueryTrades response is persisted. Do not repeat an
+            # unchanged lookup every cycle while independent Ledger evidence is pending.
             trade_gaps.add(gap_token)
         else:
             trade_gaps.add(gap_token)
@@ -418,6 +417,30 @@ def reconcile_trade_ledger_coverage(
                     "trade_id_fingerprint": fingerprint,
                     "outcome": "QUERY_TRADES_LEDGER_FIELD_MISSING",
                 })
+                validation_error = _trade_validation_error(trade_id, row)
+                if validation_error is not None:
+                    trade_rows_query_invalid += 1
+                    query_outcomes.append({
+                        "trade_id_fingerprint": fingerprint,
+                        "outcome": "QUERY_TRADES_ROW_INVALID:" + validation_error,
+                    })
+                    continue
+                # Persist the exact valid trade payload and the missing-field outcome.
+                # This is diagnostic evidence only: it does not resolve the ledger gap
+                # or release the new-risk gate, but prevents redundant API calls.
+                row_to_save = {
+                    **row,
+                    "_ledger_reference_evidence": {
+                        "source": "QUERY_TRADES_LEDGER_FIELD_MISSING",
+                        "ledgers_field_present": False,
+                    },
+                }
+                if not _save_trade(trade_id, row_to_save, persistence):
+                    trade_rows_query_invalid += 1
+                    query_outcomes.append({
+                        "trade_id_fingerprint": fingerprint,
+                        "outcome": "QUERY_TRADES_ROW_NOT_SAVED",
+                    })
                 continue
             refs = _valid_ledger_references(row.get("ledgers"))
             if refs is None:
