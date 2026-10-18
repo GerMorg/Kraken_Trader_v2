@@ -193,8 +193,8 @@ else:
         errors.append("CI must assert that Python starts as the dedicated unprivileged UID")
     if 'grep -F \'"credentials_present":true\'' not in ci_workflow:
         errors.append("CI must verify the private options copy is parsed without exposing secret values")
-    if "legacy_probe" not in ci_workflow or "preserved" not in ci_workflow or "0:0:400" not in ci_workflow or "state/kraken_trader.sqlite3" not in ci_workflow or "state/private" in ci_workflow or "logs/private" in ci_workflow:
-        errors.append("CI must verify legacy SQLite migration to the existing state mount preserves data and protects options.json")
+    if "legacy_probe" not in ci_workflow or "preserved" not in ci_workflow or "0:0:400" not in ci_workflow or "state/kraken_trader.sqlite3" not in ci_workflow or "state/private" in ci_workflow or "logs/private" in ci_workflow or "--cap-drop DAC_OVERRIDE --cap-drop FOWNER" not in ci_workflow:
+        errors.append("CI must verify legacy migration and simulate restricted mounted directory traversal")
     if "SIMULATED_HA_MOUNT_CHMOD_DENIAL" not in ci_workflow or "deny-mounted-chmod" not in ci_workflow:
         errors.append("CI must simulate EPERM for chmod on mounted /data paths")
     if "&& /run.sh --healthcheck" not in dockerfile:
