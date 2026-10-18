@@ -8,6 +8,10 @@ profile kraken_margin_trader flags=(attach_disconnected,mediate_deleted) {
   # Python executable and runtime libraries.
   /usr/local/bin/python rix,
   /usr/local/bin/python3* rix,
+  /sbin/su-exec ix,
+  capability chown,
+  capability setgid,
+  capability setuid,
   /usr/** mr,
   /bin/** rix,
   /lib/** mr,
