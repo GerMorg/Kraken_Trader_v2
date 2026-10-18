@@ -2,6 +2,7 @@
 
 ## Tatsächliche Bausteine
 
+- `run.sh`/Container: Der Entrypoint kann von Home Assistant als root gestartet werden, bereitet nur die App-Daten- und Steuerexport-Unterordner vor und wechselt vor Ausführung des Python-Traders über `su-exec` auf UID/GID `10001:10001`. `/data/options.json` bleibt root-owned und wird für den Prozess als temporäre Datei mit Modus `0400` unter `/run` bereitgestellt. Ein fehlgeschlagener Besitzwechsel stoppt den Start.
 - `app/config.py`: Konfigurationsparsing und source-owned absolute Risikodeckel.
 - `app/kraken.py`: Kraken Spot Public-/Private-REST, Signatur, persistente Nonce-Schnittstelle, Mehrdeutigkeit nach Submit-Timeout und History-Endpunkte `TradesHistory`/`Ledgers`.
 - `app/history_sync.py`: persistente offsetbasierte, paginierte und idempotente Erst- und Folgesynchronisierung von Trades und Ledger, mit festem Zeitfenster, begrenztem Seitenbudget je Zyklus und Fail-Closed bei ungültigen Ergebnissen.
