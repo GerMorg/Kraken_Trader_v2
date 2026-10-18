@@ -187,7 +187,7 @@ else:
 
     ci_path = root / ".github" / "workflows" / "ci.yml"
     ci_workflow = ci_path.read_text(encoding="utf-8")
-    if "docker run --rm --user 10001:10001 --tmpfs /data/state:rw,uid=10001,gid=10001,mode=700 --tmpfs /data/logs:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" not in ci_workflow:
+    if "docker run --rm --user 10001:10001 --tmpfs /data/state:rw,uid=10001,gid=10001,mode=700 --tmpfs /data/logs:rw,uid=10001,gid=10001,mode=700 --tmpfs /config:rw,uid=10001,gid=10001,mode=700 kraken-trader-v2:ci --healthcheck" not in ci_workflow:
         errors.append("CI must run the entrypoint directly as an unprivileged user with writable temporary data")
     if "docker run --rm --mount type=bind,source=" not in ci_workflow or "target=/data --tmpfs /config:rw,uid=0,gid=0,mode=755 kraken-trader-v2:ci --healthcheck 2>&1" not in ci_workflow:
         errors.append("CI must exercise privilege dropping with root-owned writable mounts")
@@ -197,6 +197,8 @@ else:
         errors.append("CI must verify the private options copy is parsed without exposing secret values")
     if "legacy_probe" not in ci_workflow or "preserved" not in ci_workflow or "0:0:400" not in ci_workflow or "state/private/kraken_trader.sqlite3" not in ci_workflow or "state/private" not in ci_workflow or "logs/private" not in ci_workflow:
         errors.append("CI must verify legacy SQLite migration preserves data and protects options.json")
+    if "SIMULATED_HA_MOUNT_CHMOD_DENIAL" not in ci_workflow or "deny-mounted-chmod" not in ci_workflow:
+        errors.append("CI must simulate EPERM for chmod on mounted /data paths")
     if "&& /run.sh --healthcheck" not in dockerfile:
         errors.append("Dockerfile build must execute the real startup bootstrap healthcheck")
     if "docker run --rm --entrypoint /run.sh" in ci_workflow:
