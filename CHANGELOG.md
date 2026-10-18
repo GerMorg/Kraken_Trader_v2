@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.30 — Rechteänderung auf HA-Mounts ohne Root-CAP_FOWNER
+
+- Behebt den Startabbruch `chmod: /data/state: Operation not permitted` und die entsprechende Meldung für `/data/logs`.
+- Nach dem `chown` wird `chmod -R go-rwx` mit `su-exec` als UID/GID `10001:10001` ausgeführt. Damit ändert der Verzeichniseigentümer die Rechte, statt sich auf Root-Capabilities zu verlassen, die Home Assistant beim Containerstart einschränken kann.
+- Der Trader läuft weiterhin ausschließlich als unprivilegierter Benutzer; die sichere Abbruchprüfung für Datenbank, AppLog und Steuerexportpfad bleibt aktiv.
+- Tests und HA-Strukturvalidator verlangen ausdrücklich, dass die Rechteänderung als Eigentümer ausgeführt wird. Der vollständige CI-Container-Smoke-Test deckt den Standardstart samt Datenbankmigration ab.
+
 ## 0.1.29 — Standardstart als unprivilegierter Benutzer
 
 - Das HA-Container-Entrypoint bereitet nur `/data/state`, `/data/logs` und `/config/reports/tax` für UID/GID `10001:10001` vor und startet danach den Python-Prozess als diesen unprivilegierten Benutzer.
