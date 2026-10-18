@@ -16,18 +16,29 @@ def _decimal(value: Any) -> Decimal | None:
     return parsed if parsed.is_finite() else None
 
 
-def _history_ready(persistence: Any) -> tuple[bool, list[str]]:
+def _history_ready(persistence: Any) -> tuple[bool, list[str], list[str]]:
     pending: list[str] = []
+    quality_gap_sources: list[str] = []
     for source in ("TRADES", "LEDGERS", "CLOSED_ORDERS"):
         state = persistence.history_sync_state(source)
+        if state is None:
+            pending.append(source)
+            continue
+
         if (
-            state is None
-            or not bool(state.get("initial_backfill_complete"))
+            not bool(state.get("initial_backfill_complete"))
             or not bool(state.get("generation_complete"))
             or state.get("last_error")
         ):
             pending.append(source)
-    return not pending, pending
+
+        quality_gaps = state.get("quality_gaps")
+        if not isinstance(quality_gaps, list) or quality_gaps:
+            quality_gap_sources.append(source)
+            if source not in pending:
+                pending.append(source)
+
+    return not pending, pending, quality_gap_sources
 
 
 def _snapshot_epoch(snapshot: dict[str, Any]) -> Decimal | None:
@@ -220,6 +231,7 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
         "missing_related_ledgers": 0,
         "history_ready": False,
         "pending_history_sources": [],
+        "history_quality_gap_sources": [],
         "position_fill_reconciliation_complete": False,
         "full_portfolio_reconciliation": False,
     }
@@ -242,11 +254,16 @@ def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
         persistence.record_event("POSITION_FILL_RECONCILIATION_SUMMARY", result)
         return result
 
-    ready, pending = _history_ready(persistence)
+    ready, pending, quality_gap_sources = _history_ready(persistence)
     result["history_ready"] = ready
     result["pending_history_sources"] = pending
+    result["history_quality_gap_sources"] = quality_gap_sources
     if not ready:
-        result["status"] = "HISTORY_BACKFILL_PENDING"
+        result["status"] = (
+            "HISTORY_DATA_QUALITY_GAP"
+            if quality_gap_sources
+            else "HISTORY_BACKFILL_PENDING"
+        )
         result["positions_checked"] = len(positions)
         persistence.record_event("POSITION_FILL_RECONCILIATION_SUMMARY", result)
         return result
