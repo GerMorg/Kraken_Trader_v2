@@ -174,7 +174,7 @@ else:
         errors.append("CI must exercise privilege dropping with root-owned writable mounts")
     if 'grep -F "uid=10001 gid=10001"' not in ci_workflow:
         errors.append("CI must assert that Python starts as the dedicated unprivileged UID")
-    if '''grep -F '"credentials_present":true' '''.strip() not in ci_workflow:
+    if 'grep -F \'"credentials_present":true\'' not in ci_workflow:
         errors.append("CI must verify the private options copy is parsed without exposing secret values")
     if "&& /run.sh --healthcheck" not in dockerfile:
         errors.append("Dockerfile build must execute the real startup bootstrap healthcheck")
