@@ -17,7 +17,7 @@ COPY run.sh /run.sh
 RUN chmod 0755 /run.sh \
   && chmod 0755 /opt/kraken-trader \
   && chmod -R a+rX /opt/kraken-trader/app \
-  && mkdir -p /data/logs
+  && mkdir -p /data/state /data/logs
 
 # Fail the image build rather than shipping a container whose Python entrypoint
 # cannot import the application package. This catches incorrect copy/context paths.
