@@ -15,25 +15,49 @@ APP_GID=10001
 if [ "$(id -u)" -eq 0 ]; then
   mkdir -p /data/state /data/logs /config/reports/tax/AT /run
 
-  # Move the legacy database and SQLite sidecars as a single startup migration.
-  # If both old and new database files exist, stop rather than choose stale state.
+  # Move the legacy database into a private state subdirectory. A durable
+  # marker lets startup finish the migration safely after an interrupted restart.
   LEGACY_DB=/data/kraken_trader.sqlite3
   STATE_DB=/data/state/kraken_trader.sqlite3
-  if [ -f "${LEGACY_DB}" ]; then
+  MIGRATION_MARKER=/data/state/.legacy_sqlite_migration
+  if [ -f "${LEGACY_DB}" ] && [ ! -f "${MIGRATION_MARKER}" ]; then
     if [ -e "${STATE_DB}" ]; then
       echo "FATAL: both legacy and state SQLite databases exist; manual reconciliation required." >&2
       exit 1
     fi
     for suffix in -wal -shm -journal; do
+      if [ -e "/data/state/kraken_trader.sqlite3${suffix}" ]; then
+        echo "FATAL: destination SQLite sidecar exists before migration; manual reconciliation required." >&2
+        exit 1
+      fi
+    done
+    : > "${MIGRATION_MARKER}"
+  fi
+  if [ -f "${MIGRATION_MARKER}" ]; then
+    if [ -e "${LEGACY_DB}" ] && [ -e "${STATE_DB}" ]; then
+      echo "FATAL: legacy and state SQLite databases both exist during migration." >&2
+      exit 1
+    fi
+    if [ -f "${LEGACY_DB}" ]; then
+      mv "${LEGACY_DB}" "${STATE_DB}"
+    elif [ ! -f "${STATE_DB}" ]; then
+      echo "FATAL: SQLite migration marker exists but neither database is present." >&2
+      exit 1
+    fi
+    for suffix in -wal -shm -journal; do
       if [ -e "${LEGACY_DB}${suffix}" ]; then
+        if [ -e "/data/state/kraken_trader.sqlite3${suffix}" ]; then
+          echo "FATAL: SQLite sidecar collision during migration; manual reconciliation required." >&2
+          exit 1
+        fi
         mv "${LEGACY_DB}${suffix}" "/data/state/kraken_trader.sqlite3${suffix}"
       fi
     done
-    mv "${LEGACY_DB}" "${STATE_DB}"
+    rm "${MIGRATION_MARKER}"
   fi
   for suffix in -wal -shm -journal; do
     if [ -e "${LEGACY_DB}${suffix}" ]; then
-      echo "FATAL: orphaned SQLite sidecar exists without the legacy database." >&2
+      echo "FATAL: orphaned legacy SQLite sidecar exists; manual reconciliation required." >&2
       exit 1
     fi
   done
