@@ -77,11 +77,29 @@ jobs:
       - name: Verify default entrypoint drops root before Python startup
         shell: bash
         run: |
-          mkdir -p "${RUNNER_TEMP}/kraken-data"
-          printf '{"kraken_api_key":"ci-test-key","kraken_api_secret":"ci-test-secret"}\n' > "${RUNNER_TEMP}/kraken-data/options.json"
-          sudo chown -R 0:0 "${RUNNER_TEMP}/kraken-data"
-          sudo chmod 0400 "${RUNNER_TEMP}/kraken-data/options.json"
-          output="$(docker run --rm --mount type=bind,source="${RUNNER_TEMP}/kraken-data",target=/data --tmpfs /config:rw,uid=0,gid=0,mode=700 kraken-trader-v2:ci --healthcheck 2>&1)"
+          mkdir -p "\${RUNNER_TEMP}/kraken-data"
+          printf '{"kraken_api_key":"ci-test-key","kraken_api_secret":"ci-test-secret"}\n' > "\${RUNNER_TEMP}/kraken-data/options.json"
+          python3 - "\${RUNNER_TEMP}/kraken-data/kraken_trader.sqlite3" <<'PY'
+          import sqlite3, sys
+          connection = sqlite3.connect(sys.argv[1])
+          connection.execute("CREATE TABLE legacy_probe (value TEXT NOT NULL)")
+          connection.execute("INSERT INTO legacy_probe VALUES ('preserved')")
+          connection.commit()
+          connection.close()
+          PY
+          sudo chown -R 0:0 "\${RUNNER_TEMP}/kraken-data"
+          sudo chmod 0400 "\${RUNNER_TEMP}/kraken-data/options.json"
+          output="$(docker run --rm --mount type=bind,source="\${RUNNER_TEMP}/kraken-data",target=/data --tmpfs /config:rw,uid=0,gid=0,mode=700 kraken-trader-v2:ci --healthcheck 2>&1)"
           printf '%s\n' "$output"
           printf '%s\n' "$output" | grep -F "uid=10001 gid=10001"
           printf '%s\n' "$output" | grep -F '"credentials_present":true'
+          test -f "\${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3"
+          test ! -e "\${RUNNER_TEMP}/kraken-data/kraken_trader.sqlite3"
+          test "$(stat -c '%u:%g:%a' "\${RUNNER_TEMP}/kraken-data/options.json")" = "0:0:400"
+          python3 - "\${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3" <<'PY'
+          import sqlite3, sys
+          connection = sqlite3.connect(sys.argv[1])
+          value = connection.execute("SELECT value FROM legacy_probe").fetchone()[0]
+          connection.close()
+          assert value == "preserved", value
+          PY
