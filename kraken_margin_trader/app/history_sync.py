@@ -371,8 +371,10 @@ def reconcile_trade_ledger_coverage(
             and evidence.get("ledgers_count") == 0
         )
         previously_confirmed_empty = (
-            empty_query_evidence
+            isinstance(evidence, dict)
             and evidence.get("source") == "QUERY_TRADES_EMPTY_CONFIRMED"
+            and evidence.get("ledgers_field_present") is True
+            and evidence.get("ledgers_count") == 0
             and evidence.get("full_ledger_history_checked") is True
         )
         if refs:
@@ -560,6 +562,9 @@ def reconcile_trade_ledger_coverage(
             order_txid = str(row.get("ordertxid", "")).strip()
             matching_order_refid_ids = sorted(ledger_ids_by_trade.get(order_txid, set()))
             evidence = row.get("_ledger_reference_evidence")
+            evidence_source = (
+                evidence.get("source") if isinstance(evidence, dict) else None
+            )
             query_explicit_empty = (
                 isinstance(evidence, dict)
                 and evidence.get("source") in {
@@ -589,7 +594,7 @@ def reconcile_trade_ledger_coverage(
                     })
                     continue
                 if can_confirm_empty_relations:
-                    already_confirmed = evidence.get("source") == "QUERY_TRADES_EMPTY_CONFIRMED"
+                    already_confirmed = evidence_source == "QUERY_TRADES_EMPTY_CONFIRMED"
                     confirmed_row = {
                         **row,
                         "_ledger_reference_evidence": {
