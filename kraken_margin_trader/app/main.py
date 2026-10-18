@@ -25,7 +25,7 @@ def main() -> int:
     parser.add_argument("--options",default=os.environ.get("KRTR_OPTIONS_FILE", "/data/options.json"))
     args=parser.parse_args()
     settings=Settings.from_file(args.options)
-    db=Persistence("/data/kraken_trader.sqlite3")
+    db=Persistence("/data/state/kraken_trader.sqlite3")
     audit=AuditLogger("/data/logs/events.jsonl")
     audit.emit("STARTUP_BEGIN",version=__version__,started_at=datetime.now(timezone.utc).isoformat(),
                config=settings.safe_summary())
@@ -43,7 +43,7 @@ def main() -> int:
     signal.signal(signal.SIGINT,stop_handler)
     audit.emit("STARTUP_STATUS",mode=settings.mode,credentials_present=settings.credentials_present,
                live_requested=settings.live_requested,internal_live_release=False,
-               log_path="/data/logs/events.jsonl",database="/data/kraken_trader.sqlite3",
+               log_path="/data/logs/events.jsonl",database="/data/state/kraken_trader.sqlite3",
                note="Unattended live order execution is not released in this version.")
     try:
         while running:
