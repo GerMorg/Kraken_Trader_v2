@@ -359,6 +359,85 @@ def test_empty_full_ledger_backfill_cannot_pass_when_trades_reference_ledgers():
     db.close()
 
 
+def test_query_trades_empty_ledger_list_is_confirmed_only_after_full_ledger_check():
+    db = Persistence(":memory:")
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    other_ledger = {**ledger(), "refid": "T-OTHER"}
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-EMPTY-RELATION": missing_refs}}},
+        ledger_pages={0: {"ledger": {"L-OTHER": other_ledger}}},
+    )
+    sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+    client.query_trades_info = lambda trade_ids, *, include_ledgers=True: {
+        "T-EMPTY-RELATION": {**missing_refs, "ledgers": []}
+    }
+    client.query_ledgers_info = lambda ledger_ids: {}
+
+    result = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert result["status"] == "COMPLETE"
+    assert result["trade_rows_query_empty_ledgers"] == 1
+    assert result["trade_rows_confirmed_empty"] == 1
+    assert result["missing_trade_references"] == 0
+    assert result["trade_quality_gap_count"] == 0
+    assert db.history_sync_state("TRADES")["quality_gaps"] == []
+    fill = db.fills()[0]
+    saved = fill["raw"]["raw"]
+    assert saved["ledgers"] == []
+    assert saved["_ledger_reference_evidence"]["source"] == "QUERY_TRADES_EMPTY_CONFIRMED"
+    assert saved["_ledger_reference_evidence"]["full_ledger_history_checked"] is True
+    tax_event = db.tax_events_for_year(2026)[0]
+    assert tax_event["payload"]["related_ledger_ids"] == []
+    assert tax_event["payload"]["related_ledger_ids_missing"] is False
+    resolved = db.connection.execute(
+        "SELECT COUNT(*) AS n FROM events WHERE name=?",
+        ("KRAKEN_HISTORY_DATA_QUALITY_GAP_RESOLVED",),
+    ).fetchone()["n"]
+    assert resolved == 1
+    db.close()
+
+
+def test_query_trades_empty_ledger_list_conflicts_with_matching_ledger_refid():
+    db = Persistence(":memory:")
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    linked_ledger = {**ledger(), "refid": "T-CONFLICT"}
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-CONFLICT": missing_refs}}},
+        ledger_pages={0: {"ledger": {"L-CONFLICT": linked_ledger}}},
+    )
+    sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+    client.query_trades_info = lambda trade_ids, *, include_ledgers=True: {
+        "T-CONFLICT": {**missing_refs, "ledgers": []}
+    }
+    client.query_ledgers_info = lambda ledger_ids: {}
+
+    result = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["missing_trade_references"] == 1
+    assert any(
+        item.startswith("TRADE_LEDGER_REFERENCE_SOURCE_CONFLICT:")
+        for item in db.history_sync_state("TRADES")["quality_gaps"]
+    )
+    assert any(
+        item["outcome"] == "QUERY_TRADES_EMPTY_BUT_LEDGER_REFID_MATCHES"
+        for item in result["trade_query_outcomes"]
+    )
+    db.close()
+
+
 def test_trade_history_missing_margin_field_is_incomplete_not_guessed_as_spot():
     db = Persistence(":memory:")
     missing_margin = trade()
