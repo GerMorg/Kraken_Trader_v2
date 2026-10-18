@@ -8,18 +8,42 @@ APP_INIT="${APP_DIR}/__init__.py"
 APP_UID=10001
 APP_GID=10001
 
-# Home Assistant starts add-on containers as root by default. Prepare only the
-# add-on's writable state/export directories, keep Supervisor-managed options
-# root-owned, then re-enter this wrapper as the dedicated unprivileged user.
+# Home Assistant starts add-on containers as root by default. Root is used
+# only to migrate legacy SQLite state and prepare narrowly scoped writable dirs.
+# The mount root and Supervisor-managed options stay root-owned and non-writable
+# by the trading process; Python itself always runs as the dedicated UID/GID.
 if [ "$(id -u)" -eq 0 ]; then
-  mkdir -p /data/logs /config/reports/tax/AT /run
-  chown "${APP_UID}:${APP_GID}" /data
-  find /data -mindepth 1 -maxdepth 1 ! -name options.json \
-    -exec chown -R "${APP_UID}:${APP_GID}" {} \;
-  chown -R "${APP_UID}:${APP_GID}" /config/reports/tax
+  mkdir -p /data/state /data/logs /config/reports/tax/AT /run
 
-  # options.json can contain exchange credentials. Copy it to the container's
-  # ephemeral /run and make the copy readable only by the application UID.
+  # Move the legacy database and SQLite sidecars as a single startup migration.
+  # If both old and new database files exist, stop rather than choose stale state.
+  LEGACY_DB=/data/kraken_trader.sqlite3
+  STATE_DB=/data/state/kraken_trader.sqlite3
+  if [ -f "${LEGACY_DB}" ]; then
+    if [ -e "${STATE_DB}" ]; then
+      echo "FATAL: both legacy and state SQLite databases exist; manual reconciliation required." >&2
+      exit 1
+    fi
+    for suffix in -wal -shm -journal; do
+      if [ -e "${LEGACY_DB}${suffix}" ]; then
+        mv "${LEGACY_DB}${suffix}" "/data/state/kraken_trader.sqlite3${suffix}"
+      fi
+    done
+    mv "${LEGACY_DB}" "${STATE_DB}"
+  fi
+  for suffix in -wal -shm -journal; do
+    if [ -e "${LEGACY_DB}${suffix}" ]; then
+      echo "FATAL: orphaned SQLite sidecar exists without the legacy database." >&2
+      exit 1
+    fi
+  done
+
+  chown -R "${APP_UID}:${APP_GID}" /data/state /data/logs /config/reports/tax
+  chown 0:0 /data
+  chmod 0755 /data
+
+  # Keep the Supervisor options file root-owned and unreadable to the app UID.
+  # Pass only an ephemeral, owner-readable copy to the application process.
   if [ -f /data/options.json ]; then
     cp /data/options.json /run/kraken-trader-options.json
     chown "${APP_UID}:${APP_GID}" /run/kraken-trader-options.json
