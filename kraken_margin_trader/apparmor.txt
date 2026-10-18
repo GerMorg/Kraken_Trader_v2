@@ -44,9 +44,7 @@ profile kraken_margin_trader flags=(attach_disconnected,mediate_deleted) {
   /config/** rwk,
   /data/ rw,
   /data/state/ rwk,
-  /data/state/private/ rwk,
   /data/logs/ rwk,
-  /data/logs/private/ rwk,
 
   # Kraken HTTPS and DNS (IPv4/IPv6). No raw or packet sockets are granted.
   network inet stream,

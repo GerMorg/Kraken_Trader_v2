@@ -2,7 +2,7 @@
 
 ## Tatsächliche Bausteine
 
-- `run.sh`/Container: Der Entrypoint kann von Home Assistant als root gestartet werden, erstellt `/data/state/private` und `/data/logs/private` unter `umask 077` und führt **kein `chmod` auf den gemounteten Daten-/Logverzeichnissen** aus. SQLite wird mitsamt Seitendateien in den privaten Zustandspfad migriert; der AppLog liegt im privaten Logpfad. Vor dem Python-Start wechselt `su-exec` auf UID/GID `10001:10001`; `/data` bleibt root-owned und muss für diesen Benutzer nicht beschreibbar sein. `/data/options.json` bleibt root-owned und wird als temporäre Datei mit Modus `0400` unter `/run` bereitgestellt. Ein fehlgeschlagener Besitzwechsel oder ein nicht beschreibbarer Pflichtpfad stoppt den Start.
+- `run.sh`/Container: Der Entrypoint verwendet `/data/state` und `/data/logs` direkt; er erzeugt dort keine Kindverzeichnisse und führt niemals `chmod` auf `/data`-Pfaden aus. Für die kontrollierte Legacy-Datenbankmigration werden die vorhandenen Mountverzeichnisse während der root-Phase vorübergehend root-owned gemacht, danach werden Verzeichnis- und oberste Dateieigentümer an UID/GID `10001:10001` zurückgegeben, ohne in historische, möglicherweise nicht durchsuchbare Unterverzeichnisse abzusteigen. SQLite liegt unter `/data/state/kraken_trader.sqlite3`, der AppLog unter `/data/logs/events.jsonl`. `/data/options.json` bleibt root-owned und wird als temporäre Datei mit Modus `0400` unter `/run` bereitgestellt. Ein fehlgeschlagener Besitzwechsel oder ein nicht beschreibbarer Pflichtpfad stoppt den Start.
 - `app/config.py`: Konfigurationsparsing und source-owned absolute Risikodeckel.
 - `app/kraken.py`: Kraken Spot Public-/Private-REST, Signatur, persistente Nonce-Schnittstelle, Mehrdeutigkeit nach Submit-Timeout und History-Endpunkte `TradesHistory`/`Ledgers`.
 - `app/history_sync.py`: persistente offsetbasierte, paginierte und idempotente Erst- und Folgesynchronisierung von Trades und Ledger, mit festem Zeitfenster, begrenztem Seitenbudget je Zyklus und Fail-Closed bei ungültigen Ergebnissen.
@@ -14,8 +14,8 @@
 - `app/risk.py`: risikobasierte Notionalgröße und unabhängiges Entry-Gate.
 - `app/execution.py`: Order-Intent, strikte Parametervalidierung, persistente Order-State-Machine und zentrale Order Authority. Es gibt keinen separaten Compile-Time-Release-Schalter; unabhängige Laufzeit-Gates blockieren aktuell reguläre Entries.
 - `app/portfolio.py`: richtungsgetrennte Brutto-/Nettoexposure-Aggregation, streng geprüfte Margin-Lots, paarbezogene Mengensicherheit und Kennzeichnung erwarteter (nicht kontobestätigter) EWR-Finanzierungswährung.
-- `app/persistence.py`: SQLite/WAL unter `/data/state/private/kraken_trader.sqlite3`, Bar-/Ereignis-/Intent-/Fill-/Ledger-/Steuerhistorie und persistente Circuit Breaker. Das Container-Entrypoint migriert den älteren Datenbankpfad samt SQLite-Seitendateien vor dem UID-Wechsel, erhält Root-Eigentum des Mount-Parents und bricht bei widersprüchlichen Datenbankzuständen ab.
-- `app/audit.py`: JSONL in stdout und rotierender Datei `/data/logs/private/events.jsonl` mit Secret-Redaktion.
+- `app/persistence.py`: SQLite/WAL unter `/data/state/kraken_trader.sqlite3`, Bar-/Ereignis-/Intent-/Fill-/Ledger-/Steuerhistorie und persistente Circuit Breaker. Das Container-Entrypoint migriert den älteren Datenbankpfad samt SQLite-Seitendateien vor dem UID-Wechsel, erhält Root-Eigentum des Mount-Parents und bricht bei widersprüchlichen Datenbankzuständen ab.
+- `app/audit.py`: JSONL in stdout und rotierender Datei `/data/logs/events.jsonl` mit Secret-Redaktion.
 - `app/backtest.py`: eingeschränkter OHLCV-Szenario-Simulator.
 - `app/tax.py`: Jahres-Export JSON/CSV/Markdown mit Datenlücken- und manuellen Prüfhinweisen.
 - `app/runtime.py`, `app/main.py`: Zyklussteuerung, Startdiagnose und kontrolliertes Stoppen.

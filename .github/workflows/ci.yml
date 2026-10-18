@@ -77,7 +77,7 @@ jobs:
       - name: Verify default entrypoint drops root before Python startup
         shell: bash
         run: |
-          mkdir -p "${RUNNER_TEMP}/kraken-data"
+          mkdir -p "${RUNNER_TEMP}/kraken-data/state" "${RUNNER_TEMP}/kraken-data/logs"
           printf '{"kraken_api_key":"ci-test-key","kraken_api_secret":"ci-test-secret"}\n' > "${RUNNER_TEMP}/kraken-data/options.json"
           python3 - "${RUNNER_TEMP}/kraken-data/kraken_trader.sqlite3" <<'PY'
           import sqlite3, sys
@@ -87,8 +87,11 @@ jobs:
           connection.commit()
           connection.close()
           PY
-          sudo chown -R 0:0 "${RUNNER_TEMP}/kraken-data"
+          sudo chown 0:0 "${RUNNER_TEMP}/kraken-data"
+          sudo chown 0:0 "${RUNNER_TEMP}/kraken-data/options.json" "${RUNNER_TEMP}/kraken-data/kraken_trader.sqlite3"
           sudo chmod 0400 "${RUNNER_TEMP}/kraken-data/options.json"
+          sudo chown 10001:10001 "${RUNNER_TEMP}/kraken-data/state" "${RUNNER_TEMP}/kraken-data/logs"
+          sudo chmod 0700 "${RUNNER_TEMP}/kraken-data/state" "${RUNNER_TEMP}/kraken-data/logs"
           mkdir -p "${RUNNER_TEMP}/deny-mounted-chmod"
           cat > "${RUNNER_TEMP}/deny-mounted-chmod/chmod" <<'SH'
           #!/bin/sh
@@ -104,18 +107,21 @@ jobs:
           SH
           chmod 0755 "${RUNNER_TEMP}/deny-mounted-chmod/chmod"
           echo "Mounted-path chmod denial guard enabled for container startup."
-          output="$(docker run --rm --mount type=bind,source="${RUNNER_TEMP}/kraken-data",target=/data --mount type=bind,source="${RUNNER_TEMP}/deny-mounted-chmod",target=/probe,readonly -e PATH=/probe:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --tmpfs /config:rw,uid=0,gid=0,mode=755 kraken-trader-v2:ci --healthcheck 2>&1)"
+          set +e
+          output="$(docker run --rm --cap-drop DAC_OVERRIDE --cap-drop FOWNER --mount type=bind,source="${RUNNER_TEMP}/kraken-data",target=/data --mount type=bind,source="${RUNNER_TEMP}/deny-mounted-chmod",target=/probe,readonly -e PATH=/probe:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --tmpfs /config:rw,uid=0,gid=0,mode=755 kraken-trader-v2:ci --healthcheck 2>&1)"
+          container_status=$?
+          set -e
           printf '%s\n' "$output"
+          test "$container_status" -eq 0 || { echo "FAIL: restricted-capability container startup exited $container_status"; exit "$container_status"; }
           printf '%s\n' "$output" | grep -F "uid=10001 gid=10001"
           printf '%s\n' "$output" | grep -F '"credentials_present":true'
-          sudo test -f "${RUNNER_TEMP}/kraken-data/state/private/kraken_trader.sqlite3" || { echo "FAIL: migrated database missing"; sudo find "${RUNNER_TEMP}/kraken-data" -maxdepth 4 -printf "%u:%g %m %p\n"; exit 1; }
+          sudo test -f "${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3" || { echo "FAIL: migrated database missing"; sudo find "${RUNNER_TEMP}/kraken-data" -maxdepth 4 -printf "%u:%g %m %p\n"; exit 1; }
           sudo test ! -e "${RUNNER_TEMP}/kraken-data/kraken_trader.sqlite3" || { echo "FAIL: legacy database path still exists"; exit 1; }
-          sudo test ! -e "${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3" || { echo "FAIL: previous database path still exists"; exit 1; }
           actual="$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data")"; echo "data mount mode=$actual"; test "$actual" = "0:0:755" || { echo "FAIL: data mount root not protected"; exit 1; }
           actual="$(stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/options.json")"; echo "options mode=$actual"; test "$actual" = "0:0:400" || { echo "FAIL: Supervisor options file changed"; exit 1; }
-          actual="$(sudo stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/state/private")"; echo "private state directory mode=$actual"; test "$actual" = "10001:10001:700" || { echo "FAIL: private state directory permissions"; exit 1; }
-          actual="$(sudo stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/logs/private")"; echo "private logs directory mode=$actual"; test "$actual" = "10001:10001:700" || { echo "FAIL: private logs directory permissions"; exit 1; }
-          sudo python3 - "${RUNNER_TEMP}/kraken-data/state/private/kraken_trader.sqlite3" <<'PY'
+          actual="$(sudo stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/state")"; echo "state directory mode=$actual"; test "$actual" = "10001:10001:700" || { echo "FAIL: state directory permissions"; exit 1; }
+          actual="$(sudo stat -c '%u:%g:%a' "${RUNNER_TEMP}/kraken-data/logs")"; echo "logs directory mode=$actual"; test "$actual" = "10001:10001:700" || { echo "FAIL: logs directory permissions"; exit 1; }
+          sudo python3 - "${RUNNER_TEMP}/kraken-data/state/kraken_trader.sqlite3" <<'PY'
           import sqlite3, sys
           connection = sqlite3.connect(sys.argv[1])
           value = connection.execute("SELECT value FROM legacy_probe").fetchone()[0]
