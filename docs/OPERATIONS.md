@@ -4,7 +4,7 @@
 
 1. In Home Assistant **Einstellungen → Apps → App-Repository hinzufügen** öffnen.
 2. `https://github.com/GerMorg/Kraken_Trader_v2` als benutzerdefiniertes Repository hinzufügen und den Store aktualisieren.
-3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.25` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.25` zeigen; andernfalls läuft noch nicht das neue Image. Anschließend starten und das App-Protokoll prüfen.
+3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.26` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.26` zeigen; andernfalls läuft noch nicht das neue Image. Anschließend starten und das App-Protokoll prüfen.
 4. `mode: SHADOW`, `live_enabled: false` und `kill_switch: true` beibehalten.
 5. Für die erste Datenerfassung einen Kraken-API-Key mit den erforderlichen **Lese-Rechten** konfigurieren. Keine Auszahlungsrechte und zunächst keine Handelsrechte aktivieren.
 
@@ -13,6 +13,12 @@
 Das strukturierte Ereignis `KRAKEN_TRADE_LEDGER_RECONCILIATION` zeigt die Anzahl der nachgefragten und wiederhergestellten Trade- und Ledger-Verknüpfungen sowie verbleibende Lücken. `KRAKEN_HISTORY_DATA_QUALITY_GAP_RESOLVED` protokolliert eine konkret reparierte Verknüpfung. `TRADE_LEDGER_COVERAGE_INCOMPLETE:ALL_TRADES` oder `LEDGER_HISTORY_COVERAGE_INCOMPLETE:EMPTY_FULL_BACKFILL` bedeutet, dass die Datenquellen noch nicht konsistent sind.
 
 Die App nutzt Kraken-Cursor für die Ledger-Historie und fragt einzelne Trade-/Ledger-IDs begrenzt nach. Wenn sich der gesamte Ledger-Backfill als leer erweist, obwohl Trades vorhanden sind, wird er erneut gestartet. Diese Sperren nicht manuell aus der SQLite-Datenbank entfernen. Bis sämtliche Quellen und das Gesamtportfolio vollständig abgeglichen sind, bleiben `mode: SHADOW`, `live_enabled: false` und `kill_switch: true` aktiv.
+
+## Diagnose leerer Trade-Ledger-Listen in Version 0.1.26
+
+Im Ereignis `KRAKEN_TRADE_LEDGER_RECONCILIATION` zeigen `trade_query_outcomes` und die Zähler, ob eine Trade-ID bei `QueryTrades` fehlt, das `ledgers`-Feld fehlt, die Antwort ungültig ist oder Kraken eine leere Liste zurückgibt. Es werden nur kurze SHA-256-Fingerprints protokolliert, keine Trade-IDs.
+
+Eine explizit leere Liste wird nur dann als geklärt behandelt, wenn der vollständige Trade- und Ledger-Backfill erfolgreich ist und kein Ledger-Eintrag mit derselben `refid` existiert. Wenn QueryTrades eine leere Liste meldet, aber der Ledger-Bestand eine passende `refid` enthält, wird `TRADE_LEDGER_REFERENCE_SOURCE_CONFLICT` protokolliert und die Sperre bleibt bestehen. Die Anzahl der bestätigten leeren Relationen steht in `trade_rows_confirmed_empty`.
 
 ## Containerstart in Version 0.1.18
 

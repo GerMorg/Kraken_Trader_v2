@@ -325,11 +325,32 @@ def reconcile_trade_ledger_coverage(
     api_errors: list[str] = []
     trade_rows_queried = 0
     trade_rows_recovered = 0
+    trade_rows_query_empty_ledgers = 0
+    trade_rows_query_missing = 0
+    trade_rows_query_ledger_field_missing = 0
+    trade_rows_query_invalid = 0
     ledger_ids_requested = 0
     ledger_rows_recovered = 0
     resolved_fingerprints: dict[str, str] = {}
+    query_outcomes: list[dict[str, str]] = []
+    confirmed_empty_fingerprints: set[str] = set()
+    conflicting_empty_fingerprints: set[str] = set()
 
     initial_fills = persistence.fills()
+    initial_ledger_events = persistence.ledger_events()
+    trade_history_complete = (
+        trade_state.get("initial_backfill_complete") is True
+        and trade_state.get("generation_complete") is True
+        and trade_state.get("last_error") is None
+    )
+    ledger_history_complete = (
+        ledger_state.get("initial_backfill_complete") is True
+        and ledger_state.get("generation_complete") is True
+        and ledger_state.get("last_error") is None
+        and not ledger_gaps
+        and bool(initial_ledger_events)
+    )
+
     missing_trade_rows: list[tuple[str, str]] = []
     for fill in initial_fills:
         trade_id = str(fill.get("trade_id", "")).strip()
@@ -339,11 +360,35 @@ def reconcile_trade_ledger_coverage(
         fingerprint = _trade_id_fingerprint(trade_id)
         refs = _valid_ledger_references(row.get("ledgers"))
         gap_token = "TRADE_LEDGER_REFERENCES_MISSING:" + fingerprint
-        if refs is None or not refs:
+        evidence = row.get("_ledger_reference_evidence")
+        empty_query_evidence = (
+            isinstance(evidence, dict)
+            and evidence.get("source") in {
+                "QUERY_TRADES_EMPTY_PENDING_LEDGER_CHECK",
+                "QUERY_TRADES_EMPTY_CONFIRMED",
+            }
+            and evidence.get("ledgers_field_present") is True
+            and evidence.get("ledgers_count") == 0
+        )
+        previously_confirmed_empty = (
+            isinstance(evidence, dict)
+            and evidence.get("source") == "QUERY_TRADES_EMPTY_CONFIRMED"
+            and evidence.get("ledgers_field_present") is True
+            and evidence.get("ledgers_count") == 0
+            and evidence.get("full_ledger_history_checked") is True
+        )
+        if refs:
+            trade_gaps.discard(gap_token)
+        elif previously_confirmed_empty and trade_history_complete and ledger_history_complete:
+            trade_gaps.discard(gap_token)
+            confirmed_empty_fingerprints.add(fingerprint)
+        elif empty_query_evidence:
+            # The exact QueryTrades response is already persisted. Do not repeat the
+            # same API call every cycle while waiting for complete Ledger evidence.
+            trade_gaps.add(gap_token)
+        else:
             trade_gaps.add(gap_token)
             missing_trade_rows.append((trade_id, fingerprint))
-        else:
-            trade_gaps.discard(gap_token)
 
     # Query exact trade IDs, not the completed history cursor again.
     query_trades = missing_trade_rows[:max_trade_queries]
@@ -355,19 +400,72 @@ def reconcile_trade_ledger_coverage(
         except Exception as exc:
             api_errors.append("QUERY_TRADES_FAILED:" + type(exc).__name__)
             response = {}
-        if isinstance(response, dict):
-            for trade_id, fingerprint in query_trades:
-                row = response.get(trade_id)
-                if not isinstance(row, dict):
-                    continue
-                refs = _valid_ledger_references(row.get("ledgers"))
-                if refs is None or _trade_validation_error(trade_id, row) is not None:
-                    continue
-                if not _save_trade(trade_id, row, persistence):
-                    continue
-                if refs:
-                    trade_rows_recovered += 1
-                    resolved_fingerprints[fingerprint] = "QUERY_TRADES"
+        if not isinstance(response, dict):
+            api_errors.append("QUERY_TRADES_INVALID_RESPONSE")
+            response = {}
+        for trade_id, fingerprint in query_trades:
+            row = response.get(trade_id)
+            if not isinstance(row, dict):
+                trade_rows_query_missing += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "TRADE_ID_NOT_RETURNED_BY_QUERY_TRADES",
+                })
+                continue
+            if "ledgers" not in row:
+                trade_rows_query_ledger_field_missing += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "QUERY_TRADES_LEDGER_FIELD_MISSING",
+                })
+                continue
+            refs = _valid_ledger_references(row.get("ledgers"))
+            if refs is None:
+                trade_rows_query_invalid += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "QUERY_TRADES_LEDGER_FIELD_INVALID",
+                })
+                continue
+            validation_error = _trade_validation_error(trade_id, row)
+            if validation_error is not None:
+                trade_rows_query_invalid += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "QUERY_TRADES_ROW_INVALID:" + validation_error,
+                })
+                continue
+
+            row_to_save = dict(row)
+            if not refs:
+                # The endpoint explicitly returned an empty relation. Do not release
+                # the risk gate until a complete Ledger history independently confirms
+                # that no Ledger row has this trade's reference ID.
+                row_to_save["_ledger_reference_evidence"] = {
+                    "source": "QUERY_TRADES_EMPTY_PENDING_LEDGER_CHECK",
+                    "ledgers_field_present": True,
+                    "ledgers_count": 0,
+                }
+                trade_rows_query_empty_ledgers += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "QUERY_TRADES_RETURNED_EMPTY_LEDGER_LIST",
+                })
+            else:
+                # A fresh non-empty exchange result invalidates any prior empty-list
+                # confirmation before the referenced IDs are checked.
+                row_to_save.pop("_ledger_reference_evidence", None)
+
+            if not _save_trade(trade_id, row_to_save, persistence):
+                trade_rows_query_invalid += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "QUERY_TRADES_ROW_NOT_SAVED",
+                })
+                continue
+            if refs:
+                trade_rows_recovered += 1
+                resolved_fingerprints[fingerprint] = "QUERY_TRADES"
 
     # Read trade references only from the nested authoritative exchange payload.
     referenced_ledger_ids: set[str] = set()
@@ -443,30 +541,96 @@ def reconcile_trade_ledger_coverage(
             if ledger_id and refid:
                 ledger_ids_by_trade.setdefault(refid, set()).add(ledger_id)
 
+        can_confirm_empty_relations = (
+            trade_history_complete
+            and ledger_history_complete
+            and full_ledger_window
+            and not empty_full_ledger_conflict
+            and not ledger_gaps
+            and bool(final_ledger_ids)
+        )
         for fill in persistence.fills():
             trade_id = str(fill.get("trade_id", "")).strip()
             row = _trade_row_from_fill(fill)
             if not trade_id or row is None:
                 continue
+            fingerprint = _trade_id_fingerprint(trade_id)
             refs = _valid_ledger_references(row.get("ledgers"))
             if refs:
                 continue
             related_ids = sorted(ledger_ids_by_trade.get(trade_id, set()))
-            if not related_ids:
-                continue
-            derived_row = {
-                **row,
-                "ledgers": related_ids,
-                "_ledger_reference_evidence": {
-                    "source": "FULL_LEDGER_REFID_MATCH",
-                    "verified_by_exchange_refid": True,
-                },
-            }
-            if _trade_validation_error(trade_id, derived_row) is None and _save_trade(
-                trade_id, derived_row, persistence
-            ):
-                resolved_fingerprints[_trade_id_fingerprint(trade_id)] = "LEDGER_REFID_MATCH"
-                trade_rows_recovered += 1
+            order_txid = str(row.get("ordertxid", "")).strip()
+            matching_order_refid_ids = sorted(ledger_ids_by_trade.get(order_txid, set()))
+            evidence = row.get("_ledger_reference_evidence")
+            evidence_source = (
+                evidence.get("source") if isinstance(evidence, dict) else None
+            )
+            query_explicit_empty = (
+                isinstance(evidence, dict)
+                and evidence.get("source") in {
+                    "QUERY_TRADES_EMPTY_PENDING_LEDGER_CHECK",
+                    "QUERY_TRADES_EMPTY_CONFIRMED",
+                }
+                and evidence.get("ledgers_field_present") is True
+                and evidence.get("ledgers_count") == 0
+            )
+
+            if query_explicit_empty:
+                conflict_outcome = None
+                if related_ids:
+                    conflict_outcome = "QUERY_TRADES_EMPTY_BUT_LEDGER_REFID_MATCHES"
+                elif matching_order_refid_ids:
+                    # A refid that matches the order ID may cover multiple partial
+                    # fills. It is not safe to assign those ledger IDs to one fill,
+                    # but its existence contradicts an asserted empty relation.
+                    conflict_outcome = "QUERY_TRADES_EMPTY_BUT_LEDGER_ORDER_REFID_MATCHES"
+                if conflict_outcome is not None:
+                    conflicting_empty_fingerprints.add(fingerprint)
+                    confirmed_empty_fingerprints.discard(fingerprint)
+                    trade_gaps.add("TRADE_LEDGER_REFERENCE_SOURCE_CONFLICT:" + fingerprint)
+                    query_outcomes.append({
+                        "trade_id_fingerprint": fingerprint,
+                        "outcome": conflict_outcome,
+                    })
+                    continue
+                if can_confirm_empty_relations:
+                    already_confirmed = evidence_source == "QUERY_TRADES_EMPTY_CONFIRMED"
+                    confirmed_row = {
+                        **row,
+                        "_ledger_reference_evidence": {
+                            "source": "QUERY_TRADES_EMPTY_CONFIRMED",
+                            "ledgers_field_present": True,
+                            "ledgers_count": 0,
+                            "full_ledger_history_checked": True,
+                            "matching_ledger_refid_count": 0,
+                        },
+                    }
+                    if _save_trade(trade_id, confirmed_row, persistence):
+                        trade_gaps.discard("TRADE_LEDGER_REFERENCES_MISSING:" + fingerprint)
+                        trade_gaps.discard("TRADE_LEDGER_REFERENCE_SOURCE_CONFLICT:" + fingerprint)
+                        conflicting_empty_fingerprints.discard(fingerprint)
+                        confirmed_empty_fingerprints.add(fingerprint)
+                        if not already_confirmed:
+                            resolved_fingerprints[fingerprint] = "QUERY_TRADES_EMPTY_CONFIRMED"
+                    continue
+
+            if related_ids:
+                derived_row = {
+                    **row,
+                    "ledgers": related_ids,
+                    "_ledger_reference_evidence": {
+                        "source": "FULL_LEDGER_REFID_MATCH",
+                        "verified_by_exchange_refid": True,
+                    },
+                }
+                if _trade_validation_error(trade_id, derived_row) is None and _save_trade(
+                    trade_id, derived_row, persistence
+                ):
+                    trade_gaps.discard("TRADE_LEDGER_REFERENCES_MISSING:" + fingerprint)
+                    trade_gaps.discard("TRADE_LEDGER_REFERENCE_SOURCE_CONFLICT:" + fingerprint)
+                    conflicting_empty_fingerprints.discard(fingerprint)
+                    resolved_fingerprints[fingerprint] = "LEDGER_REFID_MATCH"
+                    trade_rows_recovered += 1
 
     # Re-evaluate from persistence after targeted queries and derived refid matching.
     final_fills = persistence.fills()
@@ -480,12 +644,19 @@ def reconcile_trade_ledger_coverage(
         refs = _valid_ledger_references(row.get("ledgers"))
         fingerprint = _trade_id_fingerprint(trade_id)
         gap_token = "TRADE_LEDGER_REFERENCES_MISSING:" + fingerprint
-        if not refs:
+        conflict_token = "TRADE_LEDGER_REFERENCE_SOURCE_CONFLICT:" + fingerprint
+        if refs:
+            trade_gaps.discard(gap_token)
+            trade_gaps.discard(conflict_token)
+            expected_ledger_ids.update(refs)
+        elif fingerprint in confirmed_empty_fingerprints and fingerprint not in conflicting_empty_fingerprints:
+            trade_gaps.discard(gap_token)
+            trade_gaps.discard(conflict_token)
+        else:
             missing_trade_fingerprints.add(fingerprint)
             trade_gaps.add(gap_token)
-        else:
-            trade_gaps.discard(gap_token)
-            expected_ledger_ids.update(refs)
+            if fingerprint in conflicting_empty_fingerprints:
+                trade_gaps.add(conflict_token)
 
     all_ledger_events = persistence.ledger_events()
     final_ledger_ids = {
@@ -495,7 +666,12 @@ def reconcile_trade_ledger_coverage(
     }
     missing_ledger_references = sorted(expected_ledger_ids - final_ledger_ids)
     coverage_gap = "TRADE_LEDGER_COVERAGE_INCOMPLETE:ALL_TRADES"
-    if missing_trade_fingerprints or missing_ledger_references or api_errors:
+    if (
+        missing_trade_fingerprints
+        or missing_ledger_references
+        or api_errors
+        or conflicting_empty_fingerprints
+    ):
         trade_gaps.add(coverage_gap)
     else:
         trade_gaps.discard(coverage_gap)
@@ -521,9 +697,14 @@ def reconcile_trade_ledger_coverage(
     persistence.save_history_sync_state(ledger_state)
 
     for fingerprint, resolution_source in sorted(resolved_fingerprints.items()):
+        reason = (
+            "TRADE_LEDGER_EMPTY_RELATION_CONFIRMED"
+            if resolution_source == "QUERY_TRADES_EMPTY_CONFIRMED"
+            else "TRADE_LEDGER_REFERENCES_RECOVERED"
+        )
         persistence.record_event("KRAKEN_HISTORY_DATA_QUALITY_GAP_RESOLVED", {
             "source": "TRADES",
-            "reason": "TRADE_LEDGER_REFERENCES_RECOVERED",
+            "reason": reason,
             "trade_id_fingerprint": fingerprint,
             "resolution_source": resolution_source,
             "new_risk_allowed": False,
@@ -545,6 +726,12 @@ def reconcile_trade_ledger_coverage(
         "status": "COMPLETE" if complete else "INCOMPLETE",
         "trade_rows_queried": trade_rows_queried,
         "trade_rows_recovered": trade_rows_recovered,
+        "trade_rows_query_empty_ledgers": trade_rows_query_empty_ledgers,
+        "trade_rows_query_missing": trade_rows_query_missing,
+        "trade_rows_query_ledger_field_missing": trade_rows_query_ledger_field_missing,
+        "trade_rows_query_invalid": trade_rows_query_invalid,
+        "trade_rows_confirmed_empty": len(confirmed_empty_fingerprints),
+        "trade_query_outcomes": query_outcomes,
         "ledger_ids_referenced": len(expected_ledger_ids),
         "ledger_ids_requested": ledger_ids_requested,
         "ledger_rows_recovered": ledger_rows_recovered,
