@@ -142,6 +142,8 @@ else:
         errors.append("entrypoint must migrate legacy SQLite state before dropping root")
     if "chown 0:0 /data" not in run_script or "chmod 0755 /data" not in run_script:
         errors.append("data mount root must remain non-writable by the app process")
+    if "chmod -R go-rwx /data/state /data/logs" not in run_script or "LEGACY_DB=/data/kraken_trader.sqlite3" not in run_script:
+        errors.append("SQLite state must be migrated and restricted before running as non-root")
     if "apk add --no-cache su-exec" not in dockerfile or 'exec su-exec "${APP_UID}:${APP_GID}" "$0" "$@"' not in run_script:
         errors.append("default container startup must drop root privileges with su-exec")
     if 'if [ "$(id -u)" -eq 0 ]; then' not in run_script:
@@ -185,6 +187,8 @@ else:
         errors.append("CI must assert that Python starts as the dedicated unprivileged UID")
     if 'grep -F \'"credentials_present":true\'' not in ci_workflow:
         errors.append("CI must verify the private options copy is parsed without exposing secret values")
+    if "legacy_probe" not in ci_workflow or "preserved" not in ci_workflow or "0:0:400" not in ci_workflow:
+        errors.append("CI must verify legacy SQLite migration preserves data and protects options.json")
     if "&& /run.sh --healthcheck" not in dockerfile:
         errors.append("Dockerfile build must execute the real startup bootstrap healthcheck")
     if "docker run --rm --entrypoint /run.sh" in ci_workflow:
