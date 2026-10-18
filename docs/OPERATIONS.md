@@ -1,5 +1,9 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.28 – kontrollierte erneute Abfrage fehlender Trade-Ledger-Referenzen
+
+Ungeklärte Antworten ohne `ledgers`-Feld werden nach sechs Stunden erneut über `QueryTrades` geprüft. Das Ereignis `KRAKEN_TRADE_LEDGER_RECONCILIATION` enthält `trade_rows_query_deferred` und `next_trade_query_retry_epoch`; das ist ein Statushinweis, kein Nachweis vollständiger Reconciliation. Datenqualitätslücken bleiben bestehen und neue Risikoerhöhungen bleiben blockiert, bis eine unabhängige Quelle die Zuordnung bestätigt.
+
 ## Version 0.1.27 – fehlendes `ledgers`-Feld
 
 Wenn `QueryTrades` eine gültige Trade-Zeile ohne `ledgers`-Feld liefert, persistiert die App jetzt die Antwort mit `QUERY_TRADES_LEDGER_FIELD_MISSING`. Das verhindert redundante Abfragen in jedem Zyklus, ohne die Historie als vollständig zu markieren. `missing_trade_references` und der History-Quality-Gap bleiben bestehen, bis eine unabhängige Quelle die Relation repariert. Ein gecachtes Diagnoseergebnis ist ausdrücklich kein Beleg für vollständige Reconciliation und erlaubt keine neuen Risikoerhöhungen.
