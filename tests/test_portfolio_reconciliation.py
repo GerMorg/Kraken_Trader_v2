@@ -222,6 +222,29 @@ def test_position_reconciliation_waits_for_backfill_without_false_failure():
     db.close()
 
 
+def test_position_reconciliation_blocks_when_history_quality_gaps_remain():
+    db = Persistence(":memory:")
+    db.record_account_snapshot(_snapshot(None))
+    _mark_history_complete(db)
+
+    trade_state = db.history_sync_state("TRADES")
+    assert trade_state is not None
+    trade_state["quality_gaps"] = ["TRADE_LEDGER_COVERAGE_INCOMPLETE:ALL_TRADES"]
+    db.save_history_sync_state(trade_state)
+
+    result = reconcile_positions_to_fills(db)
+
+    assert result["status"] == "HISTORY_DATA_QUALITY_GAP"
+    assert result["history_ready"] is False
+    assert result["pending_history_sources"] == ["TRADES"]
+    assert result["history_quality_gap_sources"] == ["TRADES"]
+    assert result["positions_checked"] == 0
+    assert result["position_fill_reconciliation_complete"] is False
+    assert result["close_fill_reconciliation_complete"] is False
+    assert not db.circuit_breakers()
+    db.close()
+
+
 def test_referenced_ledger_missing_from_history_trips_breaker():
     db = Persistence(":memory:")
     db.record_account_snapshot(_snapshot(_position()))
