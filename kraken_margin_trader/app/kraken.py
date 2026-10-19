@@ -330,12 +330,14 @@ class KrakenClient:
         self, method: str, params: dict[str, Any] | None = None, *, max_bytes: int = 20_000_000
     ) -> bytes:
         """Call a fixed private endpoint that returns a binary report rather than JSON."""
+        if method != "RetrieveExport":
+            raise ValueError("KRAKEN_BINARY_METHOD_NOT_ALLOWED")
         if not self.api_key or not self.api_secret:
             raise KrakenAPIError("KRAKEN_CREDENTIALS_MISSING")
         if max_bytes < 1:
             raise ValueError("KRAKEN_BINARY_RESPONSE_LIMIT_INVALID")
         with self._private_request_lock:
-            path = f"/0/private/{method}"
+            path = "/0/private/RetrieveExport"
             try:
                 payload: dict[str, Any] = {"nonce": int(self.nonce_provider())}
                 payload.update(dict(params or {}))
