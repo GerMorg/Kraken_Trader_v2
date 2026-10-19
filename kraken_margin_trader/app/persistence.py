@@ -800,8 +800,11 @@ class Persistence:
         ):
             raise ValueError("EXPORT_RECOVERY_TRADE_IDS_INVALID")
         raw_report_id = request.get("report_id")
-        report_id = str(raw_report_id).strip() if raw_report_id is not None else ""
-        report_id = report_id or None
+        report_id: str | None = None
+        if raw_report_id is not None:
+            candidate_report_id = str(raw_report_id).strip()
+            if candidate_report_id:
+                report_id = candidate_report_id
         requested_at_epoch = int(request.get("requested_at_epoch", time.time()))
         next_poll_epoch = int(request.get("next_poll_epoch", requested_at_epoch))
         attempt_count = int(request.get("attempt_count", 1))
