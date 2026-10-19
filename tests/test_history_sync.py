@@ -759,10 +759,13 @@ def test_missing_trade_ledger_field_is_retried_after_cooldown_and_can_recover():
         if key != "_ledger_reference_evidence"
     }
     recovered_row["ledgers"] = ["L-RECOVERED"]
+    client.targeted_trade_pages = {
+        None: {"trades": {"T-MISSING-FIELD-RETRY": recovered_row}, "cursor": {}},
+    }
 
     def query_trades_info(trade_ids, *, include_ledgers=True):
         calls.append((list(trade_ids), include_ledgers))
-        return {"T-MISSING-FIELD-RETRY": recovered_row}
+        return {}
 
     client.query_trades_info = query_trades_info
     client.query_ledgers_info = lambda ledger_ids: {}
@@ -770,11 +773,13 @@ def test_missing_trade_ledger_field_is_retried_after_cooldown_and_can_recover():
     result = reconcile_trade_ledger_coverage(client=client, persistence=db)
 
     assert result["status"] == "COMPLETE"
-    assert result["trade_rows_queried"] == 1
+    assert result["trade_rows_queried"] == 0
+    assert result["trade_rows_history_window_queried"] == 1
+    assert result["trade_rows_history_window_recovered"] == 1
     assert result["trade_rows_query_deferred"] == 0
     assert result["trade_rows_recovered"] == 1
     assert result["missing_trade_references"] == 0
-    assert calls == [(["T-MISSING-FIELD-RETRY"], True)]
+    assert calls == []
     saved = db.fills()[0]["raw"]["raw"]
     assert saved["ledgers"] == ["L-RECOVERED"]
     assert "_ledger_reference_evidence" not in saved
