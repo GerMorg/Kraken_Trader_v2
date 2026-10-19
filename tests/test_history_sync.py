@@ -852,6 +852,7 @@ def test_trade_export_recovery_restores_exact_trade_ledger_links(monkeypatch):
             self.export_request = None
             self.export_status_value = "Queued"
             self.export_archive = b""
+            self.raise_after_export_creation = True
 
         def request_export_report(self, *, description, start_epoch, end_epoch, report="trades"):
             self.export_request = {
@@ -860,6 +861,9 @@ def test_trade_export_recovery_restores_exact_trade_ledger_links(monkeypatch):
                 "end_epoch": end_epoch,
                 "report": report,
             }
+            if self.raise_after_export_creation:
+                # Simulate Kraken accepting AddExport but the client losing its response.
+                raise TimeoutError("simulated lost AddExport response")
             return {"id": "EXPORT-RECOVERY-1"}
 
         def export_status(self, *, report="trades"):
@@ -897,11 +901,16 @@ def test_trade_export_recovery_restores_exact_trade_ledger_links(monkeypatch):
     monkeypatch.setattr("app.history_sync.time.time", lambda: now[0])
     first = reconcile_trade_ledger_coverage(client=client, persistence=db)
     assert first["trade_export_supported"] is True
-    assert first["trade_export_requests_created"] == 1
+    assert first["trade_export_requests_created"] == 0
+    assert first["trade_export_requests_pending"] == 1
+    assert first["trade_export_errors"] == 1
     assert first["trade_export_rows_recovered"] == 0
     assert first["status"] == "INCOMPLETE"
     assert client.export_request is not None
     assert client.export_request["report"] == "trades"
+    saved_request = db.history_export_recovery_requests()[0]
+    assert saved_request["status"] == "REQUESTING"
+    assert saved_request["report_id"] is None
     assert client.export_request["start_epoch"] <= 1768000000
     assert client.export_request["end_epoch"] >= 1768000000
 
@@ -932,6 +941,7 @@ def test_trade_export_recovery_restores_exact_trade_ledger_links(monkeypatch):
         archive.writestr("trades.csv", output.getvalue().encode("utf-8"))
     client.export_archive = buffer.getvalue()
     client.export_status_value = "Processed"
+    client.raise_after_export_creation = False
     now[0] += 301
 
     recovered = reconcile_trade_ledger_coverage(client=client, persistence=db)
