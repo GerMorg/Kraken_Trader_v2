@@ -1021,7 +1021,7 @@ def test_trade_export_download_failures_are_bounded(monkeypatch):
         "fee_asset": None,
         "ts": "2026-01-09T09:46:40+00:00",
         "verified": True,
-        "raw": {"raw": missing_refs},
+        "raw": missing_refs,
     })
     db.save_history_export_recovery_request({
         "request_key": "recovery-retry-001",
