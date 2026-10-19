@@ -365,6 +365,51 @@ def test_empty_full_ledger_backfill_cannot_pass_when_trades_reference_ledgers():
     db.close()
 
 
+def test_targeted_trades_history_uses_cursor_and_exact_trade_id():
+    db = Persistence(":memory:")
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-CURSOR-TARGET": missing_refs}}},
+        ledger_pages={0: {"ledger": {"L-CURSOR": {**ledger(), "refid": "T-CURSOR-TARGET"}},
+                        "count": 1}},
+    )
+    sync_history_source(
+        client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
+    )
+    sync_history_source(
+        client=client, persistence=db, source="LEDGERS", page_budget=1, now_epoch=1769000000
+    )
+    unrelated = {**trade(), "ledgers": []}
+    client.targeted_trade_pages = {
+        None: {"trades": {"T-UNRELATED": unrelated}, "cursor": {"next": "WINDOW-CURSOR-2"}},
+        "WINDOW-CURSOR-2": {
+            "trades": {"T-CURSOR-TARGET": {**missing_refs, "ledgers": ["L-CURSOR"]}},
+            "cursor": {},
+        },
+    }
+    client.query_trades_info = lambda trade_ids, *, include_ledgers=True: {
+        "T-CURSOR-TARGET": dict(missing_refs)
+    }
+    client.query_ledgers_info = lambda ledger_ids: {}
+
+    result = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert result["status"] == "COMPLETE"
+    assert result["trade_rows_history_window_queried"] == 1
+    assert result["trade_rows_history_window_pages"] == 2
+    assert result["trade_rows_history_window_recovered"] == 1
+    assert result["missing_trade_references"] == 0
+    assert db.fills()[0]["raw"]["raw"]["ledgers"] == ["L-CURSOR"]
+    window_calls = [
+        call for call in client.calls
+        if call[0] == "TRADES" and call[2] is not None and call[3] is not None
+        and call[3] - call[2] <= 20
+    ]
+    assert [call[5] for call in window_calls] == [None, "WINDOW-CURSOR-2"]
+    db.close()
+
+
 def test_query_trades_empty_ledger_list_is_confirmed_only_after_full_ledger_check():
     db = Persistence(":memory:")
     missing_refs = trade()
