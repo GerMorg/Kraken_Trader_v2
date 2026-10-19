@@ -18,6 +18,8 @@ REFRESH_OVERLAP_SECONDS = 3600
 REFRESH_INTERVAL_SECONDS = 300
 QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS = 6 * 60 * 60
 TRADE_EXPORT_POLL_INTERVAL_SECONDS = 5 * 60
+# Kraken documents export generation as potentially taking up to one week.
+TRADE_EXPORT_MAX_PENDING_SECONDS = 7 * 24 * 60 * 60
 TRADE_EXPORT_MAX_UNCOMPRESSED_BYTES = 100_000_000
 TRADE_EXPORT_MAX_CSV_FILES = 20
 
@@ -561,10 +563,13 @@ def _recover_trade_ledgers_from_export(
             None,
         )
         if remote is None:
-            age = now_epoch - int(request.get("requested_at_epoch", now_epoch))
-            if str(request.get("status", "")).upper() == "REQUESTING" and age < TRADE_EXPORT_POLL_INTERVAL_SECONDS:
+            age = max(0, now_epoch - int(request.get("requested_at_epoch", now_epoch)))
+            if age < TRADE_EXPORT_MAX_PENDING_SECONDS:
+                # ExportStatus may not yet show a report whose AddExport response was
+                # lost or whose status list is temporarily delayed. Do not duplicate it.
+                pending_status = "QUEUED" if report_id else "REQUESTING"
                 persistence.save_history_export_recovery_request({
-                    **request, "status": "REQUESTING",
+                    **request, "status": pending_status,
                     "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
                     "last_error": "EXPORT_REPORT_NOT_VISIBLE_YET",
                 })
@@ -579,7 +584,7 @@ def _recover_trade_ledgers_from_export(
                 )
             persistence.save_history_export_recovery_request({
                 **request, "status": "REQUEST_FAILED", "next_poll_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
-                "last_error": "EXPORT_REPORT_NOT_FOUND",
+                "last_error": "EXPORT_REPORT_NOT_FOUND_AFTER_MAX_PENDING_TIME",
             })
             continue
 
@@ -816,18 +821,37 @@ def _recover_trade_ledgers_from_export(
             summary["trade_export_requests_created"] = int(summary["trade_export_requests_created"]) + 1
         except Exception as exc:
             error_code = str(exc)[:100] if isinstance(exc, ValueError) else type(exc).__name__
-            persistence.save_history_export_recovery_request({
-                **request, "status": "REQUEST_FAILED",
-                "next_poll_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
-                "last_error": "EXPORT_REQUEST_FAILED:" + error_code,
-            })
-            for trade_id in target_trade_ids:
-                _set_trade_export_evidence(
-                    persistence=persistence, trade_id=trade_id,
-                    source="TRADE_EXPORT_REQUEST_FAILED",
-                    outcome="EXPORT_REQUEST_FAILED:" + error_code,
-                    now_epoch=now_epoch,
-                )
+            exchange_error_code = str(getattr(exc, "code", ""))
+            definite_rejection = (
+                exchange_error_code.startswith("KRAKEN_PRIVATE:")
+                or exchange_error_code in {
+                    "KRAKEN_PRIVATE_SIGNING_CONFIGURATION_INVALID",
+                    "KRAKEN_CREDENTIALS_MISSING",
+                }
+            )
+            if definite_rejection:
+                persistence.save_history_export_recovery_request({
+                    **request, "status": "REQUEST_FAILED",
+                    "next_poll_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+                    "last_error": "EXPORT_REQUEST_REJECTED:" + error_code,
+                })
+                for trade_id in target_trade_ids:
+                    _set_trade_export_evidence(
+                        persistence=persistence, trade_id=trade_id,
+                        source="TRADE_EXPORT_REQUEST_FAILED",
+                        outcome="EXPORT_REQUEST_REJECTED:" + error_code,
+                        now_epoch=now_epoch,
+                    )
+            else:
+                # Timeout/transport/malformed-response outcomes are ambiguous: the
+                # exchange may have created the report. Retain REQUESTING and recover
+                # by its unique descriptor before considering another request.
+                persistence.save_history_export_recovery_request({
+                    **request, "status": "REQUESTING",
+                    "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
+                    "last_error": "EXPORT_REQUEST_OUTCOME_UNKNOWN:" + error_code,
+                })
+                summary["trade_export_requests_pending"] = int(summary["trade_export_requests_pending"]) + 1
             summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
 
     final_requests = persistence.history_export_recovery_requests()
