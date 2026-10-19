@@ -399,14 +399,16 @@ def _trade_export_ledger_references(
         ):
             return None, "TRADE_VALUE_CONFLICT:" + field
 
-    if "ledgers" not in exported:
+    if "ledgers" not in exported and "ledger" not in exported:
         return None, "LEDGER_FIELD_MISSING"
-    ledger_text = exported.get("ledgers", "").strip()
+    ledger_text = str(exported.get("ledgers", exported.get("ledger", "")) or "").strip()
     if not ledger_text:
         return [], "EMPTY_LEDGER_LIST"
+    ledger_tokens = re.split(r"[,;|\s]+", ledger_text.strip("[]() "))
     refs = [
-        item for item in re.split(r"[,;|\s]+", ledger_text.strip("[]() "))
-        if item
+        item.strip().strip('"').strip("'")
+        for item in ledger_tokens
+        if item.strip().strip('"').strip("'")
     ]
     if not refs or any(not re.fullmatch(r"[A-Za-z0-9-]+", item) for item in refs):
         return None, "LEDGER_IDS_INVALID"
