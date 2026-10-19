@@ -1178,13 +1178,13 @@ def reconcile_trade_ledger_coverage(
         evidence = row.get("_ledger_reference_evidence") if row is not None else None
         if not isinstance(evidence, dict):
             continue
-        source = evidence.get("source")
+        evidence_source = evidence.get("source")
         retry_after = _count(evidence.get("retry_after_epoch"))
         if retry_after is None or retry_after <= now_epoch:
             continue
-        if source in {"QUERY_TRADES_LEDGER_FIELD_MISSING", "QUERY_TRADES_LOOKUP_PENDING"}:
+        if evidence_source in {"QUERY_TRADES_LEDGER_FIELD_MISSING", "QUERY_TRADES_LOOKUP_PENDING"}:
             pending_query_retry_epochs.append(retry_after)
-        elif source in history_retry_sources:
+        elif evidence_source in history_retry_sources:
             pending_history_retry_epochs.append(retry_after)
     next_trade_query_retry_epoch = (
         min(pending_query_retry_epochs) if pending_query_retry_epochs else None
