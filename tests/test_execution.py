@@ -37,7 +37,42 @@ def test_settlement_requires_verified_currency_and_obligation():
     with pytest.raises(ValueError,match="SETTLEMENT_AMOUNT_NOT_VERIFIED"):
         build_add_order_params(intent,instrument(),validate_only=True)
 
-def test_live_submission_uses_explicit_operator_switches_without_hidden_release_constant():
+def test_live_submission_is_blocked_until_internal_release_even_with_operator_switches():
+    db = Persistence(":memory:")
+    stream = io.StringIO()
+    audit = AuditLogger(path="/definitely-invalid-root/events.jsonl", stream=stream)
+    client = KrakenClient()
+    calls = []
+    client.private = lambda method, params=None: calls.append((method, params)) or {"txid": ["O-LIVE-BLOCKED"]}
+    intent = OrderIntent.create(
+        decision_id="live-internal-release-blocked",
+        pair="XBTUSD",
+        action=Action.OPEN_MARGIN_LONG,
+        side="LONG",
+        volume=D("0.1"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+    )
+    authority = OrderAuthority(
+        client,
+        db,
+        Settings.from_mapping({"mode": "LIVE", "live_enabled": True, "kill_switch": False}),
+        audit,
+    )
+
+    with pytest.raises(LiveExecutionBlocked, match="INTERNAL_LIVE_EXECUTION_NOT_RELEASED"):
+        authority.execute(intent, instrument(), prechecks_passed=True, validate_only=False)
+
+    assert calls == []
+    assert db.intent_state(intent.intent_id) == "BLOCKED"
+    assert "LIVE_ORDER_BLOCKED_BY_INTERNAL_RELEASE" in stream.getvalue()
+    assert "order_submission_attempted" in stream.getvalue()
+    audit.close()
+    db.close()
+
+
+def test_live_submission_after_internal_release_uses_operator_switches(monkeypatch):
+    monkeypatch.setattr("app.execution.INTERNAL_LIVE_EXECUTION_RELEASED", True)
     db = Persistence(":memory:")
     audit = AuditLogger(path="/definitely-invalid-root/events.jsonl", stream=io.StringIO())
     client = KrakenClient()
@@ -234,7 +269,8 @@ def test_settlement_rejects_currency_or_ledger_mismatch():
         build_add_order_params(intent, instrument(), validate_only=True)
 
 
-def test_missing_add_order_txid_keeps_intent_unknown_not_rejected():
+def test_missing_add_order_txid_keeps_intent_unknown_not_rejected(monkeypatch):
+    monkeypatch.setattr("app.execution.INTERNAL_LIVE_EXECUTION_RELEASED", True)
     db = Persistence(":memory:")
     audit = AuditLogger(path="/definitely-invalid-root/events.jsonl", stream=io.StringIO())
     client = KrakenClient("k", "s")

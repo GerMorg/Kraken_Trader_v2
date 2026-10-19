@@ -32,6 +32,7 @@ def test_secret_values_are_not_in_safe_summary():
     })
     assert "key-do-not-log" not in str(config.safe_summary())
     assert "secret-do-not-log" not in str(config.safe_summary())
+    assert config.safe_summary()["internal_live_release"] is False
 
 
 def test_cash_reserve_can_be_increased_but_not_lowered():

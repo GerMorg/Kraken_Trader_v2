@@ -452,6 +452,12 @@ def test_runtime_probes_history_when_key_metadata_is_missing_and_keeps_position_
     assert "KRAKEN_HISTORY_SYNC_SKIPPED" not in logs
     assert "NEW_RISK_BLOCKED_HISTORY_INCOMPLETE" in logs
     assert "ACCOUNT_SNAPSHOT_PERSISTED" in logs
+    reconciled_events = [
+        json.loads(line) for line in logs.splitlines()
+        if line.strip() and '"event":"KRAKEN_HISTORY_RECONCILED"' in line
+    ]
+    assert reconciled_events
+    assert reconciled_events[-1]["payload"]["history_ready_for_entries"] is False
     assert '"action":"REDUCE_LONG"' in logs
     assert '"position_txid":"POSITION-1"' in logs
     assert "never-log-this" not in logs
@@ -460,6 +466,7 @@ def test_runtime_probes_history_when_key_metadata_is_missing_and_keeps_position_
         if line.strip() and '"event":"CYCLE_SUMMARY"' in line
     ]
     assert cycle_summaries
+    assert cycle_summaries[-1]["payload"]["internal_live_release"] is False
     audit.close()
     db.close()
 
