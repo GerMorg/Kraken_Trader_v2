@@ -2,7 +2,9 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.33
+## Aktueller Status — 0.1.34
+
+**Version 0.1.34 ergänzt für fehlende Trade-/Ledger-Verknüpfungen einen begrenzten Fallback über die dokumentierte Kraken TradesHistory-API mit ledgers=true. Die Abfrage verwendet ein enges Zeitfenster plus Cursor-Paginierung und akzeptiert ausschließlich die exakte Trade-ID. Nicht aufgelöste oder widersprüchliche Daten halten neue Risikoerhöhungen weiterhin gesperrt; diese Version erteilt keine Live-Trading-Freigabe.**
 
 **Version 0.1.33 korrigiert außerdem die Positions-Reconciliation: Abgeschlossene History-Paginierung gilt nicht als vollständig, solange Qualitätslücken wie fehlende Trade-/Ledger-Referenzen bestehen. Diese Quellen werden explizit protokolliert; dadurch wird keine Handelsfreigabe erteilt.**
 
