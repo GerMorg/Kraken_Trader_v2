@@ -1,5 +1,11 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.34 — gezielter Trade-/Ledger-Fallback
+
+Bei gespeicherten Trades ohne Ledger-Verknüpfung verwendet Version 0.1.34 zusätzlich eine gezielte Abfrage über Kraken TradesHistory. Dieser Fallback wird bei einem zuvor erfolglosen QueryTrades-Abruf sofort versucht; die frühere sechs-Stunden-Wartezeit blockiert ihn nicht. Die Anfrage nutzt ledgers=true, ein Zeitfenster von fünf Sekunden vor und nach dem gespeicherten Trade-Zeitpunkt und Cursor-Paginierung mit höchstens fünf Seiten. Es wird nur eine Antwort übernommen, deren Schlüssel exakt der erwarteten Trade-ID entspricht.
+
+Im Ereignis KRAKEN_TRADE_LEDGER_RECONCILIATION sind dazu folgende Felder sichtbar: trade_rows_history_window_queried, trade_rows_history_window_pages, trade_rows_history_window_recovered, trade_rows_history_window_ledger_field_missing, trade_rows_history_window_not_found, trade_rows_history_window_deferred und next_trade_history_retry_epoch. Wenn die Relation weiterhin fehlt, bleibt der Quality-Gap aktiv. Leere Listen werden nicht allein wegen einer erfolgreichen API-Antwort akzeptiert, sondern benötigen weiterhin den vollständigen unabhängigen Ledger-/refid-Abgleich.
+
 ## Version 0.1.32 – bestehende HA-Mounts direkt verwenden
 
 Version 0.1.31 hat nach den vorherigen Änderungen noch versucht, `/data/state/private` und `/data/logs/private` anzulegen. Auf den bestehenden, bereits auf UID/GID `10001:10001` und Modus `0700` gesetzten Mountverzeichnissen war das für den Root-Prozess nicht erlaubt. Version 0.1.32 legt deshalb keine Unterverzeichnisse unter `/data/state` und `/data/logs` an; der Trader nutzt diese Verzeichnisse direkt. Ihre Modi werden nicht geändert. Für den Migrationsschritt wird ihre Eigentümerschaft vorübergehend an root und vor dem Benutzerwechsel zurück an UID/GID `10001:10001` gegeben; Dateien auf der obersten Verzeichnisebene werden einzeln neu zugeordnet, ohne rekursiv in alte Unterverzeichnisse abzusteigen. Die Datenbank bleibt `/data/state/kraken_trader.sqlite3`, das AppLog `/data/logs/events.jsonl`. Aktualisiere auf Version `0.1.32` und prüfe im Startprotokoll `version=0.1.32` sowie `uid=10001 gid=10001`.
