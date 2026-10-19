@@ -1062,6 +1062,7 @@ def reconcile_trade_ledger_coverage(
     export_retry_seconds = QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS
     export_eligible_sources = {
         "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
+        "TRADE_EXPORT_REQUEST_PENDING",
         "TRADE_EXPORT_REQUEST_UNKNOWN",
         "TRADE_EXPORT_QUEUED",
         "TRADE_EXPORT_STATUS_MISSING",
@@ -1110,7 +1111,7 @@ def reconcile_trade_ledger_coverage(
             export_id = ""
 
         status_record: dict[str, Any] | None = None
-        if export_id or evidence_source == "TRADE_EXPORT_REQUEST_UNKNOWN":
+        if export_id or evidence_source in {"TRADE_EXPORT_REQUEST_PENDING", "TRADE_EXPORT_REQUEST_UNKNOWN"}:
             status_call = getattr(client, "export_report_status", None)
             if not callable(status_call):
                 unavailable = {
@@ -1163,7 +1164,7 @@ def reconcile_trade_ledger_coverage(
                         export_id = item_id
                     break
             if status_record is None:
-                if evidence_source == "TRADE_EXPORT_REQUEST_UNKNOWN":
+                if evidence_source in {"TRADE_EXPORT_REQUEST_PENDING", "TRADE_EXPORT_REQUEST_UNKNOWN"}:
                     unknown_checks = (_count(evidence.get("request_unknown_checks")) or 0) + 1
                     if unknown_checks < 3:
                         unknown_evidence = {
