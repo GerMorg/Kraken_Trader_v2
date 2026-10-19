@@ -118,6 +118,22 @@ class Persistence:
                     quality_gaps_json TEXT NOT NULL DEFAULT '[]',
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS history_export_recovery(
+                    request_key TEXT PRIMARY KEY,
+                    report_id TEXT UNIQUE,
+                    description TEXT NOT NULL UNIQUE,
+                    start_epoch INTEGER NOT NULL,
+                    end_epoch INTEGER NOT NULL,
+                    trade_ids_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    requested_at_epoch INTEGER NOT NULL,
+                    next_poll_epoch INTEGER NOT NULL,
+                    attempt_count INTEGER NOT NULL,
+                    last_error TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS history_export_recovery_status_idx
+                    ON history_export_recovery(status,next_poll_epoch);
                 CREATE TABLE IF NOT EXISTS circuit_breakers(name TEXT PRIMARY KEY,active INTEGER NOT NULL,reason TEXT NOT NULL,ts TEXT NOT NULL,detail_json TEXT NOT NULL);
             """)
             history_columns = {
@@ -130,7 +146,7 @@ class Persistence:
                     "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','5') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','6') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
@@ -739,6 +755,69 @@ class Persistence:
                     int(bool(state.get("initial_backfill_complete", False))),
                     int(bool(state.get("generation_complete", False))),
                     state.get("last_error"), _json(quality_gaps), _now(),
+                ),
+            )
+
+    def history_export_recovery_requests(self) -> list[dict[str, Any]]:
+        """Return durable Kraken trade-export recovery jobs without exposing file contents."""
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT request_key,report_id,description,start_epoch,end_epoch,trade_ids_json,"
+                "status,requested_at_epoch,next_poll_epoch,attempt_count,last_error,updated_at "
+                "FROM history_export_recovery ORDER BY requested_at_epoch,request_key"
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                trade_ids = json.loads(str(item.pop("trade_ids_json")))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                trade_ids = []
+                item["last_error"] = "EXPORT_RECOVERY_TRADE_IDS_STATE_INVALID"
+            if not isinstance(trade_ids, list) or any(
+                not isinstance(value, str) or not value.strip() for value in trade_ids
+            ):
+                trade_ids = []
+                item["last_error"] = "EXPORT_RECOVERY_TRADE_IDS_STATE_INVALID"
+            item["trade_ids"] = list(dict.fromkeys(value.strip() for value in trade_ids))
+            result.append(item)
+        return result
+
+    def save_history_export_recovery_request(self, request: dict[str, Any]) -> None:
+        """Persist export recovery progress before and after every asynchronous API step."""
+        request_key = str(request.get("request_key", "")).strip()
+        description = str(request.get("description", "")).strip()
+        start_epoch = int(request.get("start_epoch", -1))
+        end_epoch = int(request.get("end_epoch", -1))
+        trade_ids = request.get("trade_ids")
+        status = str(request.get("status", "")).strip().upper()
+        if not request_key or not description or not status:
+            raise ValueError("EXPORT_RECOVERY_REQUIRED_FIELD_MISSING")
+        if start_epoch < 0 or end_epoch < start_epoch:
+            raise ValueError("EXPORT_RECOVERY_TIME_WINDOW_INVALID")
+        if not isinstance(trade_ids, list) or not trade_ids or any(
+            not isinstance(value, str) or not value.strip() for value in trade_ids
+        ):
+            raise ValueError("EXPORT_RECOVERY_TRADE_IDS_INVALID")
+        report_id = str(request.get("report_id", "")).strip() or None
+        requested_at_epoch = int(request.get("requested_at_epoch", time.time()))
+        next_poll_epoch = int(request.get("next_poll_epoch", requested_at_epoch))
+        attempt_count = int(request.get("attempt_count", 1))
+        if requested_at_epoch < 0 or next_poll_epoch < 0 or attempt_count < 1:
+            raise ValueError("EXPORT_RECOVERY_RETRY_METADATA_INVALID")
+        with self.lock:
+            self.connection.execute(
+                "INSERT INTO history_export_recovery(request_key,report_id,description,start_epoch,end_epoch,"
+                "trade_ids_json,status,requested_at_epoch,next_poll_epoch,attempt_count,last_error,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(request_key) DO UPDATE SET "
+                "report_id=COALESCE(excluded.report_id,history_export_recovery.report_id),"
+                "status=excluded.status,next_poll_epoch=excluded.next_poll_epoch,"
+                "attempt_count=excluded.attempt_count,last_error=excluded.last_error,updated_at=excluded.updated_at",
+                (
+                    request_key, report_id, description, start_epoch, end_epoch,
+                    _json(list(dict.fromkeys(value.strip() for value in trade_ids))),
+                    status, requested_at_epoch, next_poll_epoch, attempt_count,
+                    request.get("last_error"), _now(),
                 ),
             )
 
