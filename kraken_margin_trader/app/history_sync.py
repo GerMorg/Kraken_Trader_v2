@@ -735,6 +735,9 @@ def _recover_trade_ledgers_from_export(
         "QUERY_TRADES_LEDGER_FIELD_MISSING",
         "QUERY_TRADES_LOOKUP_PENDING",
         "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
+        "TRADES_HISTORY_WINDOW_TRADE_ID_NOT_FOUND",
+        "TRADES_HISTORY_WINDOW_LOOKUP_FAILED",
+        "TRADES_HISTORY_WINDOW_PAGE_BUDGET_EXCEEDED",
     }
     for fill in persistence.fills():
         trade_id = str(fill.get("trade_id", "")).strip()
