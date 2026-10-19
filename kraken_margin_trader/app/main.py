@@ -10,7 +10,7 @@ from types import FrameType
 
 from app import __version__
 from app.audit import AuditLogger
-from app.config import Settings
+from app.config import INTERNAL_LIVE_EXECUTION_RELEASED, Settings
 from app.persistence import Persistence
 from app.runtime import TraderRuntime
 
@@ -46,7 +46,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM,stop_handler)
     signal.signal(signal.SIGINT,stop_handler)
     audit.emit("STARTUP_STATUS",mode=settings.mode,credentials_present=settings.credentials_present,
-               live_requested=settings.live_requested,internal_live_release=False,
+               live_requested=settings.live_requested,internal_live_release=INTERNAL_LIVE_EXECUTION_RELEASED,
                log_path=log_path,database=db_path,
                note="Unattended live order execution is not released in this version.")
     try:
