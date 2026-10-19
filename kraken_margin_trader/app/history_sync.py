@@ -1246,20 +1246,23 @@ def reconcile_trade_ledger_coverage(
                 )
                 created_id = str(response.get("id", "") or "").strip() if isinstance(response, dict) else ""
             except Exception as exc:
-                # The request may have reached Kraken even if its response was lost.
-                # The next cycle searches ExportStatus by this stable description first.
-                unknown_evidence = {
+                # Permission errors are definite and should not be retried as ambiguous exports.
+                # Network/time-out failures may have reached Kraken, so check status by description.
+                error_code = str(getattr(exc, "code", "") or "").upper()
+                permission_denied = "PERMISSION" in error_code or "INVALID KEY" in error_code
+                request_failure = {
                     **request_evidence,
-                    "source": "TRADE_EXPORT_REQUEST_UNKNOWN",
+                    "source": "TRADE_EXPORT_UNAVAILABLE" if permission_denied else "TRADE_EXPORT_REQUEST_UNKNOWN",
                     "last_attempt_outcome": "REQUEST_EXCEPTION:" + type(exc).__name__,
-                    "retry_after_epoch": now_epoch + 300,
-                    "request_unknown_checks": 0,
+                    "retry_after_epoch": now_epoch + (export_retry_seconds if permission_denied else 300),
                 }
-                _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": unknown_evidence}, persistence)
+                if not permission_denied:
+                    request_failure["request_unknown_checks"] = 0
+                _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": request_failure}, persistence)
                 trade_rows_export_failures += 1
                 query_outcomes.append({
                     "trade_id_fingerprint": fingerprint,
-                    "outcome": "TRADE_EXPORT_REQUEST_OUTCOME_UNKNOWN",
+                    "outcome": "TRADE_EXPORT_PERMISSION_DENIED" if permission_denied else "TRADE_EXPORT_REQUEST_OUTCOME_UNKNOWN",
                 })
                 continue
             if not created_id:
