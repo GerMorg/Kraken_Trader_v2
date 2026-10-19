@@ -9,7 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.audit import AuditLogger
-from app.config import Settings
+from app.config import INTERNAL_LIVE_EXECUTION_RELEASED, Settings
 from app.costs import estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
 from app.kraken import (
     KrakenAPIError, KrakenAmbiguousError, KrakenClient,
@@ -396,6 +396,23 @@ class TraderRuntime:
                         item.get("source") == "CLOSED_ORDERS" and not item.get("last_error")
                         for item in history_summaries
                     )
+                self.audit.emit(
+                    "KRAKEN_HISTORY_RECONCILED",
+                    cycle_id=cycle_id,
+                    history_ready_for_entries=history_ready_for_entries,
+                    evidence_gaps=history_evidence_gaps,
+                    source_summaries=[
+                        {
+                            "source": item.get("source"),
+                            "initial_backfill_complete": item.get("initial_backfill_complete"),
+                            "generation_complete": item.get("generation_complete"),
+                            "last_error": item.get("last_error"),
+                            "quality_gap_count": item.get("quality_gap_count", 0),
+                            "quality_gap_types": item.get("quality_gap_types", []),
+                        }
+                        for item in history_summaries
+                    ],
+                )
                 if not history_ready_for_entries:
                     self.audit.emit(
                         "NEW_RISK_BLOCKED_HISTORY_INCOMPLETE",
@@ -899,6 +916,9 @@ class TraderRuntime:
                 **counts,
                 "mode": self.settings.mode,
                 "live_requested": self.settings.live_requested,
+                "internal_live_release": INTERNAL_LIVE_EXECUTION_RELEASED,
+                "history_ready_for_entries": history_ready_for_entries,
+                "history_evidence_gaps": list(history_evidence_gaps),
                 "note": (
                     "Approved LIVE intents are routed to OrderAuthority when operator switches are active; "
                     "no fill is assumed from an acknowledged submission. Explicit history, cost, edge and "
