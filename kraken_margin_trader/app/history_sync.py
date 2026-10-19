@@ -281,6 +281,71 @@ def _ledger_row_from_event(event: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _lookup_trade_history_window(
+    *,
+    client: Any,
+    trade_id: str,
+    existing_row: dict[str, Any],
+    page_budget: int = 5,
+) -> tuple[dict[str, Any] | None, int, str, int | None, int | None]:
+    """Re-fetch one trade from TradesHistory with the documented ledgers option.
+
+    QueryTrades does not document the ledgers field. TradesHistory does, and supports
+    time bounds plus cursor pagination. Search a narrow window around the persisted
+    exchange timestamp, and only accept an exact trade-ID match.
+    """
+    if page_budget < 1 or page_budget > 20:
+        raise ValueError("TRADE_HISTORY_WINDOW_PAGE_BUDGET_OUT_OF_RANGE")
+    parsed_time = _timestamp(existing_row.get("time"))
+    if parsed_time is None:
+        return None, 0, "TRADE_TIME_INVALID", None, None
+    target_epoch = parsed_time[0]
+    start_epoch = max(0, target_epoch - 5)
+    end_epoch = target_epoch + 5
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+    pages = 0
+
+    while pages < page_budget:
+        try:
+            response = client.trades_history(
+                offset=0,
+                start=start_epoch,
+                end=end_epoch,
+                with_cursor=True,
+                cursor=cursor,
+            )
+        except Exception as exc:
+            return None, pages, "API_ERROR:" + type(exc).__name__, start_epoch, end_epoch
+        pages += 1
+        if not isinstance(response, dict):
+            return None, pages, "RESPONSE_INVALID", start_epoch, end_epoch
+        items = _result_items(response.get("trades"))
+        if items is None:
+            return None, pages, "TRADES_SHAPE_INVALID", start_epoch, end_epoch
+
+        matched_row = items.get(trade_id)
+        if isinstance(matched_row, dict):
+            return matched_row, pages, "TRADE_FOUND", start_epoch, end_epoch
+
+        cursor_payload = response.get("cursor")
+        if cursor_payload is None:
+            return None, pages, "TRADE_ID_NOT_RETURNED", start_epoch, end_epoch
+        if not isinstance(cursor_payload, dict):
+            return None, pages, "CURSOR_INVALID", start_epoch, end_epoch
+        next_cursor = cursor_payload.get("next")
+        if next_cursor is None:
+            return None, pages, "TRADE_ID_NOT_RETURNED", start_epoch, end_epoch
+        if not isinstance(next_cursor, str) or not next_cursor.strip():
+            return None, pages, "CURSOR_INVALID", start_epoch, end_epoch
+        if next_cursor == cursor or next_cursor in seen_cursors:
+            return None, pages, "CURSOR_REPEATED", start_epoch, end_epoch
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+
+    return None, pages, "PAGE_BUDGET_EXCEEDED", start_epoch, end_epoch
+
+
 def reconcile_trade_ledger_coverage(
     *,
     client: Any,
@@ -306,6 +371,15 @@ def reconcile_trade_ledger_coverage(
             "status": "HISTORY_STATE_MISSING",
             "trade_rows_queried": 0,
             "trade_rows_recovered": 0,
+            "trade_rows_history_window_queried": 0,
+            "trade_rows_history_window_pages": 0,
+            "trade_rows_history_window_recovered": 0,
+            "trade_rows_history_window_ledger_field_missing": 0,
+            "trade_rows_history_window_not_found": 0,
+            "trade_rows_history_window_empty_ledgers": 0,
+            "trade_rows_history_window_invalid": 0,
+            "trade_rows_history_window_deferred": 0,
+            "next_trade_history_retry_epoch": None,
             "ledger_ids_requested": 0,
             "ledger_rows_recovered": 0,
             "missing_trade_references": 0,
@@ -331,12 +405,22 @@ def reconcile_trade_ledger_coverage(
     trade_rows_query_ledger_field_missing = 0
     trade_rows_query_invalid = 0
     trade_rows_query_deferred = 0
+    trade_rows_history_window_queried = 0
+    trade_rows_history_window_pages = 0
+    trade_rows_history_window_recovered = 0
+    trade_rows_history_window_ledger_field_missing = 0
+    trade_rows_history_window_not_found = 0
+    trade_rows_history_window_empty_ledgers = 0
+    trade_rows_history_window_invalid = 0
+    trade_rows_history_window_deferred = 0
+    next_trade_history_retry_epoch: int | None = None
     ledger_ids_requested = 0
     ledger_rows_recovered = 0
     resolved_fingerprints: dict[str, str] = {}
     query_outcomes: list[dict[str, str]] = []
     confirmed_empty_fingerprints: set[str] = set()
     conflicting_empty_fingerprints: set[str] = set()
+    history_window_trade_rows: dict[str, str] = {}
 
     initial_fills = persistence.fills()
     initial_ledger_events = persistence.ledger_events()
@@ -374,13 +458,22 @@ def reconcile_trade_ledger_coverage(
                 "QUERY_TRADES_LOOKUP_PENDING",
                 "QUERY_TRADES_EMPTY_PENDING_LEDGER_CHECK",
                 "QUERY_TRADES_EMPTY_CONFIRMED",
+                "TRADES_HISTORY_WINDOW_LOOKUP_PENDING",
+                "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
+                "TRADES_HISTORY_WINDOW_TRADE_ID_NOT_FOUND",
+                "TRADES_HISTORY_WINDOW_LOOKUP_FAILED",
+                "TRADES_HISTORY_WINDOW_PAGE_BUDGET_EXCEEDED",
+                "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK",
+                "TRADE_HISTORY_EMPTY_CONFIRMED",
             }
         )
         if cached_query_evidence and isinstance(evidence, dict):
             cached_query_evidence_by_trade_id[trade_id] = evidence
         previously_confirmed_empty = (
             isinstance(evidence, dict)
-            and evidence.get("source") == "QUERY_TRADES_EMPTY_CONFIRMED"
+            and evidence.get("source") in {
+                "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
+            }
             and evidence.get("ledgers_field_present") is True
             and evidence.get("ledgers_count") == 0
             and evidence.get("full_ledger_history_checked") is True
@@ -391,19 +484,28 @@ def reconcile_trade_ledger_coverage(
             trade_gaps.discard(gap_token)
             confirmed_empty_fingerprints.add(fingerprint)
         elif cached_query_evidence:
-            # Preserve the data-quality block, but retry a missing/unknown QueryTrades
-            # lookup after a bounded cooldown. Identical requests must not repeat every cycle.
+            # A QueryTrades response without ledger IDs cannot repair this field. Immediately
+            # switch those known cases to a bounded TradesHistory lookup using ledgers=true.
+            # Repeated failed time-window lookups use their own persisted cooldown.
             trade_gaps.add(gap_token)
             retry_source = evidence.get("source") if isinstance(evidence, dict) else None
             if isinstance(evidence, dict) and retry_source in {
                 "QUERY_TRADES_LEDGER_FIELD_MISSING",
                 "QUERY_TRADES_LOOKUP_PENDING",
             }:
+                history_window_trade_rows[trade_id] = fingerprint
+            elif isinstance(evidence, dict) and retry_source in {
+                "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
+                "TRADES_HISTORY_WINDOW_TRADE_ID_NOT_FOUND",
+                "TRADES_HISTORY_WINDOW_LOOKUP_FAILED",
+                "TRADES_HISTORY_WINDOW_PAGE_BUDGET_EXCEEDED",
+                "TRADES_HISTORY_WINDOW_LOOKUP_PENDING",
+            }:
                 retry_after = _count(evidence.get("retry_after_epoch"))
                 if retry_after is None or retry_after <= now_epoch:
-                    missing_trade_rows.append((trade_id, fingerprint))
+                    history_window_trade_rows[trade_id] = fingerprint
                 else:
-                    trade_rows_query_deferred += 1
+                    trade_rows_history_window_deferred += 1
         else:
             trade_gaps.add(gap_token)
             missing_trade_rows.append((trade_id, fingerprint))
@@ -558,6 +660,237 @@ def reconcile_trade_ledger_coverage(
                 trade_rows_recovered += 1
                 resolved_fingerprints[fingerprint] = "QUERY_TRADES"
 
+    # QueryTrades' documented response does not expose a "ledgers" field.
+    # When that exact-ID lookup omits it, re-query the documented TradesHistory endpoint
+    # over a narrow timestamp window, with ledgers=true and cursor pagination.
+    # This bypasses the obsolete QueryTrades cooldown once, but does not clear any gap
+    # unless the returned trade IDs or independent ledger refids support the link.
+    legacy_history_sources = {
+        "QUERY_TRADES_LEDGER_FIELD_MISSING",
+        "QUERY_TRADES_LOOKUP_PENDING",
+    }
+    for fill in persistence.fills():
+        trade_id = str(fill.get("trade_id", "")).strip()
+        row = _trade_row_from_fill(fill)
+        if not trade_id or row is None or _valid_ledger_references(row.get("ledgers")):
+            continue
+        evidence = row.get("_ledger_reference_evidence")
+        if isinstance(evidence, dict) and evidence.get("source") in legacy_history_sources:
+            history_window_trade_rows.setdefault(
+                trade_id, _trade_id_fingerprint(trade_id)
+            )
+
+    history_window_items = list(history_window_trade_rows.items())[:max_trade_queries]
+    for trade_id, fingerprint in history_window_items:
+        current_fill = next(
+            (
+                item for item in persistence.fills()
+                if str(item.get("trade_id", "")).strip() == trade_id
+            ),
+            None,
+        )
+        current_row = _trade_row_from_fill(current_fill) if current_fill is not None else None
+        if current_row is None or _valid_ledger_references(current_row.get("ledgers")):
+            continue
+
+        current_evidence = current_row.get("_ledger_reference_evidence")
+        previous_attempts = (
+            _count(current_evidence.get("attempt_count"))
+            if isinstance(current_evidence, dict) else None
+        )
+        attempt_count = (previous_attempts or 0) + 1
+        parsed_time = _timestamp(current_row.get("time"))
+        target_epoch = parsed_time[0] if parsed_time is not None else None
+        pending_evidence = {
+            "source": "TRADES_HISTORY_WINDOW_LOOKUP_PENDING",
+            "attempt_count": attempt_count,
+            "last_attempt_epoch": now_epoch,
+            "retry_after_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+            "last_attempt_outcome": "QUERY_IN_PROGRESS",
+            "window_start_epoch": max(0, target_epoch - 5) if target_epoch is not None else None,
+            "window_end_epoch": target_epoch + 5 if target_epoch is not None else None,
+        }
+        _save_trade(
+            trade_id,
+            {**current_row, "_ledger_reference_evidence": pending_evidence},
+            persistence,
+        )
+        trade_rows_history_window_queried += 1
+        matched_row, pages, outcome, window_start, window_end = _lookup_trade_history_window(
+            client=client,
+            trade_id=trade_id,
+            existing_row=current_row,
+        )
+        trade_rows_history_window_pages += pages
+
+        if outcome.startswith("API_ERROR:") or outcome in {
+            "RESPONSE_INVALID", "TRADES_SHAPE_INVALID", "CURSOR_INVALID", "CURSOR_REPEATED",
+        }:
+            error_code = outcome.split(":", 1)[1] if ":" in outcome else outcome
+            api_errors.append("TRADES_HISTORY_WINDOW_FAILED:" + error_code)
+            retry_evidence = {
+                **pending_evidence,
+                "source": "TRADES_HISTORY_WINDOW_LOOKUP_FAILED",
+                "last_attempt_outcome": outcome,
+                "retry_after_epoch": now_epoch + 300,
+                "window_start_epoch": window_start,
+                "window_end_epoch": window_end,
+                "pages_checked": pages,
+            }
+            _save_trade(
+                trade_id,
+                {**current_row, "_ledger_reference_evidence": retry_evidence},
+                persistence,
+            )
+            trade_rows_history_window_invalid += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADES_HISTORY_WINDOW_" + outcome.split(":", 1)[0],
+            })
+            continue
+
+        if matched_row is None:
+            source = (
+                "TRADES_HISTORY_WINDOW_PAGE_BUDGET_EXCEEDED"
+                if outcome == "PAGE_BUDGET_EXCEEDED"
+                else "TRADES_HISTORY_WINDOW_TRADE_ID_NOT_FOUND"
+            )
+            retry_evidence = {
+                **pending_evidence,
+                "source": source,
+                "last_attempt_outcome": outcome,
+                "retry_after_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+                "window_start_epoch": window_start,
+                "window_end_epoch": window_end,
+                "pages_checked": pages,
+            }
+            _save_trade(
+                trade_id,
+                {**current_row, "_ledger_reference_evidence": retry_evidence},
+                persistence,
+            )
+            trade_rows_history_window_not_found += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADES_HISTORY_WINDOW_" + outcome,
+            })
+            continue
+
+        validation_error = _trade_validation_error(trade_id, matched_row)
+        if validation_error is not None:
+            retry_evidence = {
+                **pending_evidence,
+                "source": "TRADES_HISTORY_WINDOW_LOOKUP_FAILED",
+                "last_attempt_outcome": "TRADE_ROW_INVALID:" + validation_error,
+                "retry_after_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+                "window_start_epoch": window_start,
+                "window_end_epoch": window_end,
+                "pages_checked": pages,
+            }
+            _save_trade(
+                trade_id,
+                {**current_row, "_ledger_reference_evidence": retry_evidence},
+                persistence,
+            )
+            trade_rows_history_window_invalid += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADES_HISTORY_WINDOW_ROW_INVALID:" + validation_error,
+            })
+            continue
+
+        if "ledgers" not in matched_row:
+            retry_evidence = {
+                **pending_evidence,
+                "source": "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
+                "ledgers_field_present": False,
+                "last_attempt_outcome": "LEDGER_FIELD_MISSING",
+                "retry_after_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+                "window_start_epoch": window_start,
+                "window_end_epoch": window_end,
+                "pages_checked": pages,
+            }
+            _save_trade(
+                trade_id,
+                {**matched_row, "_ledger_reference_evidence": retry_evidence},
+                persistence,
+            )
+            trade_rows_history_window_ledger_field_missing += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
+            })
+            continue
+
+        refs = _valid_ledger_references(matched_row.get("ledgers"))
+        if refs is None:
+            retry_evidence = {
+                **pending_evidence,
+                "source": "TRADES_HISTORY_WINDOW_LOOKUP_FAILED",
+                "ledgers_field_present": True,
+                "last_attempt_outcome": "LEDGER_FIELD_INVALID",
+                "retry_after_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+                "window_start_epoch": window_start,
+                "window_end_epoch": window_end,
+                "pages_checked": pages,
+            }
+            _save_trade(
+                trade_id,
+                {**current_row, "_ledger_reference_evidence": retry_evidence},
+                persistence,
+            )
+            trade_rows_history_window_invalid += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADES_HISTORY_WINDOW_LEDGER_FIELD_INVALID",
+            })
+            continue
+
+        if not refs:
+            empty_row = {
+                **matched_row,
+                "_ledger_reference_evidence": {
+                    **pending_evidence,
+                    "source": "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK",
+                    "ledgers_field_present": True,
+                    "ledgers_count": 0,
+                    "last_attempt_outcome": "EMPTY_LEDGER_LIST_REQUIRES_INDEPENDENT_CHECK",
+                    "window_start_epoch": window_start,
+                    "window_end_epoch": window_end,
+                    "pages_checked": pages,
+                },
+            }
+            if _save_trade(trade_id, empty_row, persistence):
+                trade_rows_history_window_empty_ledgers += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "TRADES_HISTORY_WINDOW_EMPTY_LEDGER_LIST",
+                })
+            else:
+                trade_rows_history_window_invalid += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "TRADES_HISTORY_WINDOW_ROW_NOT_SAVED",
+                })
+            continue
+
+        recovered_row = dict(matched_row)
+        recovered_row.pop("_ledger_reference_evidence", None)
+        if not _save_trade(trade_id, recovered_row, persistence):
+            trade_rows_history_window_invalid += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADES_HISTORY_WINDOW_ROW_NOT_SAVED",
+            })
+            continue
+        trade_rows_history_window_recovered += 1
+        trade_rows_recovered += 1
+        resolved_fingerprints[fingerprint] = "TRADES_HISTORY_WINDOW"
+        query_outcomes.append({
+            "trade_id_fingerprint": fingerprint,
+            "outcome": "TRADES_HISTORY_WINDOW_LEDGER_LINK_RECOVERED",
+        })
+
     # Read trade references only from the nested authoritative exchange payload.
     referenced_ledger_ids: set[str] = set()
     for fill in persistence.fills():
@@ -661,6 +994,8 @@ def reconcile_trade_ledger_coverage(
                 and evidence.get("source") in {
                     "QUERY_TRADES_EMPTY_PENDING_LEDGER_CHECK",
                     "QUERY_TRADES_EMPTY_CONFIRMED",
+                    "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK",
+                    "TRADE_HISTORY_EMPTY_CONFIRMED",
                 }
                 and evidence.get("ledgers_field_present") is True
                 and evidence.get("ledgers_count") == 0
@@ -686,10 +1021,15 @@ def reconcile_trade_ledger_coverage(
                     continue
                 if can_confirm_empty_relations:
                     already_confirmed = evidence_source == "QUERY_TRADES_EMPTY_CONFIRMED"
+                    confirmed_source = (
+                        "TRADE_HISTORY_EMPTY_CONFIRMED"
+                        if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
+                        else "QUERY_TRADES_EMPTY_CONFIRMED"
+                    )
                     confirmed_row = {
                         **row,
                         "_ledger_reference_evidence": {
-                            "source": "QUERY_TRADES_EMPTY_CONFIRMED",
+                            "source": confirmed_source,
                             "ledgers_field_present": True,
                             "ledgers_count": 0,
                             "full_ledger_history_checked": True,
@@ -813,24 +1153,49 @@ def reconcile_trade_ledger_coverage(
         and not final_trade_gaps
         and not final_ledger_gaps
     )
-    pending_retry_epochs: list[int] = []
+    pending_query_retry_epochs: list[int] = []
+    pending_history_retry_epochs: list[int] = []
+    history_retry_sources = {
+        "TRADES_HISTORY_WINDOW_LOOKUP_PENDING",
+        "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
+        "TRADES_HISTORY_WINDOW_TRADE_ID_NOT_FOUND",
+        "TRADES_HISTORY_WINDOW_LOOKUP_FAILED",
+        "TRADES_HISTORY_WINDOW_PAGE_BUDGET_EXCEEDED",
+    }
     for fill in final_fills:
         row = _trade_row_from_fill(fill)
         evidence = row.get("_ledger_reference_evidence") if row is not None else None
-        if not isinstance(evidence, dict) or evidence.get("source") not in {
-            "QUERY_TRADES_LEDGER_FIELD_MISSING", "QUERY_TRADES_LOOKUP_PENDING",
-        }:
+        if not isinstance(evidence, dict):
             continue
+        source = evidence.get("source")
         retry_after = _count(evidence.get("retry_after_epoch"))
-        if retry_after is not None and retry_after > now_epoch:
-            pending_retry_epochs.append(retry_after)
-    next_trade_query_retry_epoch = min(pending_retry_epochs) if pending_retry_epochs else None
+        if retry_after is None or retry_after <= now_epoch:
+            continue
+        if source in {"QUERY_TRADES_LEDGER_FIELD_MISSING", "QUERY_TRADES_LOOKUP_PENDING"}:
+            pending_query_retry_epochs.append(retry_after)
+        elif source in history_retry_sources:
+            pending_history_retry_epochs.append(retry_after)
+    next_trade_query_retry_epoch = (
+        min(pending_query_retry_epochs) if pending_query_retry_epochs else None
+    )
+    next_trade_history_retry_epoch = (
+        min(pending_history_retry_epochs) if pending_history_retry_epochs else None
+    )
 
     return {
         "status": "COMPLETE" if complete else "INCOMPLETE",
         "trade_rows_queried": trade_rows_queried,
         "trade_rows_query_deferred": trade_rows_query_deferred,
         "next_trade_query_retry_epoch": next_trade_query_retry_epoch,
+        "trade_rows_history_window_queried": trade_rows_history_window_queried,
+        "trade_rows_history_window_pages": trade_rows_history_window_pages,
+        "trade_rows_history_window_recovered": trade_rows_history_window_recovered,
+        "trade_rows_history_window_ledger_field_missing": trade_rows_history_window_ledger_field_missing,
+        "trade_rows_history_window_not_found": trade_rows_history_window_not_found,
+        "trade_rows_history_window_empty_ledgers": trade_rows_history_window_empty_ledgers,
+        "trade_rows_history_window_invalid": trade_rows_history_window_invalid,
+        "trade_rows_history_window_deferred": trade_rows_history_window_deferred,
+        "next_trade_history_retry_epoch": next_trade_history_retry_epoch,
         "trade_rows_recovered": trade_rows_recovered,
         "trade_rows_query_empty_ledgers": trade_rows_query_empty_ledgers,
         "trade_rows_query_missing": trade_rows_query_missing,
