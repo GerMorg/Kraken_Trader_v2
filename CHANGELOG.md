@@ -3,7 +3,7 @@
 ## 0.1.35 — Dauerhafte Wiederherstellung über Kraken Trade-Export
 
 - Ergänzt einen begrenzten Fallback über AddExport, ExportStatus und RetrieveExport, wenn QueryTrades und TradesHistory bei einem exakten Trade keine Ledger-Referenzen liefern.
-- Exportaufträge, Report-ID, Zeitraum, Ziel-Trade-IDs und Polling-Zustand werden persistent gespeichert; nach einem Neustart wird ein laufender Auftrag wieder aufgenommen statt blind dupliziert. Unklare AddExport-Timeouts werden bis zu sieben Tage über den eindeutigen Deskriptor verfolgt, passend zu Krakens dokumentierter möglicher Exportdauer.
+- Exportaufträge, Report-ID, Zeitraum, Ziel-Trade-IDs und Polling-Zustand werden persistent gespeichert; nach einem Neustart wird ein laufender Auftrag wieder aufgenommen statt blind dupliziert. Unklare AddExport-Timeouts werden bis zu sieben Tage über den eindeutigen Deskriptor verfolgt, passend zu Krakens dokumentierter möglicher Exportdauer. Statusabfragen werden mit der Auftragsdauer stufenweise seltener, und fehlgeschlagene ZIP-/CSV-Downloads werden nach drei Versuchen auf einen zeitverzögerten erneuten Export zurückgesetzt.
 - Der ZIP-Export wird ohne Entpacken auf das Dateisystem verarbeitet. CSV-Zeilen werden ausschließlich über die exakte txid zugeordnet und vor Speicherung validiert.
 - Leere ledgers-Zellen bleiben unbestätigt, bis die unabhängige vollständige Ledger-/refid-Prüfung keinen Konflikt zeigt. Keine Änderung an der Live-Freigabe.
 
