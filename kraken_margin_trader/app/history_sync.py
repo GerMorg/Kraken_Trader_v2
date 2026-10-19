@@ -288,11 +288,11 @@ def _lookup_trade_history_window(
     existing_row: dict[str, Any],
     page_budget: int = 5,
 ) -> tuple[dict[str, Any] | None, int, str, int | None, int | None]:
-    """Re-fetch one trade from TradesHistory with the documented ledgers option.
+    """Re-fetch one trade through TradesHistory after an exact-ID lookup did not repair it.
 
-    QueryTrades does not document the ledgers field. TradesHistory does, and supports
-    time bounds plus cursor pagination. Search a narrow window around the persisted
-    exchange timestamp, and only accept an exact trade-ID match.
+    Both official endpoints support ledger references, but this alternate endpoint lets
+    us verify the same persisted transaction through the time-bounded history API.
+    Search a narrow window around the exchange timestamp and accept only an exact ID.
     """
     if page_budget < 1 or page_budget > 20:
         raise ValueError("TRADE_HISTORY_WINDOW_PAGE_BUDGET_OUT_OF_RANGE")
@@ -660,9 +660,9 @@ def reconcile_trade_ledger_coverage(
                 trade_rows_recovered += 1
                 resolved_fingerprints[fingerprint] = "QUERY_TRADES"
 
-    # QueryTrades' documented response does not expose a "ledgers" field.
-    # When that exact-ID lookup omits it, re-query the documented TradesHistory endpoint
-    # over a narrow timestamp window, with ledgers=true and cursor pagination.
+    # An exact-ID QueryTrades lookup can still omit the ledger relation for a stored fill.
+    # Cross-check through the separate TradesHistory endpoint over a narrow timestamp
+    # window, with ledgers=true and cursor pagination.
     # This bypasses the obsolete QueryTrades cooldown once, but does not clear any gap
     # unless the returned trade IDs or independent ledger refids support the link.
     legacy_history_sources = {
@@ -1003,13 +1003,18 @@ def reconcile_trade_ledger_coverage(
 
             if query_explicit_empty:
                 conflict_outcome = None
+                outcome_prefix = (
+                    "TRADE_HISTORY_EMPTY"
+                    if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
+                    else "QUERY_TRADES_EMPTY"
+                )
                 if related_ids:
-                    conflict_outcome = "QUERY_TRADES_EMPTY_BUT_LEDGER_REFID_MATCHES"
+                    conflict_outcome = outcome_prefix + "_BUT_LEDGER_REFID_MATCHES"
                 elif matching_order_refid_ids:
                     # A refid that matches the order ID may cover multiple partial
                     # fills. It is not safe to assign those ledger IDs to one fill,
                     # but its existence contradicts an asserted empty relation.
-                    conflict_outcome = "QUERY_TRADES_EMPTY_BUT_LEDGER_ORDER_REFID_MATCHES"
+                    conflict_outcome = outcome_prefix + "_BUT_LEDGER_ORDER_REFID_MATCHES"
                 if conflict_outcome is not None:
                     conflicting_empty_fingerprints.add(fingerprint)
                     confirmed_empty_fingerprints.discard(fingerprint)
@@ -1020,7 +1025,9 @@ def reconcile_trade_ledger_coverage(
                     })
                     continue
                 if can_confirm_empty_relations:
-                    already_confirmed = evidence_source == "QUERY_TRADES_EMPTY_CONFIRMED"
+                    already_confirmed = evidence_source in {
+                        "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
+                    }
                     confirmed_source = (
                         "TRADE_HISTORY_EMPTY_CONFIRMED"
                         if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
