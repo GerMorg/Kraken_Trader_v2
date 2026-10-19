@@ -154,7 +154,7 @@ class Persistence:
                     "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','6') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','7') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
