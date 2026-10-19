@@ -675,6 +675,9 @@ def test_query_trades_missing_ledgers_field_is_persisted_and_not_requeried():
         trade_pages={None: {"trades": {"T-MISSING-FIELD": missing_refs}}},
         ledger_pages={0: {"ledger": {"L-UNRELATED": unrelated_ledger}, "count": 1}},
     )
+    client.targeted_trade_pages = {
+        None: {"trades": {"T-MISSING-FIELD": dict(missing_refs)}, "cursor": {}},
+    }
     sync_history_source(
         client=client, persistence=db, source="TRADES", page_budget=1, now_epoch=1769000000
     )
