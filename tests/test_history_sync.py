@@ -750,7 +750,8 @@ def test_query_trades_missing_ledgers_field_is_persisted_and_not_requeried():
 
     saved = db.fills()[0]["raw"]["raw"]
     assert "ledgers" not in saved
-    assert saved["_ledger_reference_evidence"]["source"] == "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING"
+    # The isolated fake client does not implement the newly added export endpoints.
+    assert saved["_ledger_reference_evidence"]["source"] == "TRADE_EXPORT_UNAVAILABLE"
     assert saved["_ledger_reference_evidence"]["ledgers_field_present"] is False
     assert saved["_ledger_reference_evidence"]["attempt_count"] == 2
     assert (
