@@ -1463,7 +1463,9 @@ def reconcile_trade_ledger_coverage(
             })
 
         remove_method = getattr(client, "remove_export_report", None)
-        if refs and callable(remove_method):
+        # Both non-empty and independently checkable empty-list results have been
+        # persisted; delete the processed archive so reports do not accumulate.
+        if callable(remove_method):
             try:
                 cleanup_result = remove_method(export_id, action="delete")
                 if not isinstance(cleanup_result, dict) or cleanup_result.get("delete") is not True:
