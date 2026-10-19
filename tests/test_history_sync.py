@@ -1083,3 +1083,13 @@ def test_trade_export_download_failures_are_bounded(monkeypatch):
     )
     assert fill["raw"]["raw"]["_ledger_reference_evidence"]["retry_after_epoch"] > now[0]
     db.close()
+
+
+def test_trade_export_status_polling_backs_off_with_age():
+    from app.history_sync import _trade_export_poll_delay
+
+    request = {"requested_at_epoch": 1000}
+    assert _trade_export_poll_delay(request, 1000) == 5 * 60
+    assert _trade_export_poll_delay(request, 1000 + 20 * 60) == 15 * 60
+    assert _trade_export_poll_delay(request, 1000 + 2 * 60 * 60) == 60 * 60
+    assert _trade_export_poll_delay(request, 1000 + 7 * 60 * 60) == 6 * 60 * 60
