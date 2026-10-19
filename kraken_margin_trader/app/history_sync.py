@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import csv
+import io
+import re
+import zipfile
 from decimal import Decimal
 import hashlib
 import time
@@ -13,6 +17,9 @@ PAGE_BUDGET_PER_SOURCE = 2
 REFRESH_OVERLAP_SECONDS = 3600
 REFRESH_INTERVAL_SECONDS = 300
 QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS = 6 * 60 * 60
+TRADE_EXPORT_POLL_INTERVAL_SECONDS = 5 * 60
+TRADE_EXPORT_MAX_UNCOMPRESSED_BYTES = 100_000_000
+TRADE_EXPORT_MAX_CSV_FILES = 20
 
 
 REQUIRED_HISTORY_SOURCES = ("TRADES", "LEDGERS", "CLOSED_ORDERS")
@@ -344,6 +351,488 @@ def _lookup_trade_history_window(
         cursor = next_cursor
 
     return None, pages, "PAGE_BUDGET_EXCEEDED", start_epoch, end_epoch
+
+
+
+def _trade_export_timestamp(value: Any) -> str | None:
+    """Normalize Kraken CSV UTC timestamps to the numeric format used by history rows."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        numeric = D(raw)
+        if numeric.is_finite() and numeric >= 0:
+            return str(numeric)
+    except (ArithmeticError, TypeError, ValueError):
+        pass
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = None
+    if parsed is None:
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+            try:
+                parsed = datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+                break
+            except ValueError:
+                continue
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    try:
+        return str(D(str(parsed.timestamp())))
+    except (ArithmeticError, TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _trade_export_ledger_ids(value: Any) -> list[str] | None:
+    """Parse the CSV ledgers cell without inferring IDs from unrelated fields."""
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return []
+    cleaned = re.sub(r"[\[\]\(\)\{\}\"']", "", raw)
+    pieces = re.split(r"[,;|\s]+", cleaned)
+    return list(dict.fromkeys(piece.strip() for piece in pieces if piece.strip()))
+
+
+def _trade_export_row(row: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    normalized = {
+        str(key).strip().lower().replace(" ", "_"): value
+        for key, value in row.items()
+        if isinstance(key, str)
+    }
+    trade_id = str(normalized.get("txid", "") or "").strip()
+    if not trade_id:
+        return None
+    epoch = _trade_export_timestamp(normalized.get("time"))
+    payload: dict[str, Any] = {
+        "type": str(normalized.get("type", "") or "").strip().lower(),
+        "pair": str(normalized.get("pair", "") or "").strip(),
+        "vol": str(normalized.get("vol", normalized.get("volume", "")) or "").strip(),
+        "price": str(normalized.get("price", "") or "").strip(),
+        "fee": str(normalized.get("fee", "") or "").strip(),
+        "margin": str(normalized.get("margin", "") or "").strip(),
+        "ordertxid": str(normalized.get("ordertxid", "") or "").strip(),
+    }
+    if epoch is not None:
+        payload["time"] = epoch
+    else:
+        payload["time"] = str(normalized.get("time", "") or "").strip()
+    if "ledgers" in normalized:
+        payload["ledgers"] = _trade_export_ledger_ids(normalized.get("ledgers"))
+    payload["_exchange_export_source"] = "KRAKEN_TRADE_EXPORT_CSV"
+    return trade_id, payload
+
+
+def _parse_trade_export_archive(
+    archive_bytes: bytes, target_trade_ids: set[str]
+) -> dict[str, dict[str, Any]]:
+    """Read only matching trades from Kraken's ZIP-wrapped CSV; never extract files to disk."""
+    if not archive_bytes or len(archive_bytes) > 25_000_000:
+        raise ValueError("TRADE_EXPORT_ARCHIVE_SIZE_INVALID")
+    matched: dict[str, dict[str, Any]] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+            members = [
+                item for item in archive.infolist()
+                if not item.is_dir() and item.filename.lower().endswith(".csv")
+            ]
+            if not members or len(members) > TRADE_EXPORT_MAX_CSV_FILES:
+                raise ValueError("TRADE_EXPORT_CSV_MEMBER_COUNT_INVALID")
+            if sum(item.file_size for item in members) > TRADE_EXPORT_MAX_UNCOMPRESSED_BYTES:
+                raise ValueError("TRADE_EXPORT_UNCOMPRESSED_SIZE_LIMIT_EXCEEDED")
+            for member in members:
+                try:
+                    content = archive.read(member).decode("utf-8-sig")
+                except (UnicodeDecodeError, OSError, RuntimeError, zipfile.BadZipFile) as exc:
+                    raise ValueError("TRADE_EXPORT_CSV_READ_FAILED") from exc
+                reader = csv.DictReader(io.StringIO(content, newline=""))
+                headers = {
+                    str(field).strip().lower().replace(" ", "_")
+                    for field in (reader.fieldnames or [])
+                    if field is not None
+                }
+                if "txid" not in headers:
+                    continue
+                for raw_row in reader:
+                    if not isinstance(raw_row, dict):
+                        continue
+                    converted = _trade_export_row(raw_row)
+                    if converted is None:
+                        continue
+                    trade_id, trade_row = converted
+                    if trade_id not in target_trade_ids:
+                        continue
+                    if trade_id in matched:
+                        raise ValueError("TRADE_EXPORT_DUPLICATE_TARGET_TRADE_ID")
+                    matched[trade_id] = trade_row
+    except zipfile.BadZipFile as exc:
+        raise ValueError("TRADE_EXPORT_ARCHIVE_INVALID") from exc
+    return matched
+
+
+def _set_trade_export_evidence(
+    *, persistence: Any, trade_id: str, source: str, outcome: str, now_epoch: int,
+    report_id: str | None = None, retry_seconds: int = QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+) -> None:
+    fill = next(
+        (
+            item for item in persistence.fills()
+            if str(item.get("trade_id", "")).strip() == trade_id
+        ),
+        None,
+    )
+    row = _trade_row_from_fill(fill) if fill is not None else None
+    if row is None:
+        return
+    previous = row.get("_ledger_reference_evidence")
+    previous_evidence = previous if isinstance(previous, dict) else {}
+    previous_attempts = _count(previous_evidence.get("export_attempt_count"))
+    evidence: dict[str, Any] = {
+        **previous_evidence,
+        "source": source,
+        "export_attempt_count": (previous_attempts or 0) + 1,
+        "last_export_attempt_epoch": now_epoch,
+        "last_attempt_outcome": outcome,
+        "retry_after_epoch": now_epoch + retry_seconds,
+    }
+    if report_id:
+        evidence["export_report_id"] = report_id
+    _save_trade(trade_id, {**row, "_ledger_reference_evidence": evidence}, persistence)
+
+
+def _recover_trade_ledgers_from_export(
+    *, client: Any, persistence: Any, now_epoch: int
+) -> dict[str, int | bool]:
+    """Request, poll and import bounded Kraken trades exports for unresolved exact trade IDs."""
+    zero: dict[str, int | bool] = {
+        "trade_export_supported": False,
+        "trade_export_requests_created": 0,
+        "trade_export_requests_checked": 0,
+        "trade_export_requests_pending": 0,
+        "trade_export_rows_matched": 0,
+        "trade_export_rows_recovered": 0,
+        "trade_export_empty_ledgers": 0,
+        "trade_export_rows_unmatched": 0,
+        "trade_export_errors": 0,
+    }
+    if not all(
+        callable(getattr(client, name, None))
+        for name in ("request_export_report", "export_status", "retrieve_export")
+    ) or not callable(getattr(persistence, "history_export_recovery_requests", None)):
+        return zero
+    summary = dict(zero)
+    summary["trade_export_supported"] = True
+    requests = persistence.history_export_recovery_requests()
+    active_statuses = {"REQUESTING", "QUEUED", "PROCESSING", "PROCESSED"}
+    active = [item for item in requests if str(item.get("status", "")).upper() in active_statuses]
+    status_rows: list[dict[str, Any]] | None = None
+
+    for request in active:
+        if int(request.get("next_poll_epoch", 0)) > now_epoch:
+            summary["trade_export_requests_pending"] = int(summary["trade_export_requests_pending"]) + 1
+            continue
+        if status_rows is None:
+            try:
+                raw_status = client.export_status(report="trades")
+                if not isinstance(raw_status, list) or any(not isinstance(row, dict) for row in raw_status):
+                    raise ValueError("EXPORT_STATUS_SHAPE_INVALID")
+                status_rows = raw_status
+            except Exception as exc:
+                summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
+                failed_state = {**request, "status": str(request.get("status", "QUEUED")).upper(),
+                                "last_error": "EXPORT_STATUS_FAILED:" + type(exc).__name__,
+                                "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS}
+                persistence.save_history_export_recovery_request(failed_state)
+                summary["trade_export_requests_pending"] = int(summary["trade_export_requests_pending"]) + 1
+                continue
+        summary["trade_export_requests_checked"] = int(summary["trade_export_requests_checked"]) + 1
+        report_id = str(request.get("report_id") or "").strip()
+        description = str(request.get("description") or "").strip()
+        remote = next(
+            (
+                item for item in status_rows
+                if (report_id and str(item.get("id", "")).strip() == report_id)
+                or (not report_id and description and str(item.get("descr", "")).strip() == description)
+            ),
+            None,
+        )
+        if remote is None:
+            age = now_epoch - int(request.get("requested_at_epoch", now_epoch))
+            if str(request.get("status", "")).upper() == "REQUESTING" and age < TRADE_EXPORT_POLL_INTERVAL_SECONDS:
+                persistence.save_history_export_recovery_request({
+                    **request, "status": "REQUESTING",
+                    "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
+                    "last_error": "EXPORT_REPORT_NOT_VISIBLE_YET",
+                })
+                summary["trade_export_requests_pending"] = int(summary["trade_export_requests_pending"]) + 1
+                continue
+            summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
+            for trade_id in request.get("trade_ids", []):
+                _set_trade_export_evidence(
+                    persistence=persistence, trade_id=trade_id,
+                    source="TRADE_EXPORT_REQUEST_FAILED", outcome="EXPORT_REPORT_NOT_FOUND",
+                    now_epoch=now_epoch,
+                )
+            persistence.save_history_export_recovery_request({
+                **request, "status": "REQUEST_FAILED", "next_poll_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+                "last_error": "EXPORT_REPORT_NOT_FOUND",
+            })
+            continue
+
+        report_id = str(remote.get("id", report_id)).strip()
+        remote_status = str(remote.get("status", "")).strip().lower()
+        request_base = {
+            **request, "report_id": report_id or None,
+            "last_error": None,
+        }
+        if remote_status not in {"processed", "queued", "processing"}:
+            summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
+            for trade_id in request.get("trade_ids", []):
+                _set_trade_export_evidence(
+                    persistence=persistence, trade_id=trade_id,
+                    source="TRADE_EXPORT_REQUEST_FAILED",
+                    outcome="EXPORT_REPORT_TERMINAL_STATUS:" + (remote_status.upper() or "UNKNOWN"),
+                    now_epoch=now_epoch, report_id=report_id,
+                )
+            persistence.save_history_export_recovery_request({
+                **request_base, "status": "REQUEST_FAILED",
+                "next_poll_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+                "last_error": "EXPORT_REPORT_TERMINAL_STATUS:" + (remote_status.upper() or "UNKNOWN"),
+            })
+            continue
+        if remote_status in {"queued", "processing"}:
+            persistence.save_history_export_recovery_request({
+                **request_base, "status": remote_status.upper(),
+                "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
+            })
+            summary["trade_export_requests_pending"] = int(summary["trade_export_requests_pending"]) + 1
+            continue
+
+        try:
+            archive_bytes = client.retrieve_export(report_id)
+            if not isinstance(archive_bytes, bytes):
+                raise ValueError("EXPORT_ARCHIVE_RESPONSE_INVALID")
+            target_ids = {
+                value for value in request.get("trade_ids", [])
+                if isinstance(value, str) and value.strip()
+            }
+            exported_rows = _parse_trade_export_archive(archive_bytes, target_ids)
+        except Exception as exc:
+            summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
+            error_code = type(exc).__name__
+            if isinstance(exc, ValueError):
+                error_code = str(exc)[:100]
+            persistence.save_history_export_recovery_request({
+                **request_base, "status": "PROCESSED",
+                "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
+                "last_error": "EXPORT_IMPORT_FAILED:" + error_code,
+            })
+            summary["trade_export_requests_pending"] = int(summary["trade_export_requests_pending"]) + 1
+            continue
+
+        for trade_id in sorted(target_ids):
+            current_fill = next(
+                (
+                    item for item in persistence.fills()
+                    if str(item.get("trade_id", "")).strip() == trade_id
+                ),
+                None,
+            )
+            current_row = _trade_row_from_fill(current_fill) if current_fill is not None else None
+            if current_row is None or _valid_ledger_references(current_row.get("ledgers")):
+                continue
+            exported = exported_rows.get(trade_id)
+            if exported is None:
+                summary["trade_export_rows_unmatched"] = int(summary["trade_export_rows_unmatched"]) + 1
+                _set_trade_export_evidence(
+                    persistence=persistence, trade_id=trade_id,
+                    source="TRADE_EXPORT_TRADE_ID_NOT_FOUND",
+                    outcome="TARGET_TRADE_ID_NOT_IN_EXPORT",
+                    now_epoch=now_epoch, report_id=report_id,
+                )
+                continue
+            summary["trade_export_rows_matched"] = int(summary["trade_export_rows_matched"]) + 1
+            validation_error = _trade_validation_error(trade_id, exported)
+            if validation_error is not None:
+                summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
+                _set_trade_export_evidence(
+                    persistence=persistence, trade_id=trade_id,
+                    source="TRADE_EXPORT_LOOKUP_FAILED",
+                    outcome="EXPORT_TRADE_ROW_INVALID:" + validation_error,
+                    now_epoch=now_epoch, report_id=report_id,
+                )
+                continue
+            if "ledgers" not in exported or exported.get("ledgers") is None:
+                summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
+                _set_trade_export_evidence(
+                    persistence=persistence, trade_id=trade_id,
+                    source="TRADE_EXPORT_LEDGER_FIELD_MISSING",
+                    outcome="EXPORT_LEDGER_FIELD_MISSING",
+                    now_epoch=now_epoch, report_id=report_id,
+                )
+                continue
+            refs = _valid_ledger_references(exported.get("ledgers"))
+            if refs is None:
+                summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
+                _set_trade_export_evidence(
+                    persistence=persistence, trade_id=trade_id,
+                    source="TRADE_EXPORT_LOOKUP_FAILED",
+                    outcome="EXPORT_LEDGER_FIELD_INVALID",
+                    now_epoch=now_epoch, report_id=report_id,
+                )
+                continue
+            evidence = {
+                "source": "TRADE_EXPORT_LEDGER_LINK_RECOVERED" if refs
+                else "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                "verified_by_exchange_trade_export": True,
+                "export_report_id": report_id,
+                "ledgers_field_present": True,
+                "ledgers_count": len(refs),
+                "export_time_window_start": request.get("start_epoch"),
+                "export_time_window_end": request.get("end_epoch"),
+            }
+            recovered = {**exported, "ledgers": refs, "_ledger_reference_evidence": evidence}
+            if not _save_trade(trade_id, recovered, persistence):
+                summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
+                _set_trade_export_evidence(
+                    persistence=persistence, trade_id=trade_id,
+                    source="TRADE_EXPORT_LOOKUP_FAILED",
+                    outcome="EXPORT_TRADE_ROW_NOT_SAVED",
+                    now_epoch=now_epoch, report_id=report_id,
+                )
+                continue
+            if refs:
+                summary["trade_export_rows_recovered"] = int(summary["trade_export_rows_recovered"]) + 1
+            else:
+                summary["trade_export_empty_ledgers"] = int(summary["trade_export_empty_ledgers"]) + 1
+
+        persistence.save_history_export_recovery_request({
+            **request_base, "status": "IMPORTED",
+            "next_poll_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+            "last_error": None,
+        })
+
+    # Export jobs are asynchronous. Submit at most one new, tightly bounded export per cycle.
+    requests = persistence.history_export_recovery_requests()
+    active_trade_ids = {
+        trade_id
+        for item in requests
+        if str(item.get("status", "")).upper() in active_statuses
+        for trade_id in item.get("trade_ids", [])
+    }
+    eligible: list[tuple[int, str, dict[str, Any], dict[str, Any]]] = []
+    export_retry_sources = {
+        "TRADE_EXPORT_LEDGER_FIELD_MISSING",
+        "TRADE_EXPORT_TRADE_ID_NOT_FOUND",
+        "TRADE_EXPORT_REQUEST_FAILED",
+        "TRADE_EXPORT_LOOKUP_FAILED",
+    }
+    immediate_sources = {
+        "QUERY_TRADES_LEDGER_FIELD_MISSING",
+        "QUERY_TRADES_LOOKUP_PENDING",
+        "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
+    }
+    for fill in persistence.fills():
+        trade_id = str(fill.get("trade_id", "")).strip()
+        row = _trade_row_from_fill(fill)
+        if not trade_id or row is None or trade_id in active_trade_ids:
+            continue
+        if _valid_ledger_references(row.get("ledgers")):
+            continue
+        evidence = row.get("_ledger_reference_evidence")
+        if not isinstance(evidence, dict):
+            continue
+        source = evidence.get("source")
+        if source in immediate_sources:
+            eligible_now = True
+        elif source in export_retry_sources:
+            retry_after = _count(evidence.get("retry_after_epoch"))
+            eligible_now = retry_after is None or retry_after <= now_epoch
+        else:
+            eligible_now = False
+        if not eligible_now:
+            continue
+        timestamp = _timestamp(row.get("time"))
+        if timestamp is None:
+            _set_trade_export_evidence(
+                persistence=persistence, trade_id=trade_id,
+                source="TRADE_EXPORT_LOOKUP_FAILED", outcome="TRADE_TIME_INVALID",
+                now_epoch=now_epoch,
+            )
+            summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
+            continue
+        eligible.append((timestamp[0], trade_id, row, evidence))
+
+    if eligible:
+        eligible.sort(key=lambda item: (item[0], item[1]))
+        first_epoch = eligible[0][0]
+        same_day = [item for item in eligible if item[0] // 86400 == first_epoch // 86400][:20]
+        target_ids = [item[1] for item in same_day]
+        start_epoch = max(0, min(item[0] for item in same_day) - 5)
+        end_epoch = max(item[0] for item in same_day) + 5
+        prior_attempts = [
+            _count(item[3].get("export_attempt_count")) or 0 for item in same_day
+        ]
+        attempt_count = max(prior_attempts, default=0) + 1
+        request_key = hashlib.sha256(
+            (str(start_epoch) + ":" + str(end_epoch) + ":" + ",".join(target_ids)
+             + ":" + str(attempt_count)).encode("utf-8")
+        ).hexdigest()[:24]
+        description = "KTV2-LedgerRecovery-" + request_key
+        request = {
+            "request_key": request_key,
+            "report_id": None,
+            "description": description,
+            "start_epoch": start_epoch,
+            "end_epoch": end_epoch,
+            "trade_ids": target_ids,
+            "status": "REQUESTING",
+            "requested_at_epoch": now_epoch,
+            "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
+            "attempt_count": attempt_count,
+            "last_error": None,
+        }
+        persistence.save_history_export_recovery_request(request)
+        try:
+            response = client.request_export_report(
+                description=description, start_epoch=start_epoch, end_epoch=end_epoch,
+                report="trades",
+            )
+            report_id = str(response.get("id", "")).strip() if isinstance(response, dict) else ""
+            if not report_id:
+                raise ValueError("EXPORT_REQUEST_ID_MISSING")
+            persistence.save_history_export_recovery_request({
+                **request, "report_id": report_id, "status": "QUEUED",
+                "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
+                "last_error": None,
+            })
+            summary["trade_export_requests_created"] = int(summary["trade_export_requests_created"]) + 1
+        except Exception as exc:
+            error_code = str(exc)[:100] if isinstance(exc, ValueError) else type(exc).__name__
+            persistence.save_history_export_recovery_request({
+                **request, "status": "REQUEST_FAILED",
+                "next_poll_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+                "last_error": "EXPORT_REQUEST_FAILED:" + error_code,
+            })
+            for trade_id in target_ids:
+                _set_trade_export_evidence(
+                    persistence=persistence, trade_id=trade_id,
+                    source="TRADE_EXPORT_REQUEST_FAILED",
+                    outcome="EXPORT_REQUEST_FAILED:" + error_code,
+                    now_epoch=now_epoch,
+                )
+            summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
+
+    final_requests = persistence.history_export_recovery_requests()
+    summary["trade_export_requests_pending"] = sum(
+        1 for item in final_requests
+        if str(item.get("status", "")).upper() in active_statuses
+    )
+    return summary
 
 
 def reconcile_trade_ledger_coverage(
