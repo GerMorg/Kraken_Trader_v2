@@ -705,7 +705,9 @@ def reconcile_trade_ledger_coverage(
             "source": "TRADES_HISTORY_WINDOW_LOOKUP_PENDING",
             "attempt_count": attempt_count,
             "last_attempt_epoch": now_epoch,
-            "retry_after_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+            # If the process stops during the API request, retry the pending attempt
+            # in five minutes; the full six-hour cooldown is set after a completed lookup.
+            "retry_after_epoch": now_epoch + 300,
             "last_attempt_outcome": "QUERY_IN_PROGRESS",
             "window_start_epoch": max(0, target_epoch - 5) if target_epoch is not None else None,
             "window_end_epoch": target_epoch + 5 if target_epoch is not None else None,
@@ -1137,7 +1139,9 @@ def reconcile_trade_ledger_coverage(
     for fingerprint, resolution_source in sorted(resolved_fingerprints.items()):
         reason = (
             "TRADE_LEDGER_EMPTY_RELATION_CONFIRMED"
-            if resolution_source == "QUERY_TRADES_EMPTY_CONFIRMED"
+            if resolution_source in {
+                "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
+            }
             else "TRADE_LEDGER_REFERENCES_RECOVERED"
         )
         persistence.record_event("KRAKEN_HISTORY_DATA_QUALITY_GAP_RESOLVED", {
