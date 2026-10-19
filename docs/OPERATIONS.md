@@ -1,5 +1,13 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.36 — technische Sperre für Live-Orders
+
+`INTERNAL_LIVE_EXECUTION_RELEASED` ist eine interne, nicht über Home-Assistant-Optionen überschreibbare Konstante. Sie bleibt in dieser Version `False` und wird von der zentralen `OrderAuthority` vor jedem echten Orderaufruf geprüft. Ein falsch oder versehentlich gesetzter Live-Schalter kann diese Sperre nicht umgehen. `validate=true` für reine API-Validierung ist davon getrennt und löst keine echte Ausführung aus.
+
+Nach der Historien-Reconciliation protokolliert `KRAKEN_HISTORY_RECONCILED` die aktualisierten Qualitätslücken sowie `history_ready_for_entries`. `CYCLE_SUMMARY` enthält zusätzlich `internal_live_release`, `history_ready_for_entries` und `history_evidence_gaps`. Die frühere `KRAKEN_HISTORY_SYNC`-Meldung kann weiterhin den Stand vor dem gezielten Abgleich zeigen; für den finalen Status ist daher die Reconciled-Meldung maßgeblich.
+
+Diese Version erteilt keine Live-Trading-Freigabe. Ein künftiger Release darf den internen Wert erst ändern, wenn sämtliche verpflichtenden Konto-/Portfolio-, Margin-, Kosten- und Strategie-Abnahmekriterien nachgewiesen sind.
+
 ## Version 0.1.35 — Trades-Export für fehlende Ledger-Verknüpfungen
 
 Wenn QueryTrades und der gezielte TradesHistory-Fallback keine Ledger-IDs liefern, verwendet die App den dokumentierten Kraken-Trades-Export. Er wird auf ein Fenster von 15 Sekunden vor und nach dem gespeicherten Börsenzeitpunkt begrenzt. Die App fragt AddExport an, speichert die Export-ID direkt in der Trade-Historie und prüft ExportStatus in späteren Zyklen. Nach Status `Processed` lädt RetrieveExport die ZIP-Datei; die CSV wird im Arbeitsspeicher gelesen und nicht als dauerhafte Datei gespeichert.
