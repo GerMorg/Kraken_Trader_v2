@@ -1,5 +1,11 @@
 # Ausführung, Orderzustände und Wiederherstellung
 
+## v0.1.34: gezielte TradesHistory-Reparatur für fehlende Ledger-Referenzen
+
+Wenn eine QueryTrades-Antwort das Feld ledgers nicht enthält, wird die Relation nicht länger nur durch erneute QueryTrades-Aufrufe gesucht. Die App verwendet jetzt zusätzlich die dokumentierte TradesHistory-API mit ledgers=true, Zeitgrenzen start/end und Cursor-Paginierung. Die Abfrage beginnt fünf Sekunden vor und endet fünf Sekunden nach dem gespeicherten Exchange-Zeitpunkt; höchstens fünf Cursor-Seiten werden geprüft. Übernommen wird ausschließlich die Zeile, deren Schlüssel exakt mit der gesuchten Trade-ID übereinstimmt. Eine ähnliche Zeit, ein gleiches Handelspaar oder ein passendes Order-ID allein genügt nicht.
+
+Die Antwort wird weiterhin gegen die vollständige Ledger-Historie geprüft. Eine leere ledgers-Liste gilt erst nach unabhängig vollständiger Historie und ohne widersprechende refid-Verknüpfung als bestätigt. Fehlende Felder, nicht gefundene IDs, ungültige Antworten und Cursorfehler bleiben Datenqualitätslücken. Die neue Suche ändert weder das New-Risk-Gate noch die Live-Freigabe.
+
 ## Einzige Order Authority
 
 Strategielogik darf nur Entscheidungen/Intents erstellen. Die zentrale `OrderAuthority` persistiert jeden ausführbaren Intent vor einem geschützten API-Aufruf, prüft Aktions-/Produkt-/Richtungs-/Hebelparameter und enthält das source-owned Live-Release-Gate. Shadow-Kandidaten werden atomar mit dem terminalen Zustand `SHADOW_ONLY` gespeichert; sie sind nicht als unaufgelöste Ausführungsaufträge sichtbar und können nicht in `SUBMITTING` überführt werden. Ein Validierungsauftrag mit `validate=true` ist ein Börsen-Parametercheck und keine Ausführung. Im aktuellen Repository sendet der Runtime-Zyklus ohnehin keine Orders; jeder Versuch durch `OrderAuthority` ist bis zur formalen Freigabe aus dem Quellcode blockiert.
