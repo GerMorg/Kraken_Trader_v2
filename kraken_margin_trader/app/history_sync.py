@@ -507,6 +507,19 @@ def _set_trade_export_evidence(
     _save_trade(trade_id, {**row, "_ledger_reference_evidence": evidence}, persistence)
 
 
+def _trade_export_poll_delay(request: dict[str, Any], now_epoch: int) -> int:
+    """Back off export-status requests while allowing for Kraken's long queue times."""
+    requested_at = _count(request.get("requested_at_epoch"))
+    age_seconds = max(0, now_epoch - requested_at) if requested_at is not None else 0
+    if age_seconds < 15 * 60:
+        return TRADE_EXPORT_POLL_INTERVAL_SECONDS
+    if age_seconds < 60 * 60:
+        return 15 * 60
+    if age_seconds < 6 * 60 * 60:
+        return 60 * 60
+    return 6 * 60 * 60
+
+
 def _recover_trade_ledgers_from_export(
     *, client: Any, persistence: Any, now_epoch: int
 ) -> dict[str, int | bool]:
@@ -548,7 +561,7 @@ def _recover_trade_ledgers_from_export(
                 summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
                 failed_state = {**request, "status": str(request.get("status", "QUEUED")).upper(),
                                 "last_error": "EXPORT_STATUS_FAILED:" + type(exc).__name__,
-                                "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS}
+                                "next_poll_epoch": now_epoch + _trade_export_poll_delay(request, now_epoch)}
                 persistence.save_history_export_recovery_request(failed_state)
                 summary["trade_export_requests_pending"] = int(summary["trade_export_requests_pending"]) + 1
                 continue
@@ -571,7 +584,7 @@ def _recover_trade_ledgers_from_export(
                 pending_status = "QUEUED" if report_id else "REQUESTING"
                 persistence.save_history_export_recovery_request({
                     **request, "status": pending_status,
-                    "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
+                    "next_poll_epoch": now_epoch + _trade_export_poll_delay(request, now_epoch),
                     "last_error": "EXPORT_REPORT_NOT_VISIBLE_YET",
                 })
                 summary["trade_export_requests_pending"] = int(summary["trade_export_requests_pending"]) + 1
@@ -613,7 +626,7 @@ def _recover_trade_ledgers_from_export(
         if remote_status in {"queued", "processing"}:
             persistence.save_history_export_recovery_request({
                 **request_base, "status": remote_status.upper(),
-                "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
+                "next_poll_epoch": now_epoch + _trade_export_poll_delay(request, now_epoch),
             })
             summary["trade_export_requests_pending"] = int(summary["trade_export_requests_pending"]) + 1
             continue
