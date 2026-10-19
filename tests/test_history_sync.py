@@ -9,10 +9,16 @@ class FakeHistoryClient:
         self.trade_pages = trade_pages or {}
         self.ledger_pages = ledger_pages or {}
         self.closed_pages = closed_pages or {}
+        self.targeted_trade_pages = {}
         self.calls = []
 
     def trades_history(self, *, offset, start, end, with_cursor=False, cursor=None):
         self.calls.append(("TRADES", offset, start, end, with_cursor, cursor))
+        if (
+            with_cursor and start is not None and end is not None
+            and int(end) - int(start) <= 20
+        ):
+            return self.targeted_trade_pages.get(cursor, {"trades": {}, "cursor": {}})
         return self.trade_pages[cursor] if with_cursor else self.trade_pages[offset]
 
     def ledgers(self, *, offset, start, end, with_cursor=False, cursor=None):
