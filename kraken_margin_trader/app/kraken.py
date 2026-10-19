@@ -359,7 +359,7 @@ class KrakenClient:
                 },
             )
             try:
-                with urlopen(request, timeout=self.timeout_seconds) as response:
+                with urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310 -- fixed Kraken HTTPS origin; internal endpoint only
                     raw = response.read(max_bytes + 1)
             except HTTPError as exc:
                 try:
