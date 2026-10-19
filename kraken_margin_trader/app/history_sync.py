@@ -1086,7 +1086,13 @@ def reconcile_trade_ledger_coverage(
             continue
         retry_after = _count(evidence.get("retry_after_epoch"))
         evidence_source = str(evidence.get("source", ""))
-        if retry_after is not None and retry_after > now_epoch:
+        # The six-hour TradesHistory retry deadline must not delay the first export
+        # fallback; only export-owned states follow the export polling/retry cooldown.
+        if (
+            evidence_source.startswith("TRADE_EXPORT_")
+            and retry_after is not None
+            and retry_after > now_epoch
+        ):
             trade_rows_export_deferred += 1
             continue
         parsed_time = _timestamp(current_row.get("time"))
