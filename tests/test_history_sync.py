@@ -997,3 +997,89 @@ def test_trade_export_recovery_does_not_assume_empty_ledgers_are_complete():
     rows = _parse_trade_export_archive(buffer.getvalue(), {"T-EMPTY-EXPORT"})
     assert rows["T-EMPTY-EXPORT"]["ledgers"] == []
     assert rows["T-EMPTY-EXPORT"]["_exchange_export_source"] == "KRAKEN_TRADE_EXPORT_CSV"
+
+
+def test_trade_export_download_failures_are_bounded(monkeypatch):
+    from app.history_sync import _recover_trade_ledgers_from_export
+
+    db = Persistence(":memory:")
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    missing_refs["_ledger_reference_evidence"] = {
+        "source": "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
+        "ledgers_field_present": False,
+        "retry_after_epoch": 0,
+    }
+    db.upsert_fill_from_exchange({
+        "trade_id": "T-EXPORT-RETRY",
+        "order_id": "ORDER-1",
+        "pair": "XBT/USD",
+        "side": "buy",
+        "volume": "0.01",
+        "price": "90000",
+        "fee": "0.20",
+        "fee_asset": None,
+        "ts": "2026-01-09T09:46:40+00:00",
+        "verified": True,
+        "raw": {"raw": missing_refs},
+    })
+    db.save_history_export_recovery_request({
+        "request_key": "recovery-retry-001",
+        "report_id": "EXPORT-RETRY-001",
+        "description": "KTV2-LedgerRecovery-retry-001",
+        "start_epoch": 1768000000,
+        "end_epoch": 1768000010,
+        "trade_ids": ["T-EXPORT-RETRY"],
+        "status": "PROCESSED",
+        "requested_at_epoch": 1769000000,
+        "next_poll_epoch": 1769000000,
+        "attempt_count": 1,
+        "download_attempt_count": 0,
+        "last_error": None,
+    })
+
+    class ExportClient:
+        def export_status(self, *, report="trades"):
+            assert report == "trades"
+            return [{
+                "id": "EXPORT-RETRY-001",
+                "descr": "KTV2-LedgerRecovery-retry-001",
+                "status": "Processed",
+            }]
+
+        def retrieve_export(self, report_id):
+            assert report_id == "EXPORT-RETRY-001"
+            raise ValueError("TRADE_EXPORT_ARCHIVE_INVALID")
+
+        def request_export_report(self, **kwargs):
+            raise AssertionError("Must not request a second report while retrying the processed one")
+
+    client = ExportClient()
+    now = [1769000000]
+    monkeypatch.setattr("app.history_sync.time.time", lambda: now[0])
+
+    first = _recover_trade_ledgers_from_export(client=client, persistence=db, now_epoch=now[0])
+    row = db.history_export_recovery_requests()[0]
+    assert first["trade_export_errors"] == 1
+    assert row["status"] == "PROCESSED"
+    assert row["download_attempt_count"] == 1
+
+    now[0] += 301
+    second = _recover_trade_ledgers_from_export(client=client, persistence=db, now_epoch=now[0])
+    row = db.history_export_recovery_requests()[0]
+    assert second["trade_export_errors"] == 1
+    assert row["status"] == "PROCESSED"
+    assert row["download_attempt_count"] == 2
+
+    now[0] += 301
+    third = _recover_trade_ledgers_from_export(client=client, persistence=db, now_epoch=now[0])
+    row = db.history_export_recovery_requests()[0]
+    assert third["trade_export_errors"] == 1
+    assert row["status"] == "REQUEST_FAILED"
+    assert row["download_attempt_count"] == 3
+    fill = next(item for item in db.fills() if item["trade_id"] == "T-EXPORT-RETRY")
+    assert fill["raw"]["raw"]["_ledger_reference_evidence"]["source"] == (
+        "TRADE_EXPORT_LOOKUP_FAILED"
+    )
+    assert fill["raw"]["raw"]["_ledger_reference_evidence"]["retry_after_epoch"] > now[0]
+    db.close()
