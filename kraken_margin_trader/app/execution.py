@@ -5,7 +5,7 @@ from decimal import Decimal
 import uuid
 from typing import Any
 
-from app.config import Settings
+from app.config import INTERNAL_LIVE_EXECUTION_RELEASED, Settings
 from app.kraken import KrakenAPIError, KrakenAmbiguousError, KrakenClient
 from app.models import Action, Instrument
 from app.persistence import Persistence
@@ -176,6 +176,22 @@ class OrderAuthority:
                 kill_switch=self.settings.kill_switch,
             )
             raise LiveExecutionBlocked("LIVE_SWITCH_OR_KILL_SWITCH")
+        if not validate_only and not INTERNAL_LIVE_EXECUTION_RELEASED:
+            self.persistence.transition_intent(
+                intent.intent_id,
+                "BLOCKED",
+                {"reason": "INTERNAL_LIVE_EXECUTION_NOT_RELEASED"},
+            )
+            self.audit.emit(
+                "LIVE_ORDER_BLOCKED_BY_INTERNAL_RELEASE",
+                intent_id=intent.intent_id,
+                pair=intent.pair,
+                action=intent.action.value,
+                mode=self.settings.mode,
+                internal_live_release=INTERNAL_LIVE_EXECUTION_RELEASED,
+                order_submission_attempted=False,
+            )
+            raise LiveExecutionBlocked("INTERNAL_LIVE_EXECUTION_NOT_RELEASED")
         try:
             params = build_add_order_params(intent,instrument,validate_only=validate_only)
         except ValueError as exc:
