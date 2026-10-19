@@ -615,6 +615,7 @@ def reconcile_trade_ledger_coverage(
                 "TRADES_HISTORY_WINDOW_PAGE_BUDGET_EXCEEDED",
                 "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK",
                 "TRADE_HISTORY_EMPTY_CONFIRMED",
+                "TRADE_EXPORT_REQUEST_PENDING",
                 "TRADE_EXPORT_REQUEST_UNKNOWN",
                 "TRADE_EXPORT_QUEUED",
                 "TRADE_EXPORT_STATUS_MISSING",
