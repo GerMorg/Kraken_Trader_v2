@@ -22,6 +22,7 @@ TRADE_EXPORT_POLL_INTERVAL_SECONDS = 5 * 60
 TRADE_EXPORT_MAX_PENDING_SECONDS = 7 * 24 * 60 * 60
 TRADE_EXPORT_MAX_UNCOMPRESSED_BYTES = 100_000_000
 TRADE_EXPORT_MAX_CSV_FILES = 20
+TRADE_EXPORT_MAX_DOWNLOAD_ATTEMPTS = 3
 
 
 REQUIRED_HISTORY_SOURCES = ("TRADES", "LEDGERS", "CLOSED_ORDERS")
@@ -631,12 +632,30 @@ def _recover_trade_ledgers_from_export(
             error_code = type(exc).__name__
             if isinstance(exc, ValueError):
                 error_code = str(exc)[:100]
-            persistence.save_history_export_recovery_request({
-                **request_base, "status": "PROCESSED",
-                "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
-                "last_error": "EXPORT_IMPORT_FAILED:" + error_code,
-            })
-            summary["trade_export_requests_pending"] = int(summary["trade_export_requests_pending"]) + 1
+            download_attempt_count = int(request.get("download_attempt_count", 0)) + 1
+            download_exhausted = download_attempt_count >= TRADE_EXPORT_MAX_DOWNLOAD_ATTEMPTS
+            if download_exhausted:
+                persistence.save_history_export_recovery_request({
+                    **request_base, "status": "REQUEST_FAILED",
+                    "download_attempt_count": download_attempt_count,
+                    "next_poll_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
+                    "last_error": "EXPORT_IMPORT_FAILED_AFTER_RETRIES:" + error_code,
+                })
+                for trade_id in request.get("trade_ids", []):
+                    _set_trade_export_evidence(
+                        persistence=persistence, trade_id=trade_id,
+                        source="TRADE_EXPORT_LOOKUP_FAILED",
+                        outcome="EXPORT_IMPORT_FAILED:" + error_code,
+                        now_epoch=now_epoch, report_id=report_id,
+                    )
+            else:
+                persistence.save_history_export_recovery_request({
+                    **request_base, "status": "PROCESSED",
+                    "download_attempt_count": download_attempt_count,
+                    "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
+                    "last_error": "EXPORT_IMPORT_FAILED:" + error_code,
+                })
+                summary["trade_export_requests_pending"] = int(summary["trade_export_requests_pending"]) + 1
             continue
 
         for trade_id in sorted(target_ids):
