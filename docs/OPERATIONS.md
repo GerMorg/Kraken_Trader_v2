@@ -1,10 +1,17 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.35 — Trades-Export für fehlende Ledger-Verknüpfungen
+
+Wenn QueryTrades und der gezielte TradesHistory-Fallback keine Ledger-IDs liefern, verwendet die App den dokumentierten Kraken-Trades-Export. Er wird auf ein Fenster von 15 Sekunden vor und nach dem gespeicherten Börsenzeitpunkt begrenzt. Die App fragt AddExport an, speichert die Export-ID direkt in der Trade-Historie und prüft ExportStatus in späteren Zyklen. Nach Status `Processed` lädt RetrieveExport die ZIP-Datei; die CSV wird im Arbeitsspeicher gelesen und nicht als dauerhafte Datei gespeichert.
+
+Eine Zeile wird nur verarbeitet, wenn ihre eindeutige `txid` dem gespeicherten Trade entspricht. Order-ID, Zeit, Richtung, Preis, Volumen und Gebühr werden zusätzlich abgeglichen. Doppelte Treffer, Abweichungen, fehlende Felder und nicht verfügbare Exporte heben die Sperre nicht auf. Nach erfolgreicher Wiederherstellung mit Ledger-IDs wird der fertige Export mit RemoveExport gelöscht. Für diesen Recovery-Schritt ist die Kraken-Berechtigung `export-data` erforderlich; die im aktuellen Benutzer-Log erkannte Berechtigung ist bereits vorhanden.
+
+Im Ereignis `KRAKEN_TRADE_LEDGER_RECONCILIATION` zeigen `trade_rows_export_requested`, `trade_rows_export_status_checked`, `trade_rows_export_recovered`, `trade_rows_export_empty_ledgers`, `trade_rows_export_pending`, `trade_rows_export_deferred`, `trade_rows_export_failures`, `trade_rows_export_status_missing` und `next_trade_export_retry_epoch` den Stand an. Leere Ledger-Listen werden erst nach unabhängig vollständigem Ledger-/refid-Abgleich bestätigt. Keine Änderung an der Live-Freigabe.
+
+Offizielle Referenz: [Request Export Report](https://docs.kraken.com/api-reference/account-data/request-export), [Get Export Report Status](https://docs.kraken.com/api-reference/account-data/get-export-report-status), [Retrieve Data Export](https://docs.kraken.com/api-reference/account-data/retrieve-data-export), [Delete Export Report](https://docs.kraken.com/api-reference/account-data/delete-export-report) und [Trades-Historie: Felder und Ledger-Referenzen](https://support.kraken.com/de/articles/360001184886-how-to-interpret-trades-history-fields?mode=consumerapp).
+
 ## Version 0.1.34 — gezielter Trade-/Ledger-Fallback
 
-Bei gespeicherten Trades ohne Ledger-Verknüpfung verwendet Version 0.1.34 zusätzlich eine gezielte Abfrage über Kraken TradesHistory. Dieser Fallback wird bei einem zuvor erfolglosen QueryTrades-Abruf sofort versucht; die frühere sechs-Stunden-Wartezeit blockiert ihn nicht. Die Anfrage nutzt ledgers=true, ein Zeitfenster von fünf Sekunden vor und nach dem gespeicherten Trade-Zeitpunkt und Cursor-Paginierung mit höchstens fünf Seiten. Es wird nur eine Antwort übernommen, deren Schlüssel exakt der erwarteten Trade-ID entspricht.
-
-Im Ereignis KRAKEN_TRADE_LEDGER_RECONCILIATION sind dazu folgende Felder sichtbar: trade_rows_history_window_queried, trade_rows_history_window_pages, trade_rows_history_window_recovered, trade_rows_history_window_ledger_field_missing, trade_rows_history_window_not_found, trade_rows_history_window_deferred und next_trade_history_retry_epoch. Wenn die Relation weiterhin fehlt, bleibt der Quality-Gap aktiv. Leere Listen werden nicht allein wegen einer erfolgreichen API-Antwort akzeptiert, sondern benötigen weiterhin den vollständigen unabhängigen Ledger-/refid-Abgleich.
 
 ## Version 0.1.32 – bestehende HA-Mounts direkt verwenden
 
