@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.34 — Gezielte TradesHistory-Reparatur für fehlende Ledger-Verknüpfungen
+
+- Wenn eine QueryTrades-Antwort das ledgers-Feld nicht enthält, wechselt die App sofort zu einer gezielten Abfrage über TradesHistory. Sie wiederholt nicht nur denselben Abruf nach sechs Stunden.
+- Der Fallback nutzt ledgers=true, ein enges Zeitfenster um den gespeicherten Börsen-Zeitstempel und Kraken-Cursor-Paginierung. Nur die exakt übereinstimmende Trade-ID darf den vorhandenen Datensatz ersetzen.
+- Leere Ledger-Listen werden weiterhin erst nach unabhängigem Abgleich mit der vollständigen Ledger-Historie und den refid-Verknüpfungen bestätigt. Fehlende, ungültige oder nicht gefundene Daten bleiben gesperrt.
+- Neue Diagnosefelder trade_rows_history_window_* zeigen Abfragen, gelesene Seiten, Wiederherstellungen, fehlende Felder und den nächsten Wiederholungszeitpunkt. Keine Änderung an der Live-Freigabe.
+
 ## 0.1.33 — History-Qualitätslücken auch in der Positions-Reconciliation sperren
 
 - Die Positions-/Fill-Reconciliation behandelt verbleibende `quality_gaps` jetzt wie eine unvollständige Historie, auch wenn die Pagination technisch abgeschlossen ist.
