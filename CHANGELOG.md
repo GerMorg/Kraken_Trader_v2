@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.36 — Interne Live-Freigabe wird technisch erzwungen
+
+- Die zentrale `OrderAuthority` blockiert echte Orderübermittlung, solange `INTERNAL_LIVE_EXECUTION_RELEASED` im Code `False` ist. Home-Assistant-Optionen allein können die Sperre nicht aufheben.
+- Regressionstest beweist, dass bei aktivierten Live-Operator-Schaltern kein Kraken-Orderaufruf erfolgt, und erhält einen separaten Test des echten Ausführungspfads unter explizit freigegebenem Test-Flag.
+- `KRAKEN_HISTORY_RECONCILED` protokolliert den endgültigen Zustand nach gezielten Reconciliation-Reparaturen; `CYCLE_SUMMARY` enthält Historienbereitschaft und tatsächlichen Live-Release-Status.
+- Diese Version bleibt ausdrücklich nicht für unbeaufsichtigte Live-Ausführung freigegeben.
+
 ## 0.1.35 — Kraken-Trade-Export als Ledger-Recovery-Fallback
 
 - Wenn sowohl QueryTrades als auch TradesHistory die Ledger-Verknüpfung eines gespeicherten Trades nicht liefern, fordert die App einen eng begrenzten Kraken-Trades-Export an (15 Sekunden vor/nach dem gespeicherten Trade-Zeitpunkt).
