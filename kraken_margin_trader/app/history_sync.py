@@ -1567,7 +1567,7 @@ def reconcile_trade_ledger_coverage(
             order_txid = str(row.get("ordertxid", "")).strip()
             matching_order_refid_ids = sorted(ledger_ids_by_trade.get(order_txid, set()))
             evidence = row.get("_ledger_reference_evidence")
-            evidence_source = (
+            relation_evidence_source = (
                 evidence.get("source") if isinstance(evidence, dict) else None
             )
             query_explicit_empty = (
@@ -1588,13 +1588,13 @@ def reconcile_trade_ledger_coverage(
                 conflict_outcome = None
                 outcome_prefix = (
                     "TRADE_EXPORT_EMPTY"
-                    if evidence_source in {
+                    if relation_evidence_source in {
                         "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
                         "TRADE_EXPORT_EMPTY_CONFIRMED",
                     }
                     else (
                         "TRADE_HISTORY_EMPTY"
-                        if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
+                        if relation_evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
                         else "QUERY_TRADES_EMPTY"
                     )
                 )
@@ -1615,19 +1615,19 @@ def reconcile_trade_ledger_coverage(
                     })
                     continue
                 if can_confirm_empty_relations:
-                    already_confirmed = evidence_source in {
+                    already_confirmed = relation_evidence_source in {
                         "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
                         "TRADE_EXPORT_EMPTY_CONFIRMED",
                     }
                     confirmed_source = (
                         "TRADE_EXPORT_EMPTY_CONFIRMED"
-                        if evidence_source in {
+                        if relation_evidence_source in {
                             "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
                             "TRADE_EXPORT_EMPTY_CONFIRMED",
                         }
                         else (
                             "TRADE_HISTORY_EMPTY_CONFIRMED"
-                            if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
+                            if relation_evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
                             else "QUERY_TRADES_EMPTY_CONFIRMED"
                         )
                     )
@@ -1775,15 +1775,15 @@ def reconcile_trade_ledger_coverage(
         evidence = row.get("_ledger_reference_evidence") if row is not None else None
         if not isinstance(evidence, dict):
             continue
-        evidence_source = evidence.get("source")
+        stored_evidence_source = evidence.get("source")
         retry_after = _count(evidence.get("retry_after_epoch"))
         if retry_after is None or retry_after <= now_epoch:
             continue
-        if evidence_source in {"QUERY_TRADES_LEDGER_FIELD_MISSING", "QUERY_TRADES_LOOKUP_PENDING"}:
+        if stored_evidence_source in {"QUERY_TRADES_LEDGER_FIELD_MISSING", "QUERY_TRADES_LOOKUP_PENDING"}:
             pending_query_retry_epochs.append(retry_after)
-        elif evidence_source in history_retry_sources:
+        elif stored_evidence_source in history_retry_sources:
             pending_history_retry_epochs.append(retry_after)
-        elif evidence_source in export_eligible_sources or evidence_source == "TRADE_EXPORT_REQUEST_PENDING":
+        elif stored_evidence_source in export_eligible_sources or stored_evidence_source == "TRADE_EXPORT_REQUEST_PENDING":
             pending_export_retry_epochs.append(retry_after)
     next_trade_query_retry_epoch = (
         min(pending_query_retry_epochs) if pending_query_retry_epochs else None
