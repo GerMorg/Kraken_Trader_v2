@@ -1,5 +1,11 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.35 — Wiederherstellung über Trade-CSV-Export
+
+Wenn QueryTrades und die gezielte TradesHistory-Abfrage die Ledger-Referenz eines gespeicherten Trades nicht zurückgeben, kann die App einen zeitlich begrenzten Kraken-Trade-Export anfordern. Dafür ist die vorhandene Kraken-Berechtigung `export-data` nötig; die Berechtigung wurde beim zuletzt übermittelten Log bereits angezeigt. Der Reportstatus wird zyklisch über ExportStatus abgefragt und ein fertiger ZIP/CSV-Report nur im Arbeitsspeicher ausgewertet. Die Report-ID, Ziel-Trade-IDs, Zeitgrenzen und der Status bleiben in SQLite gespeichert.
+
+Das Ereignis `KRAKEN_TRADE_LEDGER_RECONCILIATION` zeigt `trade_export_supported`, `trade_export_requests_created`, `trade_export_requests_checked`, `trade_export_requests_pending`, `trade_export_rows_matched`, `trade_export_rows_recovered`, `trade_export_empty_ledgers`, `trade_export_rows_unmatched` und `trade_export_errors`. Der Fallback akzeptiert ausschließlich exakte Trade-IDs. Eine leere Ledger-Zelle wird weiterhin gegen die vollständig importierte Ledger-Historie und deren `refid`-Verknüpfungen geprüft. Ein nicht aufgelöster Fall bleibt für neue Risikoerhöhungen gesperrt.
+
 ## Version 0.1.34 — gezielter Trade-/Ledger-Fallback
 
 Bei gespeicherten Trades ohne Ledger-Verknüpfung verwendet Version 0.1.34 zusätzlich eine gezielte Abfrage über Kraken TradesHistory. Dieser Fallback wird bei einem zuvor erfolglosen QueryTrades-Abruf sofort versucht; die frühere sechs-Stunden-Wartezeit blockiert ihn nicht. Die Anfrage nutzt ledgers=true, ein Zeitfenster von fünf Sekunden vor und nach dem gespeicherten Trade-Zeitpunkt und Cursor-Paginierung mit höchstens fünf Seiten. Es wird nur eine Antwort übernommen, deren Schlüssel exakt der erwarteten Trade-ID entspricht.
