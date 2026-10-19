@@ -1,5 +1,11 @@
 # Ausführung, Orderzustände und Wiederherstellung
 
+## v0.1.35: Trade-Export als unabhängiger Recovery-Pfad
+
+Wenn die exakte QueryTrades-Abfrage und die zeitlich begrenzte TradesHistory-Abfrage kein `ledgers`-Feld liefern, verwendet die Recovery zusätzlich Krakens asynchronen CSV-Export. Der Ablauf persistiert vor dem API-Aufruf einen eindeutigen Report-Deskriptor; nach einem Neustart kann die App einen Auftrag anhand dieses Deskriptors im Exportstatus wiederfinden. Pro Zyklus wird höchstens ein neuer, zeitlich eng begrenzter Report angefordert. Statusabfragen werden mindestens fünf Minuten auseinandergehalten.
+
+Der heruntergeladene ZIP-Report wird in-memory begrenzt verarbeitet. Nur eine CSV-Zeile mit exakt übereinstimmender `txid` kann den gespeicherten Trade aktualisieren. Fehlende Felder, ungültige Daten, doppelte Ziel-IDs, nicht gefundene Trades oder API-Fehler werden protokolliert und halten die Sperre aktiv. Bei `ledgers` leer bleibt der Datensatz im Zustand `TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK`; bestätigt wird er nur nach vollständiger Ledger-Historie und unabhängigem `refid`-Abgleich. Der Export-Fallback schaltet keinen Live-Handel frei.
+
 ## v0.1.34: gezielte TradesHistory-Reparatur für fehlende Ledger-Referenzen
 
 Wenn eine QueryTrades-Antwort das Feld ledgers nicht enthält, wird die Relation nicht länger nur durch erneute QueryTrades-Aufrufe gesucht. Die App verwendet jetzt zusätzlich die dokumentierte TradesHistory-API mit ledgers=true, Zeitgrenzen start/end und Cursor-Paginierung. Die Abfrage beginnt fünf Sekunden vor und endet fünf Sekunden nach dem gespeicherten Exchange-Zeitpunkt; höchstens fünf Cursor-Seiten werden geprüft. Übernommen wird ausschließlich die Zeile, deren Schlüssel exakt mit der gesuchten Trade-ID übereinstimmt. Eine ähnliche Zeit, ein gleiches Handelspaar oder ein passendes Order-ID allein genügt nicht.
