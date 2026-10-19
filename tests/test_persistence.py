@@ -360,3 +360,43 @@ def test_exchange_tax_reimport_preserves_valid_enrichment_but_invalidates_change
     assert invalidated["manual_review"] == 1
     assert invalidated["payload"]["price"] == "91000"
     db.close()
+
+
+def test_trade_export_recovery_state_survives_restart(tmp_path):
+    path = str(tmp_path / "trade-export-recovery.sqlite3")
+    db = Persistence(path)
+    db.save_history_export_recovery_request({
+        "request_key": "recovery-abc123",
+        "report_id": "EXPORT-123",
+        "description": "KTV2-LedgerRecovery-abc123",
+        "start_epoch": 1768000000,
+        "end_epoch": 1768000010,
+        "trade_ids": ["T1", "T2"],
+        "status": "QUEUED",
+        "requested_at_epoch": 1769000000,
+        "next_poll_epoch": 1769000300,
+        "attempt_count": 1,
+        "last_error": None,
+    })
+    db.close()
+
+    reopened = Persistence(path)
+    requests = reopened.history_export_recovery_requests()
+    assert len(requests) == 1
+    assert requests[0]["report_id"] == "EXPORT-123"
+    assert requests[0]["status"] == "QUEUED"
+    assert requests[0]["trade_ids"] == ["T1", "T2"]
+    assert requests[0]["next_poll_epoch"] == 1769000300
+
+    reopened.save_history_export_recovery_request({
+        **requests[0],
+        "status": "IMPORTED",
+        "next_poll_epoch": 1769022000,
+        "last_error": None,
+    })
+    assert reopened.history_export_recovery_requests()[0]["status"] == "IMPORTED"
+    schema = reopened.connection.execute(
+        "SELECT value FROM schema_meta WHERE key='schema_version'"
+    ).fetchone()
+    assert schema is not None and schema["value"] == "6"
+    reopened.close()
