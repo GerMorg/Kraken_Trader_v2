@@ -1725,7 +1725,7 @@ def reconcile_trade_ledger_coverage(
         reason = (
             "TRADE_LEDGER_EMPTY_RELATION_CONFIRMED"
             if resolution_source in {
-                "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
+                "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED", "TRADE_EXPORT_EMPTY_CONFIRMED",
             }
             else "TRADE_LEDGER_REFERENCES_RECOVERED"
         )
@@ -1751,6 +1751,7 @@ def reconcile_trade_ledger_coverage(
     )
     pending_query_retry_epochs: list[int] = []
     pending_history_retry_epochs: list[int] = []
+    pending_export_retry_epochs: list[int] = []
     history_retry_sources = {
         "TRADES_HISTORY_WINDOW_LOOKUP_PENDING",
         "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
@@ -1771,11 +1772,16 @@ def reconcile_trade_ledger_coverage(
             pending_query_retry_epochs.append(retry_after)
         elif evidence_source in history_retry_sources:
             pending_history_retry_epochs.append(retry_after)
+        elif evidence_source in export_eligible_sources or evidence_source == "TRADE_EXPORT_REQUEST_PENDING":
+            pending_export_retry_epochs.append(retry_after)
     next_trade_query_retry_epoch = (
         min(pending_query_retry_epochs) if pending_query_retry_epochs else None
     )
     next_trade_history_retry_epoch = (
         min(pending_history_retry_epochs) if pending_history_retry_epochs else None
+    )
+    next_trade_export_retry_epoch = (
+        min(pending_export_retry_epochs) if pending_export_retry_epochs else None
     )
 
     return {
@@ -1792,6 +1798,15 @@ def reconcile_trade_ledger_coverage(
         "trade_rows_history_window_invalid": trade_rows_history_window_invalid,
         "trade_rows_history_window_deferred": trade_rows_history_window_deferred,
         "next_trade_history_retry_epoch": next_trade_history_retry_epoch,
+        "trade_rows_export_requested": trade_rows_export_requested,
+        "trade_rows_export_status_checked": trade_rows_export_status_checked,
+        "trade_rows_export_recovered": trade_rows_export_recovered,
+        "trade_rows_export_empty_ledgers": trade_rows_export_empty_ledgers,
+        "trade_rows_export_pending": trade_rows_export_pending,
+        "trade_rows_export_deferred": trade_rows_export_deferred,
+        "trade_rows_export_failures": trade_rows_export_failures,
+        "trade_rows_export_status_missing": trade_rows_export_status_missing,
+        "next_trade_export_retry_epoch": next_trade_export_retry_epoch,
         "trade_rows_recovered": trade_rows_recovered,
         "trade_rows_query_empty_ledgers": trade_rows_query_empty_ledgers,
         "trade_rows_query_missing": trade_rows_query_missing,
