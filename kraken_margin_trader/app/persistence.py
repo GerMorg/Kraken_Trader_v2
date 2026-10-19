@@ -799,7 +799,9 @@ class Persistence:
             not isinstance(value, str) or not value.strip() for value in trade_ids
         ):
             raise ValueError("EXPORT_RECOVERY_TRADE_IDS_INVALID")
-        report_id = str(request.get("report_id", "")).strip() or None
+        raw_report_id = request.get("report_id")
+        report_id = str(raw_report_id).strip() if raw_report_id is not None else ""
+        report_id = report_id or None
         requested_at_epoch = int(request.get("requested_at_epoch", time.time()))
         next_poll_epoch = int(request.get("next_poll_epoch", requested_at_epoch))
         attempt_count = int(request.get("attempt_count", 1))
