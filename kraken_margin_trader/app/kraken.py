@@ -6,7 +6,7 @@ import hmac
 import json
 import time
 import threading
-from typing import Any, Callable
+from typing import Any, Callable, Literal, overload
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -259,7 +259,21 @@ class KrakenClient:
             raise KrakenAPIError("KRAKEN_PUBLIC_RESULT_INVALID")
         return result
 
-    def private(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    @overload
+    def private(
+        self, method: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]: ...
+
+    @overload
+    def private(
+        self, method: str, params: dict[str, Any] | None = None,
+        *, allow_list_result: Literal[True],
+    ) -> dict[str, Any] | list[Any]: ...
+
+    def private(
+        self, method: str, params: dict[str, Any] | None = None,
+        *, allow_list_result: bool = False,
+    ) -> dict[str, Any] | list[Any]:
         if not self.api_key or not self.api_secret:
             raise KrakenAPIError("KRAKEN_CREDENTIALS_MISSING")
         with self._private_request_lock:
@@ -316,11 +330,77 @@ class KrakenClient:
             if value.get("error"):
                 raise KrakenAPIError("KRAKEN_PRIVATE:" + ";".join(str(x) for x in value["error"]))
             result = value.get("result", {})
-            if not isinstance(result, dict):
-                if method == "AddOrder":
-                    raise KrakenAmbiguousError("ADD_ORDER_RESULT_SHAPE_OUTCOME_UNKNOWN")
-                raise KrakenAPIError("KRAKEN_PRIVATE_RESULT_INVALID")
-            return result
+            if isinstance(result, dict):
+                return result
+            if allow_list_result and isinstance(result, list):
+                return result
+            if method == "AddOrder":
+                raise KrakenAmbiguousError("ADD_ORDER_RESULT_SHAPE_OUTCOME_UNKNOWN")
+            raise KrakenAPIError("KRAKEN_PRIVATE_RESULT_INVALID")
+
+    def private_binary(
+        self, method: str, params: dict[str, Any] | None = None, *, max_bytes: int = 25_000_000
+    ) -> bytes:
+        """Retrieve bounded binary data from a private Kraken endpoint without logging its contents."""
+        if not self.api_key or not self.api_secret:
+            raise KrakenAPIError("KRAKEN_CREDENTIALS_MISSING")
+        if max_bytes < 1 or max_bytes > 100_000_000:
+            raise ValueError("KRAKEN_BINARY_RESPONSE_LIMIT_INVALID")
+        with self._private_request_lock:
+            path = f"/0/private/{method}"
+            nonce = self.nonce_provider()
+            try:
+                payload: dict[str, Any] = {"nonce": int(nonce)}
+                payload.update(dict(params or {}))
+                payload["nonce"] = int(nonce)
+                json_body = json.dumps(
+                    payload, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+                )
+                signature = sign_spot(path, json_body, self.api_secret)
+            except (ValueError, TypeError, OverflowError) as exc:
+                raise KrakenAPIError("KRAKEN_PRIVATE_SIGNING_CONFIGURATION_INVALID") from exc
+            request = Request(
+                SPOT_BASE + path,
+                data=json_body.encode("utf-8"),
+                method="POST",
+                headers={
+                    "API-Key": self.api_key,
+                    "API-Sign": signature,
+                    "Content-Type": "application/json",
+                    "Accept": "application/octet-stream",
+                    "User-Agent": f"KrakenTraderV2/{__version__}",
+                },
+            )
+            try:
+                with urlopen(request, timeout=self.timeout_seconds) as response:
+                    raw = response.read(max_bytes + 1)
+            except HTTPError as exc:
+                try:
+                    error_value = _decode_response(exc.read(65_536))
+                except (KrakenAPIError, OSError) as body_exc:
+                    raise KrakenAPIError("KRAKEN_PRIVATE_BINARY_HTTP_ERROR") from body_exc
+                errors = error_value.get("error")
+                if isinstance(errors, list) and errors:
+                    raise KrakenAPIError(
+                        "KRAKEN_PRIVATE:" + ";".join(str(item) for item in errors)
+                    ) from exc
+                raise KrakenAPIError("KRAKEN_PRIVATE_BINARY_HTTP_ERROR") from exc
+            except (TimeoutError, URLError, OSError) as exc:
+                raise KrakenAPIError("KRAKEN_PRIVATE_BINARY_NETWORK_ERROR") from exc
+            if len(raw) > max_bytes:
+                raise KrakenAPIError("KRAKEN_PRIVATE_BINARY_RESPONSE_TOO_LARGE")
+            if raw.lstrip().startswith((b"{", b"[")):
+                try:
+                    error_value = _decode_response(raw)
+                except KrakenAPIError:
+                    raise KrakenAPIError("KRAKEN_PRIVATE_BINARY_RESPONSE_INVALID")
+                errors = error_value.get("error")
+                if isinstance(errors, list) and errors:
+                    raise KrakenAPIError(
+                        "KRAKEN_PRIVATE:" + ";".join(str(item) for item in errors)
+                    )
+                raise KrakenAPIError("KRAKEN_PRIVATE_BINARY_ARCHIVE_EXPECTED")
+            return raw
 
     def api_key_permission_assessment(self, *, now_epoch: int | None = None) -> dict[str, Any]:
         """Check required read scopes and reject overly privileged/limited API keys."""
@@ -453,6 +533,53 @@ class KrakenClient:
         if len(normalized) > 20:
             raise ValueError("QUERY_LEDGERS_IDS_LIMIT_EXCEEDED")
         return self.private("QueryLedgers", {"id": ",".join(normalized)})
+
+    def request_export_report(
+        self, *, description: str, start_epoch: int, end_epoch: int,
+        report: str = "trades",
+    ) -> dict[str, Any]:
+        """Request a bounded trades or ledger export; it is an account-history read job."""
+        normalized_report = report.strip().lower()
+        normalized_description = description.strip()
+        if normalized_report not in {"trades", "ledgers"}:
+            raise ValueError("KRAKEN_EXPORT_REPORT_TYPE_INVALID")
+        if not normalized_description or len(normalized_description) > 100:
+            raise ValueError("KRAKEN_EXPORT_DESCRIPTION_INVALID")
+        if start_epoch < 0 or end_epoch < start_epoch:
+            raise ValueError("KRAKEN_EXPORT_TIME_WINDOW_INVALID")
+        result = self.private(
+            "AddExport",
+            {
+                "report": normalized_report,
+                "description": normalized_description,
+                "format": "CSV",
+                "fields": "all",
+                "starttm": int(start_epoch),
+                "endtm": int(end_epoch),
+            },
+        )
+        if not isinstance(result.get("id"), str) or not result["id"].strip():
+            raise KrakenAPIError("KRAKEN_EXPORT_REQUEST_ID_MISSING")
+        return result
+
+    def export_status(self, *, report: str = "trades") -> list[dict[str, Any]]:
+        """Read queued/processing/completed account data exports of the requested type."""
+        normalized_report = report.strip().lower()
+        if normalized_report not in {"trades", "ledgers"}:
+            raise ValueError("KRAKEN_EXPORT_REPORT_TYPE_INVALID")
+        result = self.private(
+            "ExportStatus", {"report": normalized_report}, allow_list_result=True
+        )
+        if not isinstance(result, list) or any(not isinstance(item, dict) for item in result):
+            raise KrakenAPIError("KRAKEN_EXPORT_STATUS_INVALID")
+        return result
+
+    def retrieve_export(self, report_id: str) -> bytes:
+        """Download a processed Kraken export as a bounded ZIP archive."""
+        normalized_id = report_id.strip()
+        if not normalized_id or len(normalized_id) > 128:
+            raise ValueError("KRAKEN_EXPORT_ID_INVALID")
+        return self.private_binary("RetrieveExport", {"id": normalized_id})
 
     def trade_volume(self, pairs: list[str]) -> dict[str, Any]:
         if not pairs:
