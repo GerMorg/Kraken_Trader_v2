@@ -697,14 +697,17 @@ def test_query_trades_missing_ledgers_field_is_persisted_and_not_requeried():
     assert first["status"] == "INCOMPLETE"
     assert first["trade_rows_queried"] == 1
     assert first["trade_rows_query_ledger_field_missing"] == 1
+    assert first["trade_rows_history_window_queried"] == 1
+    assert first["trade_rows_history_window_ledger_field_missing"] == 1
+    assert first["trade_rows_history_window_pages"] == 1
     assert first["missing_trade_references"] == 1
     assert len(calls) == 1
 
     saved = db.fills()[0]["raw"]["raw"]
     assert "ledgers" not in saved
-    assert saved["_ledger_reference_evidence"]["source"] == "QUERY_TRADES_LEDGER_FIELD_MISSING"
+    assert saved["_ledger_reference_evidence"]["source"] == "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING"
     assert saved["_ledger_reference_evidence"]["ledgers_field_present"] is False
-    assert saved["_ledger_reference_evidence"]["attempt_count"] == 1
+    assert saved["_ledger_reference_evidence"]["attempt_count"] == 2
     assert (
         saved["_ledger_reference_evidence"]["retry_after_epoch"]
         > saved["_ledger_reference_evidence"]["last_attempt_epoch"]
