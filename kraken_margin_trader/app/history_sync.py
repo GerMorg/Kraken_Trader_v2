@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import csv
 from datetime import datetime, timezone
 from decimal import Decimal
+from io import BytesIO, TextIOWrapper
 import hashlib
+import re
 import time
+import zipfile
 from zoneinfo import ZoneInfo
 from typing import Any
 
@@ -279,6 +283,134 @@ def _ledger_row_from_event(event: dict[str, Any]) -> dict[str, Any] | None:
     if "time" in envelope and "refid" in envelope:
         return envelope
     return None
+
+
+def _export_time_epoch(value: Any) -> float | None:
+    """Parse a numeric or Kraken CSV UTC timestamp without guessing a local timezone."""
+    try:
+        numeric = D(str(value).strip())
+        if numeric.is_finite() and numeric >= 0:
+            return float(numeric)
+    except (ArithmeticError, TypeError, ValueError):
+        pass
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = None
+        for pattern in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+            try:
+                parsed = datetime.strptime(raw, pattern)
+                break
+            except ValueError:
+                continue
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).timestamp()
+
+
+def _export_decimal_matches(export_value: Any, original_value: Any) -> bool:
+    try:
+        left = D(str(export_value).strip())
+        right = D(str(original_value).strip())
+    except (ArithmeticError, TypeError, ValueError):
+        return False
+    return left.is_finite() and right.is_finite() and left == right
+
+
+def _trade_export_ledger_references(
+    archive_bytes: bytes,
+    *,
+    trade_id: str,
+    existing_row: dict[str, Any],
+    max_uncompressed_bytes: int = 20_000_000,
+    max_rows: int = 10_000,
+) -> tuple[list[str] | None, str]:
+    """Extract ledger IDs only from a unique exact-txid row in Kraken's CSV export."""
+    if not archive_bytes or len(archive_bytes) > 20_000_000:
+        return None, "ARCHIVE_SIZE_INVALID"
+    try:
+        with zipfile.ZipFile(BytesIO(archive_bytes)) as archive:
+            entries = [
+                item for item in archive.infolist()
+                if not item.is_dir() and item.filename.lower().endswith(".csv")
+            ]
+            if not entries or len(entries) > 20:
+                return None, "CSV_ENTRY_COUNT_INVALID"
+            if sum(item.file_size for item in entries) > max_uncompressed_bytes:
+                return None, "ARCHIVE_UNCOMPRESSED_SIZE_EXCEEDED"
+            matches: list[dict[str, str]] = []
+            rows_seen = 0
+            for entry in entries:
+                with archive.open(entry) as binary:
+                    with TextIOWrapper(binary, encoding="utf-8-sig", newline="") as stream:
+                        reader = csv.DictReader(stream)
+                        if reader.fieldnames is None:
+                            continue
+                        normalized_headers = {
+                            re.sub(r"[^a-z0-9]", "", str(name or "").lower()): name
+                            for name in reader.fieldnames
+                        }
+                        txid_header = normalized_headers.get("txid")
+                        if txid_header is None:
+                            continue
+                        for row in reader:
+                            rows_seen += 1
+                            if rows_seen > max_rows:
+                                return None, "CSV_ROW_BUDGET_EXCEEDED"
+                            exported_id = str(row.get(txid_header, "") or "").strip()
+                            if exported_id == trade_id:
+                                matches.append({
+                                    re.sub(r"[^a-z0-9]", "", str(key or "").lower()):
+                                    str(value or "").strip()
+                                    for key, value in row.items()
+                                })
+                                if len(matches) > 1:
+                                    return None, "EXACT_TRADE_ID_DUPLICATED"
+    except (zipfile.BadZipFile, OSError, RuntimeError, csv.Error, UnicodeDecodeError):
+        return None, "ARCHIVE_OR_CSV_INVALID"
+
+    if not matches:
+        return None, "EXACT_TRADE_ID_NOT_FOUND"
+    exported = matches[0]
+    # The unique exchange trade ID is authoritative, but cross-check its persisted
+    # order, timestamp, direction, volume and price before taking its ledger relation.
+    expected_order = str(existing_row.get("ordertxid", "") or "").strip()
+    exported_order = exported.get("ordertxid", "")
+    if expected_order and exported_order and expected_order != exported_order:
+        return None, "ORDER_ID_CONFLICT"
+    exported_epoch = _export_time_epoch(exported.get("time"))
+    original_epoch = _export_time_epoch(existing_row.get("time"))
+    if exported_epoch is None or original_epoch is None or abs(exported_epoch - original_epoch) > 2.0:
+        return None, "TRADE_TIME_CONFLICT"
+    expected_side = str(existing_row.get("type", "") or "").strip().lower()
+    exported_side = exported.get("type", "").lower()
+    if expected_side and exported_side and expected_side != exported_side:
+        return None, "TRADE_SIDE_CONFLICT"
+    for field in ("price", "vol", "fee"):
+        original_value = existing_row.get(field)
+        exported_value = exported.get(field)
+        if original_value not in (None, "") and exported_value and not _export_decimal_matches(
+            exported_value, original_value
+        ):
+            return None, "TRADE_VALUE_CONFLICT:" + field
+
+    if "ledgers" not in exported:
+        return None, "LEDGER_FIELD_MISSING"
+    ledger_text = exported.get("ledgers", "").strip()
+    if not ledger_text:
+        return [], "EMPTY_LEDGER_LIST"
+    refs = [
+        item for item in re.split(r"[,;|\s]+", ledger_text.strip("[]() "))
+        if item
+    ]
+    if not refs or any(not re.fullmatch(r"[A-Za-z0-9-]+", item) for item in refs):
+        return None, "LEDGER_IDS_INVALID"
+    return list(dict.fromkeys(refs)), "LEDGER_IDS_FOUND"
 
 
 def _lookup_trade_history_window(
