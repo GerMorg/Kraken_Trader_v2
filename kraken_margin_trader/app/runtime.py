@@ -920,9 +920,9 @@ class TraderRuntime:
                 "history_ready_for_entries": history_ready_for_entries,
                 "history_evidence_gaps": list(history_evidence_gaps),
                 "note": (
-                    "Approved LIVE intents are routed to OrderAuthority when operator switches are active; "
-                    "no fill is assumed from an acknowledged submission. Explicit history, cost, edge and "
-                    "risk gates can still reject a candidate."
+                    "Real order submission also requires the internal release gate; "
+                    "INTERNAL_LIVE_EXECUTION_RELEASED is false in this version. "
+                    "No fill is assumed from an acknowledged submission."
                 ),
             }
             self.persistence.record_event("CYCLE_SUMMARY",result); self.audit.emit("CYCLE_SUMMARY",**result)
