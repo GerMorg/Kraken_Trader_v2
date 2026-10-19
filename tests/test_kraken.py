@@ -604,3 +604,100 @@ def test_api_key_permission_gate_rechecks_recoverable_key_configuration_each_cyc
         "API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED"
     ]
     assert api_key_permission_gate_reasons(corrected) == []
+
+
+def test_export_status_supports_krakens_list_result(monkeypatch):
+    import json
+    from app.kraken import KrakenClient, sign_spot
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, size=-1):
+            return json.dumps({
+                "error": [],
+                "result": [{"id": "EXPORT-1", "descr": "KTV2-test", "status": "Queued"}],
+            }).encode("utf-8")
+
+    captured = []
+    monkeypatch.setattr("app.kraken.urlopen", lambda request, timeout: captured.append(request) or Response())
+    secret = base64.b64encode(b"test-secret").decode("ascii")
+    client = KrakenClient("test-key", secret, nonce_provider=lambda: 123)
+
+    result = client.export_status(report="trades")
+
+    assert result == [{"id": "EXPORT-1", "descr": "KTV2-test", "status": "Queued"}]
+    assert len(captured) == 1
+    body = captured[0].data.decode("utf-8")
+    assert json.loads(body) == {"nonce": 123, "report": "trades"}
+    assert captured[0].get_header("Api-sign") == sign_spot(
+        "/0/private/ExportStatus", body, secret
+    )
+
+
+def test_trade_export_request_uses_bounded_csv_fields():
+    from app.kraken import KrakenClient
+
+    client = KrakenClient("test-key", "test-secret")
+    captured = []
+    client.private = lambda method, params=None: captured.append((method, params)) or {"id": "EXPORT-42"}
+
+    result = client.request_export_report(
+        description="KTV2-LedgerRecovery-test",
+        start_epoch=1768000000,
+        end_epoch=1768000010,
+        report="trades",
+    )
+
+    assert result["id"] == "EXPORT-42"
+    assert captured == [(
+        "AddExport",
+        {
+            "report": "trades",
+            "description": "KTV2-LedgerRecovery-test",
+            "format": "CSV",
+            "fields": "all",
+            "starttm": 1768000000,
+            "endtm": 1768000010,
+        },
+    )]
+
+
+def test_private_binary_export_download_is_bounded_and_signed(monkeypatch):
+    from app.kraken import KrakenClient, sign_spot
+
+    archive_bytes = b"PK\x03\x04kraken-test-zip"
+    captured = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, size=-1):
+            assert size == 25_000_001
+            return archive_bytes
+
+    monkeypatch.setattr(
+        "app.kraken.urlopen",
+        lambda request, timeout: captured.append(request) or Response(),
+    )
+    secret = base64.b64encode(b"test-secret").decode("ascii")
+    client = KrakenClient("test-key", secret, nonce_provider=lambda: 123)
+
+    result = client.retrieve_export("EXPORT-1")
+
+    assert result == archive_bytes
+    assert len(captured) == 1
+    body = captured[0].data.decode("utf-8")
+    assert body == '{"nonce":123,"id":"EXPORT-1"}'
+    assert captured[0].get_header("Api-sign") == sign_spot(
+        "/0/private/RetrieveExport", body, secret
+    )
+    assert captured[0].get_header("Accept") == "application/octet-stream"
