@@ -398,5 +398,5 @@ def test_trade_export_recovery_state_survives_restart(tmp_path):
     schema = reopened.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()
-    assert schema is not None and schema["value"] == "6"
+    assert schema is not None and schema["value"] == "7"
     reopened.close()
