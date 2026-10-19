@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.35 — Kraken-Trade-Export als Ledger-Recovery-Fallback
+
+- Wenn sowohl QueryTrades als auch TradesHistory die Ledger-Verknüpfung eines gespeicherten Trades nicht liefern, fordert die App einen eng begrenzten Kraken-Trades-Export an (15 Sekunden vor/nach dem gespeicherten Trade-Zeitpunkt).
+- Die asynchronen AddExport-/ExportStatus-/RetrieveExport-Schritte werden über die persistierte Export-ID nach Neustarts fortgesetzt. Die heruntergeladene ZIP-/CSV-Datei wird nur im Arbeitsspeicher verarbeitet.
+- Übernommen werden Ledger-IDs nur aus genau einer Exportzeile mit exakt übereinstimmender txid und zusätzlichen Prüfungen von Order-ID, Zeit, Richtung, Preis, Volumen und Gebühr. Doppelte, widersprüchliche, unvollständige oder ungültige Antworten bleiben blockiert.
+- Ein leerer Ledger-Eintrag wird weiterhin erst nach dem unabhängigen vollständigen Ledger-/refid-Abgleich bestätigt. Erfolgreich wiederhergestellte Exporte werden über RemoveExport gelöscht.
+- Neue Diagnosefelder trade_rows_export_* und next_trade_export_retry_epoch zeigen Anfragen, Statusprüfungen, Wiederherstellungen, Wartezustände und Fehler. Keine Änderung an der Live-Freigabe.
+
+## 0.1.34 — Gezielte TradesHistory-Reparatur für fehlende Ledger-Verknüpfungen
+
 ## 0.1.34 — Gezielte TradesHistory-Reparatur für fehlende Ledger-Verknüpfungen
 
 - Wenn eine QueryTrades-Antwort das ledgers-Feld nicht enthält, wechselt die App sofort zu einer gezielten Abfrage über TradesHistory. Sie wiederholt nicht nur denselben Abruf nach sechs Stunden.
