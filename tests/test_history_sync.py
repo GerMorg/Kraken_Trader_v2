@@ -830,3 +830,149 @@ def test_missing_trade_ledger_field_is_retried_after_cooldown_and_can_recover():
     assert "_ledger_reference_evidence" not in saved
     assert db.history_sync_state("TRADES")["quality_gaps"] == []
     db.close()
+
+def test_kraken_trade_export_recovers_exact_ledger_links_after_history_endpoint_omits_them(monkeypatch):
+    import csv
+    from io import StringIO, BytesIO
+    import zipfile
+
+    db = Persistence(":memory:")
+    now = {"epoch": 1769000000}
+    monkeypatch.setattr("app.history_sync.time.time", lambda: now["epoch"])
+
+    missing_refs = trade()
+    missing_refs.pop("ledgers")
+    client = FakeHistoryClient(
+        trade_pages={None: {"trades": {"T-EXPORT": missing_refs}}},
+        ledger_pages={0: {
+            "ledger": {"L-EXPORT": {**ledger(), "refid": "UNRELATED-TRADE"}},
+            "count": 1,
+        }},
+    )
+    client.targeted_trade_pages = {
+        None: {"trades": {"T-EXPORT": dict(missing_refs)}, "cursor": {}},
+    }
+    sync_history_source(
+        client=client, persistence=db, source="TRADES",
+        page_budget=1, now_epoch=now["epoch"],
+    )
+    sync_history_source(
+        client=client, persistence=db, source="LEDGERS",
+        page_budget=1, now_epoch=now["epoch"],
+    )
+    client.query_trades_info = lambda trade_ids, *, include_ledgers=True: {
+        "T-EXPORT": dict(missing_refs)
+    }
+    client.query_ledgers_info = lambda ledger_ids: {}
+
+    csv_buffer = StringIO(newline="")
+    writer = csv.DictWriter(csv_buffer, fieldnames=[
+        "txid", "ordertxid", "pair", "time", "type", "price", "vol", "fee", "ledgers",
+    ])
+    writer.writeheader()
+    writer.writerow({
+        "txid": "T-UNRELATED", "ordertxid": "ORDER-OTHER", "pair": "ETH/USD",
+        "time": str(now["epoch"]), "type": "sell", "price": "2000",
+        "vol": "0.4", "fee": "0.1", "ledgers": "L-OTHER",
+    })
+    writer.writerow({
+        "txid": "T-EXPORT", "ordertxid": "ORDER-1", "pair": "XBT/USD",
+        "time": str(missing_refs["time"]), "type": "buy", "price": "90000",
+        "vol": "0.01", "fee": "0.20", "ledgers": "L-EXPORT",
+    })
+    archive_buffer = BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("trades.csv", csv_buffer.getvalue().encode("utf-8"))
+    archive_bytes = archive_buffer.getvalue()
+
+    requested = []
+    status_calls = []
+    deleted = []
+    def request_export_report(*, report, description, starttm, endtm):
+        requested.append((report, description, starttm, endtm))
+        return {"id": "EXP-EXPORT-1"}
+    def export_report_status(report):
+        status_calls.append(report)
+        return [{"id": "EXP-EXPORT-1", "report": "trades", "status": "Processed"}]
+    def retrieve_export_report(export_id):
+        assert export_id == "EXP-EXPORT-1"
+        return archive_bytes
+    def remove_export_report(export_id, *, action="delete"):
+        deleted.append((export_id, action))
+        return {"delete": True}
+    client.request_export_report = request_export_report
+    client.export_report_status = export_report_status
+    client.retrieve_export_report = retrieve_export_report
+    client.remove_export_report = remove_export_report
+
+    first = reconcile_trade_ledger_coverage(client=client, persistence=db)
+    assert first["status"] == "INCOMPLETE"
+    assert first["trade_rows_export_requested"] == 1
+    assert first["trade_rows_export_recovered"] == 0
+    assert len(requested) == 1
+    assert requested[0][0] == "trades"
+    assert requested[0][2] == missing_refs["time"] - 15
+    assert requested[0][3] == missing_refs["time"] + 15
+    stored = db.fills()[0]["raw"]["raw"]["_ledger_reference_evidence"]
+    assert stored["source"] == "TRADE_EXPORT_QUEUED"
+    assert stored["export_id"] == "EXP-EXPORT-1"
+
+    now["epoch"] += 301
+    second = reconcile_trade_ledger_coverage(client=client, persistence=db)
+
+    assert second["status"] == "COMPLETE"
+    assert second["trade_rows_export_status_checked"] == 1
+    assert second["trade_rows_export_recovered"] == 1
+    assert second["missing_trade_references"] == 0
+    assert second["missing_ledger_references"] == 0
+    assert status_calls == ["trades"]
+    assert deleted == [("EXP-EXPORT-1", "delete")]
+    saved = db.fills()[0]["raw"]["raw"]
+    assert saved["ledgers"] == ["L-EXPORT"]
+    assert "_ledger_reference_evidence" not in saved
+    assert db.history_sync_state("TRADES")["quality_gaps"] == []
+    db.close()
+
+
+def test_trade_export_parser_rejects_duplicate_or_conflicting_exact_trade_rows():
+    import csv
+    from io import StringIO, BytesIO
+    import zipfile
+
+    from app.history_sync import _trade_export_ledger_references
+
+    row = {**trade(), "ledgers": ["L-EXPORT"]}
+    fieldnames = ["txid", "ordertxid", "pair", "time", "type", "price", "vol", "fee", "Ledger"]
+
+    def make_archive(rows):
+        stream = StringIO(newline="")
+        writer = csv.DictWriter(stream, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("trades.csv", stream.getvalue().encode("utf-8"))
+        return buffer.getvalue()
+
+    exact = {
+        "txid": "T-EXPORT", "ordertxid": "ORDER-1", "pair": "XBT/USD",
+        "time": str(row["time"]), "type": "buy", "price": row["price"],
+        "vol": row["vol"], "fee": row["fee"], "Ledger": "L-EXPORT",
+    }
+    duplicate = _trade_export_ledger_references(
+        make_archive([exact, exact]), trade_id="T-EXPORT", existing_row=row,
+    )
+    assert duplicate == (None, "EXACT_TRADE_ID_DUPLICATED")
+
+    conflicting = {**exact, "price": "89999"}
+    conflict = _trade_export_ledger_references(
+        make_archive([conflicting]), trade_id="T-EXPORT", existing_row=row,
+    )
+    assert conflict == (None, "TRADE_VALUE_CONFLICT:price")
+
+    empty = _trade_export_ledger_references(
+        make_archive([{**exact, "Ledger": ""}]),
+        trade_id="T-EXPORT", existing_row=row,
+    )
+    assert empty == ([], "EMPTY_LEDGER_LIST")
+
