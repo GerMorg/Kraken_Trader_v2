@@ -512,6 +512,15 @@ def reconcile_trade_ledger_coverage(
             "trade_rows_history_window_invalid": 0,
             "trade_rows_history_window_deferred": 0,
             "next_trade_history_retry_epoch": None,
+            "trade_rows_export_requested": 0,
+            "trade_rows_export_status_checked": 0,
+            "trade_rows_export_recovered": 0,
+            "trade_rows_export_empty_ledgers": 0,
+            "trade_rows_export_pending": 0,
+            "trade_rows_export_deferred": 0,
+            "trade_rows_export_failures": 0,
+            "trade_rows_export_status_missing": 0,
+            "next_trade_export_retry_epoch": None,
             "ledger_ids_requested": 0,
             "ledger_rows_recovered": 0,
             "missing_trade_references": 0,
@@ -546,6 +555,15 @@ def reconcile_trade_ledger_coverage(
     trade_rows_history_window_invalid = 0
     trade_rows_history_window_deferred = 0
     next_trade_history_retry_epoch: int | None = None
+    trade_rows_export_requested = 0
+    trade_rows_export_status_checked = 0
+    trade_rows_export_recovered = 0
+    trade_rows_export_empty_ledgers = 0
+    trade_rows_export_pending = 0
+    trade_rows_export_deferred = 0
+    trade_rows_export_failures = 0
+    trade_rows_export_status_missing = 0
+    next_trade_export_retry_epoch: int | None = None
     ledger_ids_requested = 0
     ledger_rows_recovered = 0
     resolved_fingerprints: dict[str, str] = {}
@@ -597,6 +615,18 @@ def reconcile_trade_ledger_coverage(
                 "TRADES_HISTORY_WINDOW_PAGE_BUDGET_EXCEEDED",
                 "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK",
                 "TRADE_HISTORY_EMPTY_CONFIRMED",
+                "TRADE_EXPORT_REQUEST_UNKNOWN",
+                "TRADE_EXPORT_QUEUED",
+                "TRADE_EXPORT_STATUS_MISSING",
+                "TRADE_EXPORT_STATUS_CHECK_FAILED",
+                "TRADE_EXPORT_FAILED",
+                "TRADE_EXPORT_LEDGER_FIELD_MISSING",
+                "TRADE_EXPORT_TRADE_ID_NOT_FOUND",
+                "TRADE_EXPORT_ARCHIVE_INVALID",
+                "TRADE_EXPORT_ROW_CONFLICT",
+                "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                "TRADE_EXPORT_EMPTY_CONFIRMED",
+                "TRADE_EXPORT_UNAVAILABLE",
             }
         )
         if cached_query_evidence and isinstance(evidence, dict):
@@ -604,7 +634,7 @@ def reconcile_trade_ledger_coverage(
         previously_confirmed_empty = (
             isinstance(evidence, dict)
             and evidence.get("source") in {
-                "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
+                "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED", "TRADE_EXPORT_EMPTY_CONFIRMED",
             }
             and evidence.get("ledgers_field_present") is True
             and evidence.get("ledgers_count") == 0
@@ -1130,6 +1160,8 @@ def reconcile_trade_ledger_coverage(
                     "QUERY_TRADES_EMPTY_CONFIRMED",
                     "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK",
                     "TRADE_HISTORY_EMPTY_CONFIRMED",
+                    "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                    "TRADE_EXPORT_EMPTY_CONFIRMED",
                 }
                 and evidence.get("ledgers_field_present") is True
                 and evidence.get("ledgers_count") == 0
@@ -1138,9 +1170,13 @@ def reconcile_trade_ledger_coverage(
             if query_explicit_empty:
                 conflict_outcome = None
                 outcome_prefix = (
-                    "TRADE_HISTORY_EMPTY"
-                    if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
-                    else "QUERY_TRADES_EMPTY"
+                    "TRADE_EXPORT_EMPTY"
+                    if evidence_source == "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK"
+                    else (
+                        "TRADE_HISTORY_EMPTY"
+                        if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
+                        else "QUERY_TRADES_EMPTY"
+                    )
                 )
                 if related_ids:
                     conflict_outcome = outcome_prefix + "_BUT_LEDGER_REFID_MATCHES"
@@ -1161,11 +1197,16 @@ def reconcile_trade_ledger_coverage(
                 if can_confirm_empty_relations:
                     already_confirmed = evidence_source in {
                         "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
+                        "TRADE_EXPORT_EMPTY_CONFIRMED",
                     }
                     confirmed_source = (
-                        "TRADE_HISTORY_EMPTY_CONFIRMED"
-                        if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
-                        else "QUERY_TRADES_EMPTY_CONFIRMED"
+                        "TRADE_EXPORT_EMPTY_CONFIRMED"
+                        if evidence_source == "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK"
+                        else (
+                            "TRADE_HISTORY_EMPTY_CONFIRMED"
+                            if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
+                            else "QUERY_TRADES_EMPTY_CONFIRMED"
+                        )
                     )
                     confirmed_row = {
                         **row,
