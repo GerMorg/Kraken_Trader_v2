@@ -869,6 +869,15 @@ def reconcile_trade_ledger_coverage(
             "trade_rows_history_window_invalid": 0,
             "trade_rows_history_window_deferred": 0,
             "next_trade_history_retry_epoch": None,
+            "trade_export_supported": False,
+            "trade_export_requests_created": 0,
+            "trade_export_requests_checked": 0,
+            "trade_export_requests_pending": 0,
+            "trade_export_rows_matched": 0,
+            "trade_export_rows_recovered": 0,
+            "trade_export_empty_ledgers": 0,
+            "trade_export_rows_unmatched": 0,
+            "trade_export_errors": 0,
             "ledger_ids_requested": 0,
             "ledger_rows_recovered": 0,
             "missing_trade_references": 0,
@@ -954,6 +963,12 @@ def reconcile_trade_ledger_coverage(
                 "TRADES_HISTORY_WINDOW_PAGE_BUDGET_EXCEEDED",
                 "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK",
                 "TRADE_HISTORY_EMPTY_CONFIRMED",
+                "TRADE_EXPORT_LEDGER_FIELD_MISSING",
+                "TRADE_EXPORT_TRADE_ID_NOT_FOUND",
+                "TRADE_EXPORT_REQUEST_FAILED",
+                "TRADE_EXPORT_LOOKUP_FAILED",
+                "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                "TRADE_EXPORT_EMPTY_CONFIRMED",
             }
         )
         if cached_query_evidence and isinstance(evidence, dict):
@@ -962,6 +977,7 @@ def reconcile_trade_ledger_coverage(
             isinstance(evidence, dict)
             and evidence.get("source") in {
                 "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
+                "TRADE_EXPORT_EMPTY_CONFIRMED",
             }
             and evidence.get("ledgers_field_present") is True
             and evidence.get("ledgers_count") == 0
@@ -1382,6 +1398,13 @@ def reconcile_trade_ledger_coverage(
             "outcome": "TRADES_HISTORY_WINDOW_LEDGER_LINK_RECOVERED",
         })
 
+    # QueryTrades and TradesHistory have both omitted ledger references for the same
+    # exact trade IDs. Use Kraken's separate asynchronous CSV export as another source.
+    export_summary = _recover_trade_ledgers_from_export(
+        client=client, persistence=persistence, now_epoch=now_epoch
+    )
+    trade_rows_recovered += int(export_summary["trade_export_rows_recovered"])
+
     # Read trade references only from the nested authoritative exchange payload.
     referenced_ledger_ids: set[str] = set()
     for fill in persistence.fills():
@@ -1487,6 +1510,8 @@ def reconcile_trade_ledger_coverage(
                     "QUERY_TRADES_EMPTY_CONFIRMED",
                     "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK",
                     "TRADE_HISTORY_EMPTY_CONFIRMED",
+                    "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                    "TRADE_EXPORT_EMPTY_CONFIRMED",
                 }
                 and evidence.get("ledgers_field_present") is True
                 and evidence.get("ledgers_count") == 0
@@ -1497,6 +1522,10 @@ def reconcile_trade_ledger_coverage(
                 outcome_prefix = (
                     "TRADE_HISTORY_EMPTY"
                     if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
+                    else "TRADE_EXPORT_EMPTY"
+                    if evidence_source in {
+                        "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK", "TRADE_EXPORT_EMPTY_CONFIRMED",
+                    }
                     else "QUERY_TRADES_EMPTY"
                 )
                 if related_ids:
@@ -1518,10 +1547,15 @@ def reconcile_trade_ledger_coverage(
                 if can_confirm_empty_relations:
                     already_confirmed = evidence_source in {
                         "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
+                        "TRADE_EXPORT_EMPTY_CONFIRMED",
                     }
                     confirmed_source = (
                         "TRADE_HISTORY_EMPTY_CONFIRMED"
                         if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
+                        else "TRADE_EXPORT_EMPTY_CONFIRMED"
+                        if evidence_source in {
+                            "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK", "TRADE_EXPORT_EMPTY_CONFIRMED",
+                        }
                         else "QUERY_TRADES_EMPTY_CONFIRMED"
                     )
                     confirmed_row = {
@@ -1696,6 +1730,15 @@ def reconcile_trade_ledger_coverage(
         "trade_rows_history_window_invalid": trade_rows_history_window_invalid,
         "trade_rows_history_window_deferred": trade_rows_history_window_deferred,
         "next_trade_history_retry_epoch": next_trade_history_retry_epoch,
+        "trade_export_supported": bool(export_summary["trade_export_supported"]),
+        "trade_export_requests_created": int(export_summary["trade_export_requests_created"]),
+        "trade_export_requests_checked": int(export_summary["trade_export_requests_checked"]),
+        "trade_export_requests_pending": int(export_summary["trade_export_requests_pending"]),
+        "trade_export_rows_matched": int(export_summary["trade_export_rows_matched"]),
+        "trade_export_rows_recovered": int(export_summary["trade_export_rows_recovered"]),
+        "trade_export_empty_ledgers": int(export_summary["trade_export_empty_ledgers"]),
+        "trade_export_rows_unmatched": int(export_summary["trade_export_rows_unmatched"]),
+        "trade_export_errors": int(export_summary["trade_export_errors"]),
         "trade_rows_recovered": trade_rows_recovered,
         "trade_rows_query_empty_ledgers": trade_rows_query_empty_ledgers,
         "trade_rows_query_missing": trade_rows_query_missing,
