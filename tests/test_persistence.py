@@ -400,3 +400,42 @@ def test_trade_export_recovery_state_survives_restart(tmp_path):
     ).fetchone()
     assert schema is not None and schema["value"] == "7"
     reopened.close()
+
+
+def test_trade_export_recovery_schema_migrates_download_attempt_count(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "trade-export-schema-v6.sqlite3")
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE schema_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+        INSERT INTO schema_meta(key,value) VALUES('schema_version','6');
+        CREATE TABLE history_export_recovery(
+            request_key TEXT PRIMARY KEY,
+            report_id TEXT UNIQUE,
+            description TEXT NOT NULL UNIQUE,
+            start_epoch INTEGER NOT NULL,
+            end_epoch INTEGER NOT NULL,
+            trade_ids_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            requested_at_epoch INTEGER NOT NULL,
+            next_poll_epoch INTEGER NOT NULL,
+            attempt_count INTEGER NOT NULL,
+            last_error TEXT,
+            updated_at TEXT NOT NULL
+        );
+    """)
+    connection.commit()
+    connection.close()
+
+    db = Persistence(path)
+    columns = {
+        str(row["name"])
+        for row in db.connection.execute("PRAGMA table_info(history_export_recovery)")
+    }
+    assert "download_attempt_count" in columns
+    version = db.connection.execute(
+        "SELECT value FROM schema_meta WHERE key='schema_version'"
+    ).fetchone()
+    assert version is not None and version["value"] == "7"
+    db.close()
