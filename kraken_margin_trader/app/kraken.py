@@ -372,8 +372,7 @@ class KrakenClient:
                 },
             )
             try:
-                # nosec B310 -- request URL is built from the fixed Kraken HTTPS origin and a static endpoint.
-                with urlopen(request, timeout=self.timeout_seconds) as response:
+                with urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310 -- fixed Kraken HTTPS origin and static endpoint.
                     raw = response.read(max_bytes + 1)
             except HTTPError as exc:
                 try:
