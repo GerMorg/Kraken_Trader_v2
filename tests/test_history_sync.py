@@ -765,9 +765,10 @@ def test_query_trades_missing_ledgers_field_is_persisted_and_not_requeried():
     assert second["trade_rows_queried"] == 0
     assert second["trade_rows_query_deferred"] == 0
     assert second["trade_rows_history_window_queried"] == 0
-    assert second["trade_rows_history_window_deferred"] == 1
+    assert second["trade_rows_history_window_deferred"] == 0
+    assert second["trade_rows_export_deferred"] == 1
     assert (
-        second["next_trade_history_retry_epoch"]
+        second["next_trade_export_retry_epoch"]
         == saved["_ledger_reference_evidence"]["retry_after_epoch"]
     )
     assert second["missing_trade_references"] == 1
