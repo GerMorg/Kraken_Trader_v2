@@ -604,3 +604,108 @@ def test_api_key_permission_gate_rechecks_recoverable_key_configuration_each_cyc
         "API_KEY_HISTORY_QUERY_WINDOW_RESTRICTED"
     ]
     assert api_key_permission_gate_reasons(corrected) == []
+
+def test_export_status_accepts_documented_list_result(monkeypatch):
+    import json
+
+    from app.kraken import KrakenClient
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "error": [],
+                "result": [{"id": "EXP1", "report": "trades", "status": "Processed"}],
+            }).encode("utf-8")
+
+    monkeypatch.setattr("app.kraken.urlopen", lambda *args, **kwargs: Response())
+    client = KrakenClient(
+        "test-key",
+        base64.b64encode(b"test-secret").decode("ascii"),
+        nonce_provider=lambda: 123,
+    )
+
+    result = client.export_report_status("trades")
+
+    assert result == [{"id": "EXP1", "report": "trades", "status": "Processed"}]
+
+
+def test_export_request_uses_tight_csv_window_and_report_cleanup_parameters():
+    from app.kraken import KrakenClient
+
+    client = KrakenClient("k", "s")
+    calls = []
+
+    def fake_private(method, params=None):
+        calls.append((method, params))
+        if method == "AddExport":
+            return {"id": "EXP1"}
+        if method == "ExportStatus":
+            return [{"id": "EXP1", "status": "Processed"}]
+        return {"delete": True}
+
+    client.private = fake_private
+
+    assert client.request_export_report(
+        report="trades",
+        description="KTV2-ledger-recovery-123456abcdef",
+        starttm=1767999985,
+        endtm=1768000015,
+    ) == {"id": "EXP1"}
+    assert client.export_report_status("trades") == [{"id": "EXP1", "status": "Processed"}]
+    assert client.remove_export_report("EXP1", action="delete") == {"delete": True}
+    assert calls == [
+        ("AddExport", {
+            "report": "trades",
+            "description": "KTV2-ledger-recovery-123456abcdef",
+            "format": "CSV",
+            "fields": "all",
+            "starttm": 1767999985,
+            "endtm": 1768000015,
+        }),
+        ("ExportStatus", {"report": "trades"}),
+        ("RemoveExport", {"id": "EXP1", "type": "delete"}),
+    ]
+
+
+def test_retrieve_export_uses_signed_private_request_and_returns_bounded_binary(monkeypatch):
+    from app.kraken import KrakenClient, sign_spot
+
+    archive = b"PK\x03\x04small-test-archive"
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, size=-1):
+            return archive if size < 0 else archive[:size]
+
+    captured = []
+
+    def fake_urlopen(request, timeout):
+        captured.append(request)
+        return Response()
+
+    monkeypatch.setattr("app.kraken.urlopen", fake_urlopen)
+    secret = base64.b64encode(b"test-secret").decode("ascii")
+    client = KrakenClient("test-key", secret, nonce_provider=lambda: 123)
+
+    result = client.retrieve_export_report("EXP1")
+
+    assert result == archive
+    assert len(captured) == 1
+    request = captured[0]
+    body = request.data.decode("utf-8")
+    assert body == '{"nonce":123,"id":"EXP1"}'
+    assert request.full_url.endswith("/0/private/RetrieveExport")
+    assert request.get_header("Accept") == "application/octet-stream"
+    assert request.get_header("Api-sign") == sign_spot("/0/private/RetrieveExport", body, secret)
+

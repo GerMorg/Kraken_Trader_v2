@@ -1,5 +1,13 @@
 # Ausführung, Orderzustände und Wiederherstellung
 
+## v0.1.35: Wiederherstellung über Kraken-Trades-Export
+
+Der Export ist der nächste Recovery-Pfad, wenn QueryTrades und TradesHistory die Ledger-Relation nicht liefern. AddExport wird für ein Zeitfenster von 15 Sekunden vor/nach dem gespeicherten Trade-Zeitpunkt angefordert. Die Export-ID, die Beschreibung, das Zeitfenster und der letzte Status werden an der bestehenden Trade-Zeile gespeichert, sodass der asynchrone Vorgang nach einem Neustart fortgesetzt werden kann.
+
+ExportStatus wird später abgefragt. Ein als `Processed` gemeldeter Export wird über RetrieveExport als ZIP geholt und aus dem Speicher gelesen. Die App legt keine zusätzliche permanente CSV-Datei ab. Sie akzeptiert nur genau eine Zeile mit exakt passender `txid`; Order-ID, Zeitstempel, Handelsrichtung, Preis, Volumen und Gebühr werden ebenfalls kontrolliert. Die enthaltenen Ledger-IDs werden danach wie bisher über den vollständigen Ledger-Abgleich und QueryLedgers geprüft. Nach erfolgreicher Wiederherstellung wird der Export mit RemoveExport gelöscht.
+
+Eine leere Ledger-Liste ist kein ausreichender Beleg: sie muss gegen eine vollständige Ledger-Historie und widerspruchsfreie `refid`-Verknüpfungen geprüft werden. Bei fehlendem Export, API-Fehler, doppelter `txid`, abweichenden Fülldaten oder ungültigem Archiv bleibt die Datenqualitätslücke aktiv. Der zusätzliche Fallback hebt das New-Risk-Gate nicht auf und ändert keine Live-Freigabe.
+
 ## v0.1.34: gezielte TradesHistory-Reparatur für fehlende Ledger-Referenzen
 
 Wenn eine QueryTrades-Antwort das Feld ledgers nicht enthält, wird die Relation nicht länger nur durch erneute QueryTrades-Aufrufe gesucht. Die App verwendet jetzt zusätzlich die dokumentierte TradesHistory-API mit ledgers=true, Zeitgrenzen start/end und Cursor-Paginierung. Die Abfrage beginnt fünf Sekunden vor und endet fünf Sekunden nach dem gespeicherten Exchange-Zeitpunkt; höchstens fünf Cursor-Seiten werden geprüft. Übernommen wird ausschließlich die Zeile, deren Schlüssel exakt mit der gesuchten Trade-ID übereinstimmt. Eine ähnliche Zeit, ein gleiches Handelspaar oder ein passendes Order-ID allein genügt nicht.

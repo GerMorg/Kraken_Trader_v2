@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import csv
 from datetime import datetime, timezone
 from decimal import Decimal
+from io import BytesIO, TextIOWrapper
 import hashlib
+import re
 import time
+import zipfile
 from zoneinfo import ZoneInfo
 from typing import Any
 
@@ -281,6 +285,136 @@ def _ledger_row_from_event(event: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _export_time_epoch(value: Any) -> float | None:
+    """Parse a numeric or Kraken CSV UTC timestamp without guessing a local timezone."""
+    try:
+        numeric = D(str(value).strip())
+        if numeric.is_finite() and numeric >= 0:
+            return float(numeric)
+    except (ArithmeticError, TypeError, ValueError):
+        pass
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = None
+        for pattern in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+            try:
+                parsed = datetime.strptime(raw, pattern)
+                break
+            except ValueError:
+                continue
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).timestamp()
+
+
+def _export_decimal_matches(export_value: Any, original_value: Any) -> bool:
+    try:
+        left = D(str(export_value).strip())
+        right = D(str(original_value).strip())
+    except (ArithmeticError, TypeError, ValueError):
+        return False
+    return left.is_finite() and right.is_finite() and left == right
+
+
+def _trade_export_ledger_references(
+    archive_bytes: bytes,
+    *,
+    trade_id: str,
+    existing_row: dict[str, Any],
+    max_uncompressed_bytes: int = 20_000_000,
+    max_rows: int = 10_000,
+) -> tuple[list[str] | None, str]:
+    """Extract ledger IDs only from a unique exact-txid row in Kraken's CSV export."""
+    if not archive_bytes or len(archive_bytes) > 20_000_000:
+        return None, "ARCHIVE_SIZE_INVALID"
+    try:
+        with zipfile.ZipFile(BytesIO(archive_bytes)) as archive:
+            entries = [
+                item for item in archive.infolist()
+                if not item.is_dir() and item.filename.lower().endswith(".csv")
+            ]
+            if not entries or len(entries) > 20:
+                return None, "CSV_ENTRY_COUNT_INVALID"
+            if sum(item.file_size for item in entries) > max_uncompressed_bytes:
+                return None, "ARCHIVE_UNCOMPRESSED_SIZE_EXCEEDED"
+            matches: list[dict[str, str]] = []
+            rows_seen = 0
+            for entry in entries:
+                with archive.open(entry) as binary:
+                    with TextIOWrapper(binary, encoding="utf-8-sig", newline="") as stream:
+                        reader = csv.DictReader(stream)
+                        if reader.fieldnames is None:
+                            continue
+                        normalized_headers = {
+                            re.sub(r"[^a-z0-9]", "", str(name or "").lower()): name
+                            for name in reader.fieldnames
+                        }
+                        txid_header = normalized_headers.get("txid")
+                        if txid_header is None:
+                            continue
+                        for row in reader:
+                            rows_seen += 1
+                            if rows_seen > max_rows:
+                                return None, "CSV_ROW_BUDGET_EXCEEDED"
+                            exported_id = str(row.get(txid_header, "") or "").strip()
+                            if exported_id == trade_id:
+                                matches.append({
+                                    re.sub(r"[^a-z0-9]", "", str(key or "").lower()):
+                                    str(value or "").strip()
+                                    for key, value in row.items()
+                                })
+                                if len(matches) > 1:
+                                    return None, "EXACT_TRADE_ID_DUPLICATED"
+    except (zipfile.BadZipFile, OSError, RuntimeError, csv.Error, UnicodeDecodeError):
+        return None, "ARCHIVE_OR_CSV_INVALID"
+
+    if not matches:
+        return None, "EXACT_TRADE_ID_NOT_FOUND"
+    exported = matches[0]
+    # The unique exchange trade ID is authoritative, but cross-check its persisted
+    # order, timestamp, direction, volume and price before taking its ledger relation.
+    expected_order = str(existing_row.get("ordertxid", "") or "").strip()
+    exported_order = exported.get("ordertxid", "")
+    if expected_order and exported_order and expected_order != exported_order:
+        return None, "ORDER_ID_CONFLICT"
+    exported_epoch = _export_time_epoch(exported.get("time"))
+    original_epoch = _export_time_epoch(existing_row.get("time"))
+    if exported_epoch is None or original_epoch is None or abs(exported_epoch - original_epoch) > 2.0:
+        return None, "TRADE_TIME_CONFLICT"
+    expected_side = str(existing_row.get("type", "") or "").strip().lower()
+    exported_side = exported.get("type", "").lower()
+    if expected_side and exported_side and expected_side != exported_side:
+        return None, "TRADE_SIDE_CONFLICT"
+    for field in ("price", "vol", "fee"):
+        original_value = existing_row.get(field)
+        exported_value = exported.get(field)
+        if original_value not in (None, "") and exported_value and not _export_decimal_matches(
+            exported_value, original_value
+        ):
+            return None, "TRADE_VALUE_CONFLICT:" + field
+
+    if "ledgers" not in exported and "ledger" not in exported:
+        return None, "LEDGER_FIELD_MISSING"
+    ledger_text = str(exported.get("ledgers", exported.get("ledger", "")) or "").strip()
+    if not ledger_text:
+        return [], "EMPTY_LEDGER_LIST"
+    ledger_tokens = re.split(r"[,;|\s]+", ledger_text.strip("[]() "))
+    refs = [
+        item.strip().strip('"').strip("'")
+        for item in ledger_tokens
+        if item.strip().strip('"').strip("'")
+    ]
+    if not refs or any(not re.fullmatch(r"[A-Za-z0-9-]+", item) for item in refs):
+        return None, "LEDGER_IDS_INVALID"
+    return list(dict.fromkeys(refs)), "LEDGER_IDS_FOUND"
+
+
 def _lookup_trade_history_window(
     *,
     client: Any,
@@ -380,6 +514,15 @@ def reconcile_trade_ledger_coverage(
             "trade_rows_history_window_invalid": 0,
             "trade_rows_history_window_deferred": 0,
             "next_trade_history_retry_epoch": None,
+            "trade_rows_export_requested": 0,
+            "trade_rows_export_status_checked": 0,
+            "trade_rows_export_recovered": 0,
+            "trade_rows_export_empty_ledgers": 0,
+            "trade_rows_export_pending": 0,
+            "trade_rows_export_deferred": 0,
+            "trade_rows_export_failures": 0,
+            "trade_rows_export_status_missing": 0,
+            "next_trade_export_retry_epoch": None,
             "ledger_ids_requested": 0,
             "ledger_rows_recovered": 0,
             "missing_trade_references": 0,
@@ -414,6 +557,15 @@ def reconcile_trade_ledger_coverage(
     trade_rows_history_window_invalid = 0
     trade_rows_history_window_deferred = 0
     next_trade_history_retry_epoch: int | None = None
+    trade_rows_export_requested = 0
+    trade_rows_export_status_checked = 0
+    trade_rows_export_recovered = 0
+    trade_rows_export_empty_ledgers = 0
+    trade_rows_export_pending = 0
+    trade_rows_export_deferred = 0
+    trade_rows_export_failures = 0
+    trade_rows_export_status_missing = 0
+    next_trade_export_retry_epoch: int | None = None
     ledger_ids_requested = 0
     ledger_rows_recovered = 0
     resolved_fingerprints: dict[str, str] = {}
@@ -465,6 +617,19 @@ def reconcile_trade_ledger_coverage(
                 "TRADES_HISTORY_WINDOW_PAGE_BUDGET_EXCEEDED",
                 "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK",
                 "TRADE_HISTORY_EMPTY_CONFIRMED",
+                "TRADE_EXPORT_REQUEST_PENDING",
+                "TRADE_EXPORT_REQUEST_UNKNOWN",
+                "TRADE_EXPORT_QUEUED",
+                "TRADE_EXPORT_STATUS_MISSING",
+                "TRADE_EXPORT_STATUS_CHECK_FAILED",
+                "TRADE_EXPORT_FAILED",
+                "TRADE_EXPORT_LEDGER_FIELD_MISSING",
+                "TRADE_EXPORT_TRADE_ID_NOT_FOUND",
+                "TRADE_EXPORT_ARCHIVE_INVALID",
+                "TRADE_EXPORT_ROW_CONFLICT",
+                "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                "TRADE_EXPORT_EMPTY_CONFIRMED",
+                "TRADE_EXPORT_UNAVAILABLE",
             }
         )
         if cached_query_evidence and isinstance(evidence, dict):
@@ -472,7 +637,7 @@ def reconcile_trade_ledger_coverage(
         previously_confirmed_empty = (
             isinstance(evidence, dict)
             and evidence.get("source") in {
-                "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
+                "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED", "TRADE_EXPORT_EMPTY_CONFIRMED",
             }
             and evidence.get("ledgers_field_present") is True
             and evidence.get("ledgers_count") == 0
@@ -893,6 +1058,428 @@ def reconcile_trade_ledger_coverage(
             "outcome": "TRADES_HISTORY_WINDOW_LEDGER_LINK_RECOVERED",
         })
 
+    # TradesHistory responses can omit ledger references even when ledgers=true was requested.
+    # Kraken's documented Trades CSV export contains the exact txid plus its Ledger IDs.
+    # Export jobs are asynchronous: persist the report ID with the fill before polling it.
+    export_retry_seconds = QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS
+    export_eligible_sources = {
+        "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
+        "TRADE_EXPORT_REQUEST_PENDING",
+        "TRADE_EXPORT_REQUEST_UNKNOWN",
+        "TRADE_EXPORT_QUEUED",
+        "TRADE_EXPORT_STATUS_MISSING",
+        "TRADE_EXPORT_STATUS_CHECK_FAILED",
+        "TRADE_EXPORT_FAILED",
+        "TRADE_EXPORT_LEDGER_FIELD_MISSING",
+        "TRADE_EXPORT_TRADE_ID_NOT_FOUND",
+        "TRADE_EXPORT_ARCHIVE_INVALID",
+        "TRADE_EXPORT_ROW_CONFLICT",
+        "TRADE_EXPORT_UNAVAILABLE",
+    }
+    for fill in persistence.fills():
+        trade_id = str(fill.get("trade_id", "")).strip()
+        current_row = _trade_row_from_fill(fill)
+        if not trade_id or current_row is None or _valid_ledger_references(current_row.get("ledgers")):
+            continue
+        evidence = current_row.get("_ledger_reference_evidence")
+        if not isinstance(evidence, dict) or evidence.get("source") not in export_eligible_sources:
+            continue
+        retry_after = _count(evidence.get("retry_after_epoch"))
+        evidence_source = str(evidence.get("source", ""))
+        # The six-hour TradesHistory retry deadline must not delay the first export
+        # fallback; only export-owned states follow the export polling/retry cooldown.
+        if (
+            evidence_source.startswith("TRADE_EXPORT_")
+            and retry_after is not None
+            and retry_after > now_epoch
+        ):
+            trade_rows_export_deferred += 1
+            continue
+        parsed_time = _timestamp(current_row.get("time"))
+        fingerprint = _trade_id_fingerprint(trade_id)
+        if parsed_time is None:
+            trade_rows_export_failures += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADE_EXPORT_ORIGINAL_TIMESTAMP_INVALID",
+            })
+            continue
+        target_epoch = parsed_time[0]
+        description = str(
+            evidence.get("export_description") or ("KTV2-ledger-recovery-" + fingerprint)
+        )[:128]
+        export_id = str(evidence.get("export_id", "") or "").strip()
+
+        # Terminal/invalid reports may be requested again after the persisted cooldown.
+        if evidence_source in {
+            "TRADE_EXPORT_FAILED", "TRADE_EXPORT_LEDGER_FIELD_MISSING",
+            "TRADE_EXPORT_TRADE_ID_NOT_FOUND", "TRADE_EXPORT_ARCHIVE_INVALID",
+            "TRADE_EXPORT_ROW_CONFLICT",
+        }:
+            export_id = ""
+
+        status_record: dict[str, Any] | None = None
+        if export_id or evidence_source in {"TRADE_EXPORT_REQUEST_PENDING", "TRADE_EXPORT_REQUEST_UNKNOWN"}:
+            status_call = getattr(client, "export_report_status", None)
+            if not callable(status_call):
+                unavailable = {
+                    **evidence,
+                    "source": "TRADE_EXPORT_UNAVAILABLE",
+                    "last_attempt_epoch": now_epoch,
+                    "last_attempt_outcome": "EXPORT_STATUS_METHOD_UNAVAILABLE",
+                    "retry_after_epoch": now_epoch + export_retry_seconds,
+                }
+                _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": unavailable}, persistence)
+                trade_rows_export_failures += 1
+                continue
+            try:
+                status_response = status_call("trades")
+                trade_rows_export_status_checked += 1
+            except Exception as exc:
+                api_errors.append("TRADE_EXPORT_STATUS_FAILED:" + type(exc).__name__)
+                failed_evidence = {
+                    **evidence,
+                    "source": "TRADE_EXPORT_STATUS_CHECK_FAILED",
+                    "export_id": export_id or None,
+                    "export_description": description,
+                    "last_attempt_epoch": now_epoch,
+                    "last_attempt_outcome": "STATUS_REQUEST_FAILED",
+                    "retry_after_epoch": now_epoch + 300,
+                }
+                _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": failed_evidence}, persistence)
+                trade_rows_export_failures += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "TRADE_EXPORT_STATUS_REQUEST_FAILED",
+                })
+                continue
+            status_records: list[dict[str, Any]] = []
+            if isinstance(status_response, list):
+                status_records = [item for item in status_response if isinstance(item, dict)]
+            elif isinstance(status_response, dict):
+                candidate_records = status_response.get("reports", status_response.get("exports", []))
+                if isinstance(candidate_records, list):
+                    status_records = [item for item in candidate_records if isinstance(item, dict)]
+            for item in status_records:
+                item_id = str(item.get("id", "") or "").strip()
+                item_description = str(item.get("descr", item.get("description", "")) or "").strip()
+                if (export_id and item_id == export_id) or (
+                    not export_id and item_description == description
+                    and str(item.get("report", "trades")).lower() == "trades"
+                ):
+                    status_record = item
+                    if item_id:
+                        export_id = item_id
+                    break
+            if status_record is None:
+                if evidence_source in {"TRADE_EXPORT_REQUEST_PENDING", "TRADE_EXPORT_REQUEST_UNKNOWN"}:
+                    unknown_checks = (_count(evidence.get("request_unknown_checks")) or 0) + 1
+                    if unknown_checks < 3:
+                        unknown_evidence = {
+                            **evidence,
+                            "source": "TRADE_EXPORT_REQUEST_UNKNOWN",
+                            "export_description": description,
+                            "request_unknown_checks": unknown_checks,
+                            "last_attempt_epoch": now_epoch,
+                            "last_attempt_outcome": "EXPORT_STATUS_DID_NOT_SHOW_REQUEST",
+                            "retry_after_epoch": now_epoch + 300,
+                        }
+                        _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": unknown_evidence}, persistence)
+                        trade_rows_export_pending += 1
+                        query_outcomes.append({
+                            "trade_id_fingerprint": fingerprint,
+                            "outcome": "TRADE_EXPORT_REQUEST_STILL_UNKNOWN",
+                        })
+                        continue
+                    # After three status checks, try the bounded request again.
+                    export_id = ""
+                else:
+                    missing_status = {
+                        **evidence,
+                        "source": "TRADE_EXPORT_STATUS_MISSING",
+                        "export_id": export_id,
+                        "export_description": description,
+                        "last_attempt_epoch": now_epoch,
+                        "last_attempt_outcome": "EXPORT_ID_NOT_LISTED",
+                        "retry_after_epoch": now_epoch + 300,
+                    }
+                    _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": missing_status}, persistence)
+                    trade_rows_export_status_missing += 1
+                    query_outcomes.append({
+                        "trade_id_fingerprint": fingerprint,
+                        "outcome": "TRADE_EXPORT_STATUS_ID_NOT_LISTED",
+                    })
+                    continue
+
+        if not export_id:
+            request_method = getattr(client, "request_export_report", None)
+            if not callable(request_method):
+                unavailable = {
+                    **evidence,
+                    "source": "TRADE_EXPORT_UNAVAILABLE",
+                    "export_description": description,
+                    "last_attempt_epoch": now_epoch,
+                    "last_attempt_outcome": "EXPORT_REQUEST_METHOD_UNAVAILABLE",
+                    "retry_after_epoch": now_epoch + export_retry_seconds,
+                }
+                _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": unavailable}, persistence)
+                trade_rows_export_failures += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "TRADE_EXPORT_METHOD_UNAVAILABLE",
+                })
+                continue
+            request_start = max(0, target_epoch - 15)
+            request_end = target_epoch + 15
+            request_evidence = {
+                **evidence,
+                "source": "TRADE_EXPORT_REQUEST_PENDING",
+                "export_id": None,
+                "export_description": description,
+                "export_start_epoch": request_start,
+                "export_end_epoch": request_end,
+                "last_attempt_epoch": now_epoch,
+                "retry_after_epoch": now_epoch + 300,
+                "last_attempt_outcome": "REQUEST_IN_PROGRESS",
+            }
+            _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": request_evidence}, persistence)
+            try:
+                response = request_method(
+                    report="trades",
+                    description=description,
+                    starttm=request_start,
+                    endtm=request_end,
+                )
+                created_id = str(response.get("id", "") or "").strip() if isinstance(response, dict) else ""
+            except Exception as exc:
+                # Permission errors are definite and should not be retried as ambiguous exports.
+                # Network/time-out failures may have reached Kraken, so check status by description.
+                error_code = str(getattr(exc, "code", "") or "").upper()
+                permission_denied = "PERMISSION" in error_code or "INVALID KEY" in error_code
+                request_failure = {
+                    **request_evidence,
+                    "source": "TRADE_EXPORT_UNAVAILABLE" if permission_denied else "TRADE_EXPORT_REQUEST_UNKNOWN",
+                    "last_attempt_outcome": "REQUEST_EXCEPTION:" + type(exc).__name__,
+                    "retry_after_epoch": now_epoch + (export_retry_seconds if permission_denied else 300),
+                }
+                if not permission_denied:
+                    request_failure["request_unknown_checks"] = 0
+                _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": request_failure}, persistence)
+                trade_rows_export_failures += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "TRADE_EXPORT_PERMISSION_DENIED" if permission_denied else "TRADE_EXPORT_REQUEST_OUTCOME_UNKNOWN",
+                })
+                continue
+            if not created_id:
+                unknown_evidence = {
+                    **request_evidence,
+                    "source": "TRADE_EXPORT_REQUEST_UNKNOWN",
+                    "last_attempt_outcome": "REQUEST_RESPONSE_MISSING_ID",
+                    "retry_after_epoch": now_epoch + 300,
+                    "request_unknown_checks": 0,
+                }
+                _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": unknown_evidence}, persistence)
+                trade_rows_export_failures += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "TRADE_EXPORT_REQUEST_ID_MISSING",
+                })
+                continue
+            queued_evidence = {
+                **request_evidence,
+                "source": "TRADE_EXPORT_QUEUED",
+                "export_id": created_id,
+                "last_attempt_outcome": "EXPORT_REQUEST_ACCEPTED",
+                "retry_after_epoch": now_epoch + 300,
+            }
+            _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": queued_evidence}, persistence)
+            trade_rows_export_requested += 1
+            trade_rows_export_pending += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADE_EXPORT_REQUESTED",
+            })
+            continue
+
+        status_value = str(status_record.get("status", "") or "").strip().lower() if status_record else ""
+        if status_value in {"queued", "processing", "pending", "in progress"}:
+            queued_evidence = {
+                **evidence,
+                "source": "TRADE_EXPORT_QUEUED",
+                "export_id": export_id,
+                "export_description": description,
+                "last_status": status_value.upper(),
+                "last_attempt_epoch": now_epoch,
+                "retry_after_epoch": now_epoch + 300,
+            }
+            _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": queued_evidence}, persistence)
+            trade_rows_export_pending += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADE_EXPORT_" + status_value.upper(),
+            })
+            continue
+        if status_value not in {"processed", "complete", "completed"}:
+            failed_evidence = {
+                **evidence,
+                "source": "TRADE_EXPORT_FAILED",
+                "export_id": export_id,
+                "export_description": description,
+                "last_status": (status_value or "UNKNOWN").upper(),
+                "last_attempt_epoch": now_epoch,
+                "last_attempt_outcome": "EXPORT_NOT_PROCESSED",
+                "retry_after_epoch": now_epoch + export_retry_seconds,
+            }
+            _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": failed_evidence}, persistence)
+            trade_rows_export_failures += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADE_EXPORT_NOT_PROCESSED",
+            })
+            continue
+
+        retrieve_method = getattr(client, "retrieve_export_report", None)
+        if not callable(retrieve_method):
+            failed_evidence = {
+                **evidence,
+                "source": "TRADE_EXPORT_UNAVAILABLE",
+                "export_id": export_id,
+                "export_description": description,
+                "last_attempt_epoch": now_epoch,
+                "last_attempt_outcome": "EXPORT_RETRIEVE_METHOD_UNAVAILABLE",
+                "retry_after_epoch": now_epoch + export_retry_seconds,
+            }
+            _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": failed_evidence}, persistence)
+            trade_rows_export_failures += 1
+            continue
+        try:
+            archive_bytes = retrieve_method(export_id)
+        except Exception as exc:
+            failed_evidence = {
+                **evidence,
+                "source": "TRADE_EXPORT_STATUS_CHECK_FAILED",
+                "export_id": export_id,
+                "export_description": description,
+                "last_attempt_epoch": now_epoch,
+                "last_attempt_outcome": "RETRIEVE_EXCEPTION:" + type(exc).__name__,
+                "retry_after_epoch": now_epoch + 300,
+            }
+            _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": failed_evidence}, persistence)
+            trade_rows_export_failures += 1
+            api_errors.append("TRADE_EXPORT_RETRIEVE_FAILED:" + type(exc).__name__)
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADE_EXPORT_RETRIEVE_FAILED",
+            })
+            continue
+
+        refs, export_outcome = _trade_export_ledger_references(
+            archive_bytes,
+            trade_id=trade_id,
+            existing_row=current_row,
+        )
+        if refs is None:
+            source_by_outcome = {
+                "LEDGER_FIELD_MISSING": "TRADE_EXPORT_LEDGER_FIELD_MISSING",
+                "EXACT_TRADE_ID_NOT_FOUND": "TRADE_EXPORT_TRADE_ID_NOT_FOUND",
+                "EXACT_TRADE_ID_DUPLICATED": "TRADE_EXPORT_ROW_CONFLICT",
+                "ORDER_ID_CONFLICT": "TRADE_EXPORT_ROW_CONFLICT",
+                "TRADE_TIME_CONFLICT": "TRADE_EXPORT_ROW_CONFLICT",
+                "TRADE_SIDE_CONFLICT": "TRADE_EXPORT_ROW_CONFLICT",
+                "LEDGER_IDS_INVALID": "TRADE_EXPORT_ROW_CONFLICT",
+                "TRADE_VALUE_CONFLICT:price": "TRADE_EXPORT_ROW_CONFLICT",
+                "TRADE_VALUE_CONFLICT:vol": "TRADE_EXPORT_ROW_CONFLICT",
+                "TRADE_VALUE_CONFLICT:fee": "TRADE_EXPORT_ROW_CONFLICT",
+                "ARCHIVE_SIZE_INVALID": "TRADE_EXPORT_ARCHIVE_INVALID",
+                "CSV_ENTRY_COUNT_INVALID": "TRADE_EXPORT_ARCHIVE_INVALID",
+                "ARCHIVE_UNCOMPRESSED_SIZE_EXCEEDED": "TRADE_EXPORT_ARCHIVE_INVALID",
+                "CSV_ROW_BUDGET_EXCEEDED": "TRADE_EXPORT_ARCHIVE_INVALID",
+                "ARCHIVE_OR_CSV_INVALID": "TRADE_EXPORT_ARCHIVE_INVALID",
+            }
+            export_source = source_by_outcome.get(export_outcome, "TRADE_EXPORT_ROW_CONFLICT")
+            failed_evidence = {
+                **evidence,
+                "source": export_source,
+                "export_id": export_id,
+                "export_description": description,
+                "last_attempt_epoch": now_epoch,
+                "last_attempt_outcome": export_outcome,
+                "retry_after_epoch": now_epoch + export_retry_seconds,
+            }
+            _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": failed_evidence}, persistence)
+            trade_rows_export_failures += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADE_EXPORT_" + export_outcome.replace(":", "_"),
+            })
+            continue
+
+        if not refs:
+            empty_evidence = {
+                "source": "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                "ledgers_field_present": True,
+                "ledgers_count": 0,
+                "full_ledger_history_checked": False,
+                "export_id": export_id,
+                "export_description": description,
+                "last_attempt_epoch": now_epoch,
+                "last_attempt_outcome": "EMPTY_LEDGER_LIST_REQUIRES_INDEPENDENT_CHECK",
+                "retry_after_epoch": now_epoch + export_retry_seconds,
+            }
+            _save_trade(trade_id, {**current_row, "ledgers": [], "_ledger_reference_evidence": empty_evidence}, persistence)
+            trade_rows_export_empty_ledgers += 1
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADE_EXPORT_EMPTY_LEDGER_LIST",
+            })
+        else:
+            recovered_row = dict(current_row)
+            recovered_row["ledgers"] = refs
+            recovered_row.pop("_ledger_reference_evidence", None)
+            if not _save_trade(trade_id, recovered_row, persistence):
+                failed_evidence = {
+                    **evidence,
+                    "source": "TRADE_EXPORT_ROW_CONFLICT",
+                    "export_id": export_id,
+                    "export_description": description,
+                    "last_attempt_epoch": now_epoch,
+                    "last_attempt_outcome": "RECOVERED_ROW_NOT_SAVED",
+                    "retry_after_epoch": now_epoch + export_retry_seconds,
+                }
+                _save_trade(trade_id, {**current_row, "_ledger_reference_evidence": failed_evidence}, persistence)
+                trade_rows_export_failures += 1
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "TRADE_EXPORT_RECOVERED_ROW_NOT_SAVED",
+                })
+                continue
+            trade_rows_export_recovered += 1
+            trade_rows_recovered += 1
+            resolved_fingerprints[fingerprint] = "TRADE_EXPORT"
+            query_outcomes.append({
+                "trade_id_fingerprint": fingerprint,
+                "outcome": "TRADE_EXPORT_LEDGER_LINK_RECOVERED",
+            })
+
+        remove_method = getattr(client, "remove_export_report", None)
+        # Both non-empty and independently checkable empty-list results have been
+        # persisted; delete the processed archive so reports do not accumulate.
+        if callable(remove_method):
+            try:
+                cleanup_result = remove_method(export_id, action="delete")
+                if not isinstance(cleanup_result, dict) or cleanup_result.get("delete") is not True:
+                    query_outcomes.append({
+                        "trade_id_fingerprint": fingerprint,
+                        "outcome": "TRADE_EXPORT_CLEANUP_NOT_CONFIRMED",
+                    })
+            except Exception:
+                # Cleanup failure does not change the ledger evidence already checked.
+                query_outcomes.append({
+                    "trade_id_fingerprint": fingerprint,
+                    "outcome": "TRADE_EXPORT_CLEANUP_FAILED",
+                })
+
     # Read trade references only from the nested authoritative exchange payload.
     referenced_ledger_ids: set[str] = set()
     for fill in persistence.fills():
@@ -988,7 +1575,7 @@ def reconcile_trade_ledger_coverage(
             order_txid = str(row.get("ordertxid", "")).strip()
             matching_order_refid_ids = sorted(ledger_ids_by_trade.get(order_txid, set()))
             evidence = row.get("_ledger_reference_evidence")
-            evidence_source = (
+            relation_evidence_source = (
                 evidence.get("source") if isinstance(evidence, dict) else None
             )
             query_explicit_empty = (
@@ -998,6 +1585,8 @@ def reconcile_trade_ledger_coverage(
                     "QUERY_TRADES_EMPTY_CONFIRMED",
                     "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK",
                     "TRADE_HISTORY_EMPTY_CONFIRMED",
+                    "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                    "TRADE_EXPORT_EMPTY_CONFIRMED",
                 }
                 and evidence.get("ledgers_field_present") is True
                 and evidence.get("ledgers_count") == 0
@@ -1006,9 +1595,16 @@ def reconcile_trade_ledger_coverage(
             if query_explicit_empty:
                 conflict_outcome = None
                 outcome_prefix = (
-                    "TRADE_HISTORY_EMPTY"
-                    if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
-                    else "QUERY_TRADES_EMPTY"
+                    "TRADE_EXPORT_EMPTY"
+                    if relation_evidence_source in {
+                        "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                        "TRADE_EXPORT_EMPTY_CONFIRMED",
+                    }
+                    else (
+                        "TRADE_HISTORY_EMPTY"
+                        if relation_evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
+                        else "QUERY_TRADES_EMPTY"
+                    )
                 )
                 if related_ids:
                     conflict_outcome = outcome_prefix + "_BUT_LEDGER_REFID_MATCHES"
@@ -1027,13 +1623,21 @@ def reconcile_trade_ledger_coverage(
                     })
                     continue
                 if can_confirm_empty_relations:
-                    already_confirmed = evidence_source in {
+                    already_confirmed = relation_evidence_source in {
                         "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
+                        "TRADE_EXPORT_EMPTY_CONFIRMED",
                     }
                     confirmed_source = (
-                        "TRADE_HISTORY_EMPTY_CONFIRMED"
-                        if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
-                        else "QUERY_TRADES_EMPTY_CONFIRMED"
+                        "TRADE_EXPORT_EMPTY_CONFIRMED"
+                        if relation_evidence_source in {
+                            "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                            "TRADE_EXPORT_EMPTY_CONFIRMED",
+                        }
+                        else (
+                            "TRADE_HISTORY_EMPTY_CONFIRMED"
+                            if relation_evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
+                            else "QUERY_TRADES_EMPTY_CONFIRMED"
+                        )
                     )
                     confirmed_row = {
                         **row,
@@ -1051,7 +1655,7 @@ def reconcile_trade_ledger_coverage(
                         conflicting_empty_fingerprints.discard(fingerprint)
                         confirmed_empty_fingerprints.add(fingerprint)
                         if not already_confirmed:
-                            resolved_fingerprints[fingerprint] = "QUERY_TRADES_EMPTY_CONFIRMED"
+                            resolved_fingerprints[fingerprint] = confirmed_source
                     continue
 
             if related_ids:
@@ -1140,7 +1744,7 @@ def reconcile_trade_ledger_coverage(
         reason = (
             "TRADE_LEDGER_EMPTY_RELATION_CONFIRMED"
             if resolution_source in {
-                "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED",
+                "QUERY_TRADES_EMPTY_CONFIRMED", "TRADE_HISTORY_EMPTY_CONFIRMED", "TRADE_EXPORT_EMPTY_CONFIRMED",
             }
             else "TRADE_LEDGER_REFERENCES_RECOVERED"
         )
@@ -1166,6 +1770,7 @@ def reconcile_trade_ledger_coverage(
     )
     pending_query_retry_epochs: list[int] = []
     pending_history_retry_epochs: list[int] = []
+    pending_export_retry_epochs: list[int] = []
     history_retry_sources = {
         "TRADES_HISTORY_WINDOW_LOOKUP_PENDING",
         "TRADES_HISTORY_WINDOW_LEDGER_FIELD_MISSING",
@@ -1178,19 +1783,24 @@ def reconcile_trade_ledger_coverage(
         evidence = row.get("_ledger_reference_evidence") if row is not None else None
         if not isinstance(evidence, dict):
             continue
-        evidence_source = evidence.get("source")
+        stored_evidence_source = evidence.get("source")
         retry_after = _count(evidence.get("retry_after_epoch"))
         if retry_after is None or retry_after <= now_epoch:
             continue
-        if evidence_source in {"QUERY_TRADES_LEDGER_FIELD_MISSING", "QUERY_TRADES_LOOKUP_PENDING"}:
+        if stored_evidence_source in {"QUERY_TRADES_LEDGER_FIELD_MISSING", "QUERY_TRADES_LOOKUP_PENDING"}:
             pending_query_retry_epochs.append(retry_after)
-        elif evidence_source in history_retry_sources:
+        elif stored_evidence_source in history_retry_sources:
             pending_history_retry_epochs.append(retry_after)
+        elif stored_evidence_source in export_eligible_sources or stored_evidence_source == "TRADE_EXPORT_REQUEST_PENDING":
+            pending_export_retry_epochs.append(retry_after)
     next_trade_query_retry_epoch = (
         min(pending_query_retry_epochs) if pending_query_retry_epochs else None
     )
     next_trade_history_retry_epoch = (
         min(pending_history_retry_epochs) if pending_history_retry_epochs else None
+    )
+    next_trade_export_retry_epoch = (
+        min(pending_export_retry_epochs) if pending_export_retry_epochs else None
     )
 
     return {
@@ -1207,6 +1817,15 @@ def reconcile_trade_ledger_coverage(
         "trade_rows_history_window_invalid": trade_rows_history_window_invalid,
         "trade_rows_history_window_deferred": trade_rows_history_window_deferred,
         "next_trade_history_retry_epoch": next_trade_history_retry_epoch,
+        "trade_rows_export_requested": trade_rows_export_requested,
+        "trade_rows_export_status_checked": trade_rows_export_status_checked,
+        "trade_rows_export_recovered": trade_rows_export_recovered,
+        "trade_rows_export_empty_ledgers": trade_rows_export_empty_ledgers,
+        "trade_rows_export_pending": trade_rows_export_pending,
+        "trade_rows_export_deferred": trade_rows_export_deferred,
+        "trade_rows_export_failures": trade_rows_export_failures,
+        "trade_rows_export_status_missing": trade_rows_export_status_missing,
+        "next_trade_export_retry_epoch": next_trade_export_retry_epoch,
         "trade_rows_recovered": trade_rows_recovered,
         "trade_rows_query_empty_ledgers": trade_rows_query_empty_ledgers,
         "trade_rows_query_missing": trade_rows_query_missing,
