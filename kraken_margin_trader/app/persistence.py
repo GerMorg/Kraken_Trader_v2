@@ -129,6 +129,7 @@ class Persistence:
                     requested_at_epoch INTEGER NOT NULL,
                     next_poll_epoch INTEGER NOT NULL,
                     attempt_count INTEGER NOT NULL,
+                    download_attempt_count INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT,
                     updated_at TEXT NOT NULL
                 );
@@ -136,6 +137,13 @@ class Persistence:
                     ON history_export_recovery(status,next_poll_epoch);
                 CREATE TABLE IF NOT EXISTS circuit_breakers(name TEXT PRIMARY KEY,active INTEGER NOT NULL,reason TEXT NOT NULL,ts TEXT NOT NULL,detail_json TEXT NOT NULL);
             """)
+            export_recovery_columns = {
+                str(row["name"]) for row in self.connection.execute("PRAGMA table_info(history_export_recovery)")
+            }
+            if "download_attempt_count" not in export_recovery_columns:
+                self.connection.execute(
+                    "ALTER TABLE history_export_recovery ADD COLUMN download_attempt_count INTEGER NOT NULL DEFAULT 0"
+                )
             history_columns = {
                 str(row["name"]) for row in self.connection.execute("PRAGMA table_info(history_sync_state)")
             }
@@ -763,7 +771,7 @@ class Persistence:
         with self.lock:
             rows = self.connection.execute(
                 "SELECT request_key,report_id,description,start_epoch,end_epoch,trade_ids_json,"
-                "status,requested_at_epoch,next_poll_epoch,attempt_count,last_error,updated_at "
+                "status,requested_at_epoch,next_poll_epoch,attempt_count,download_attempt_count,last_error,updated_at "
                 "FROM history_export_recovery ORDER BY requested_at_epoch,request_key"
             ).fetchall()
         result: list[dict[str, Any]] = []
@@ -808,21 +816,26 @@ class Persistence:
         requested_at_epoch = int(request.get("requested_at_epoch", time.time()))
         next_poll_epoch = int(request.get("next_poll_epoch", requested_at_epoch))
         attempt_count = int(request.get("attempt_count", 1))
-        if requested_at_epoch < 0 or next_poll_epoch < 0 or attempt_count < 1:
+        download_attempt_count = int(request.get("download_attempt_count", 0))
+        if (
+            requested_at_epoch < 0 or next_poll_epoch < 0 or attempt_count < 1
+            or download_attempt_count < 0 or download_attempt_count > 100
+        ):
             raise ValueError("EXPORT_RECOVERY_RETRY_METADATA_INVALID")
         with self.lock:
             self.connection.execute(
                 "INSERT INTO history_export_recovery(request_key,report_id,description,start_epoch,end_epoch,"
-                "trade_ids_json,status,requested_at_epoch,next_poll_epoch,attempt_count,last_error,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(request_key) DO UPDATE SET "
+                "trade_ids_json,status,requested_at_epoch,next_poll_epoch,attempt_count,download_attempt_count,last_error,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(request_key) DO UPDATE SET "
                 "report_id=COALESCE(excluded.report_id,history_export_recovery.report_id),"
                 "status=excluded.status,next_poll_epoch=excluded.next_poll_epoch,"
-                "attempt_count=excluded.attempt_count,last_error=excluded.last_error,updated_at=excluded.updated_at",
+                "attempt_count=excluded.attempt_count,download_attempt_count=excluded.download_attempt_count,"
+                "last_error=excluded.last_error,updated_at=excluded.updated_at",
                 (
                     request_key, report_id, description, start_epoch, end_epoch,
                     _json(list(dict.fromkeys(value.strip() for value in trade_ids))),
                     status, requested_at_epoch, next_poll_epoch, attempt_count,
-                    request.get("last_error"), _now(),
+                    download_attempt_count, request.get("last_error"), _now(),
                 ),
             )
 
