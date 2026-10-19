@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any, Mapping
 
 D = Decimal
+
+# Hard safety release is code-controlled and deliberately disabled in this version.
+# Home Assistant options must never be enough to enable unattended live orders.
+INTERNAL_LIVE_EXECUTION_RELEASED = False
+
 HARD_LIMITS = {
     "risk_per_trade_pct": D("0.5"), "risk_max_position_pct": D("20"),
     "risk_max_gross_pct": D("80"), "risk_max_net_pct": D("50"),
@@ -128,6 +133,7 @@ class Settings:
         return {
             "mode": self.mode, "live_enabled": self.live_enabled, "kill_switch": self.kill_switch,
             "live_requested": self.live_requested,
+            "internal_live_release": INTERNAL_LIVE_EXECUTION_RELEASED,
             "credentials_present": self.credentials_present, "cycle_interval_seconds": self.cycle_interval_seconds,
             "position_take_profit_pct": str(self.position_take_profit_pct),
             "position_take_profit_fraction": str(self.position_take_profit_fraction),
