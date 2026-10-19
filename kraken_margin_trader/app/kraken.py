@@ -259,7 +259,7 @@ class KrakenClient:
             raise KrakenAPIError("KRAKEN_PUBLIC_RESULT_INVALID")
         return result
 
-    def private(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def private(self, method: str, params: dict[str, Any] | None = None) -> Any:
         if not self.api_key or not self.api_secret:
             raise KrakenAPIError("KRAKEN_CREDENTIALS_MISSING")
         with self._private_request_lock:
@@ -316,6 +316,10 @@ class KrakenClient:
             if value.get("error"):
                 raise KrakenAPIError("KRAKEN_PRIVATE:" + ";".join(str(x) for x in value["error"]))
             result = value.get("result", {})
+            if method == "ExportStatus" and isinstance(result, list):
+                if any(not isinstance(item, dict) for item in result):
+                    raise KrakenAPIError("KRAKEN_EXPORT_STATUS_RESULT_INVALID")
+                return result
             if not isinstance(result, dict):
                 if method == "AddOrder":
                     raise KrakenAmbiguousError("ADD_ORDER_RESULT_SHAPE_OUTCOME_UNKNOWN")
