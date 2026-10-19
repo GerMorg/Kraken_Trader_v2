@@ -1583,7 +1583,10 @@ def reconcile_trade_ledger_coverage(
                 conflict_outcome = None
                 outcome_prefix = (
                     "TRADE_EXPORT_EMPTY"
-                    if evidence_source == "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK"
+                    if evidence_source in {
+                        "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                        "TRADE_EXPORT_EMPTY_CONFIRMED",
+                    }
                     else (
                         "TRADE_HISTORY_EMPTY"
                         if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
@@ -1613,7 +1616,10 @@ def reconcile_trade_ledger_coverage(
                     }
                     confirmed_source = (
                         "TRADE_EXPORT_EMPTY_CONFIRMED"
-                        if evidence_source == "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK"
+                        if evidence_source in {
+                            "TRADE_EXPORT_EMPTY_PENDING_LEDGER_CHECK",
+                            "TRADE_EXPORT_EMPTY_CONFIRMED",
+                        }
                         else (
                             "TRADE_HISTORY_EMPTY_CONFIRMED"
                             if evidence_source == "TRADES_HISTORY_WINDOW_EMPTY_PENDING_LEDGER_CHECK"
@@ -1636,7 +1642,7 @@ def reconcile_trade_ledger_coverage(
                         conflicting_empty_fingerprints.discard(fingerprint)
                         confirmed_empty_fingerprints.add(fingerprint)
                         if not already_confirmed:
-                            resolved_fingerprints[fingerprint] = "QUERY_TRADES_EMPTY_CONFIRMED"
+                            resolved_fingerprints[fingerprint] = confirmed_source
                     continue
 
             if related_ids:
