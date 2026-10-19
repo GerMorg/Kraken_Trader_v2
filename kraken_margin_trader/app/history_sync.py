@@ -746,14 +746,14 @@ def _recover_trade_ledgers_from_export(
             continue
         if _valid_ledger_references(row.get("ledgers")):
             continue
-        evidence = row.get("_ledger_reference_evidence")
-        if not isinstance(evidence, dict):
+        current_evidence = row.get("_ledger_reference_evidence")
+        if not isinstance(current_evidence, dict):
             continue
-        source = evidence.get("source")
+        source = current_evidence.get("source")
         if source in immediate_sources:
             eligible_now = True
         elif source in export_retry_sources:
-            retry_after = _count(evidence.get("retry_after_epoch"))
+            retry_after = _count(current_evidence.get("retry_after_epoch"))
             eligible_now = retry_after is None or retry_after <= now_epoch
         else:
             eligible_now = False
@@ -768,13 +768,13 @@ def _recover_trade_ledgers_from_export(
             )
             summary["trade_export_errors"] = int(summary["trade_export_errors"]) + 1
             continue
-        eligible.append((timestamp[0], trade_id, row, evidence))
+        eligible.append((timestamp[0], trade_id, row, current_evidence))
 
     if eligible:
         eligible.sort(key=lambda item: (item[0], item[1]))
         first_epoch = eligible[0][0]
         same_day = [item for item in eligible if item[0] // 86400 == first_epoch // 86400][:20]
-        target_ids = [item[1] for item in same_day]
+        target_trade_ids = [item[1] for item in same_day]
         start_epoch = max(0, min(item[0] for item in same_day) - 5)
         end_epoch = max(item[0] for item in same_day) + 5
         prior_attempts = [
@@ -782,7 +782,7 @@ def _recover_trade_ledgers_from_export(
         ]
         attempt_count = max(prior_attempts, default=0) + 1
         request_key = hashlib.sha256(
-            (str(start_epoch) + ":" + str(end_epoch) + ":" + ",".join(target_ids)
+            (str(start_epoch) + ":" + str(end_epoch) + ":" + ",".join(target_trade_ids)
              + ":" + str(attempt_count)).encode("utf-8")
         ).hexdigest()[:24]
         description = "KTV2-LedgerRecovery-" + request_key
@@ -792,7 +792,7 @@ def _recover_trade_ledgers_from_export(
             "description": description,
             "start_epoch": start_epoch,
             "end_epoch": end_epoch,
-            "trade_ids": target_ids,
+            "trade_ids": target_trade_ids,
             "status": "REQUESTING",
             "requested_at_epoch": now_epoch,
             "next_poll_epoch": now_epoch + TRADE_EXPORT_POLL_INTERVAL_SECONDS,
@@ -821,7 +821,7 @@ def _recover_trade_ledgers_from_export(
                 "next_poll_epoch": now_epoch + QUERY_TRADES_MISSING_LEDGER_RETRY_SECONDS,
                 "last_error": "EXPORT_REQUEST_FAILED:" + error_code,
             })
-            for trade_id in target_ids:
+            for trade_id in target_trade_ids:
                 _set_trade_export_evidence(
                     persistence=persistence, trade_id=trade_id,
                     source="TRADE_EXPORT_REQUEST_FAILED",
