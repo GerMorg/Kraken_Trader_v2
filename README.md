@@ -4,7 +4,7 @@ Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repos
 
 ## Aktueller Status — 0.1.39
 
-**Version 0.1.39 ergänzt einen persistenten Shadow-Research-Prozess: Signale und Nicht-Signale werden pro geschlossenem Stundenbalken und Strategieversion gespeichert. Nach dem Beobachtungshorizont werden Forward-Ergebnisse gegen den passenden Stundenbalken ausgewertet und chronologisch in Entwicklungs-, Validierungs- und Holdout-Abschnitte geteilt. Gebühren, Spreads und angenommene Slippage werden ausdrücklich als Schätzung gekennzeichnet; unbekannte Margin-Eröffnungs- und Rollover-Gebühren werden nicht als null eingesetzt. Der Report kann niemals die interne Live-Freigabe ändern.**
+**Version 0.1.39 ergänzt einen persistenten Shadow-Research-Prozess: Signale und Nicht-Signale werden pro geschlossenem Stundenbalken und Strategieversion gespeichert, nach dem Haltehorizont als Forward-Ergebnisse ausgewertet und chronologisch geteilt. Bei ausreichender lückenloser Historie laufen zusätzlich OHLCV-Backtests mit getrennten Train-/Validation-/Test-Zeitabschnitten und vier klar gekennzeichneten Margin-Kostenbudgets. Aktueller Spread und aktuelle Taker-Gebühr sind nur historische Proxys; Margin-Kostenbudgets sind Sensitivitätsannahmen, keine Kraken-Gebührenquotes. Diese Berichte sind keine Profitabilitätsfreigabe und können niemals die interne Live-Sperre ändern.**
 
 **Version 0.1.38 behebt den dauerhaften Hänger eines eng begrenzten, vorübergehenden Public-API-Netzwerkfehlers. `KRAKEN_API:KRAKEN_PUBLIC_NETWORK_ERROR` wird nur nach einem vollständig erfolgreichen Folgezyklus kontrolliert aufgelöst; andere Sperren bleiben bestehen. Die interne Code-Freigabe blockiert weiterhin echte Orders.**
 
