@@ -756,6 +756,46 @@ class Persistence:
         return [{"name": r["name"], "active": bool(r["active"]), "reason": r["reason"],
                  "ts": r["ts"], "detail": json.loads(r["detail_json"])} for r in rows]
 
+    def resolve_circuit_breaker(
+        self,
+        name: str,
+        expected_reason: str,
+        detail: dict[str, Any] | None = None,
+    ) -> bool:
+        """Resolve a breaker only if its active reason is exactly the expected one.
+
+        The row is retained for audit history. Resolution never deletes a breaker and
+        will not clear a breaker that has changed to a different reason in the meantime.
+        """
+        recovery_detail = detail or {}
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT active, reason FROM circuit_breakers WHERE name = ?",
+                (name,),
+            ).fetchone()
+            if (
+                row is None
+                or not bool(row["active"])
+                or str(row["reason"]) != expected_reason
+            ):
+                return False
+            updated = self.connection.execute(
+                "UPDATE circuit_breakers SET active = 0 "
+                "WHERE name = ? AND active = 1 AND reason = ?",
+                (name, expected_reason),
+            )
+            if updated.rowcount != 1:
+                return False
+            self.record_event(
+                "CIRCUIT_BREAKER_RECOVERED",
+                {
+                    "name": name,
+                    "previous_reason": expected_reason,
+                    "detail": recovery_detail,
+                },
+            )
+            return True
+
     def close(self) -> None:
         with self.lock:
             self.connection.close()
