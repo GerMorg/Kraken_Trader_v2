@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.37 — Persistente Circuit Breaker im AppLog diagnostizieren
+
+- Neues Ereignis `CIRCUIT_BREAKER_STATUS` zeigt pro regulär abgeschlossenem Zyklus, ob neue Entries blockiert sind, und benennt aktive Sperren mit Grund, Zeitstempel sowie begrenztem Kontext.
+- `NO_TRADE` nennt die aktive Sperre bei einer Ablehnung; `CYCLE_SUMMARY` enthält deren Anzahl und Diagnosezusammenfassung.
+- Wallet-Abstimmungsfehler werden auf die abweichenden Assets eingegrenzt; beliebige gespeicherte Detailfelder werden nicht ungefiltert ins Log kopiert.
+- Es erfolgt kein automatisches Löschen oder Zurücksetzen von Circuit Breakern. Live-Ausführung bleibt intern gesperrt.
+
 ## 0.1.36 — Interne Live-Freigabe wird technisch erzwungen
 
 - Die zentrale `OrderAuthority` blockiert echte Orderübermittlung, solange `INTERNAL_LIVE_EXECUTION_RELEASED` im Code `False` ist. Home-Assistant-Optionen allein können die Sperre nicht aufheben.
