@@ -103,6 +103,160 @@ def estimate_forward_outcome(
     return outcome
 
 
+def run_ohlcv_backtest_scenarios(
+    raw_bars: Sequence[dict[str, Any]],
+    *,
+    pair: str,
+    taker_fee_bps: Decimal | None,
+    current_spread_bps: Decimal,
+    holding_hours: int,
+    fast_threshold_bps: Decimal,
+    slow_threshold_bps: Decimal,
+    stop_pct: Decimal,
+) -> dict[str, Any]:
+    """Run the existing OHLCV simulator on chronological splits and margin-cost budgets.
+
+    Rates in the scenario grid are total round-trip margin-fee budgets, not Kraken
+    quotes. Current spread and taker-fee tier are proxies for historical costs.
+    """
+    from app.backtest import (
+        BacktestCosts,
+        Bar,
+        chronological_split,
+        simulate_trend_trades,
+        summary_metrics,
+    )
+
+    base: dict[str, Any] = {
+        "pair": pair,
+        "status": "SCENARIO_ONLY_NOT_LIVE_VALIDATION",
+        "actual_fills": False,
+        "portfolio_pnl": False,
+        "parameter_promotion": False,
+        "strategy_version": "tsm-0.1.2",
+        "cost_source_quality": "CURRENT_FEE_AND_SPREAD_PROXIES;MARGIN_FEE_BUDGET_SENSITIVITY",
+        "taker_fee_bps_per_side": str(taker_fee_bps) if taker_fee_bps is not None else None,
+        "current_spread_bps_assumed_for_history": str(current_spread_bps),
+        "slippage_bps_per_side_assumption": str(RESEARCH_SLIPPAGE_BPS_PER_SIDE),
+        "margin_cost_budgets_are_exchange_quotes": False,
+        "leverage_assumption": 2,
+        "position_sizing_assumption_pct_of_equity": "10",
+        "holding_hours": int(holding_hours),
+        "fast_threshold_bps": str(fast_threshold_bps),
+        "slow_threshold_bps": str(slow_threshold_bps),
+        "stop_pct": str(stop_pct),
+    }
+    if taker_fee_bps is None:
+        return {**base, "status": "SKIPPED_TAKER_FEE_UNKNOWN"}
+    if (
+        not taker_fee_bps.is_finite() or taker_fee_bps < 0
+        or not current_spread_bps.is_finite() or current_spread_bps < 0
+        or holding_hours < 1
+    ):
+        return {**base, "status": "SKIPPED_INVALID_COST_OR_HORIZON_INPUT"}
+    if len(raw_bars) < 500:
+        return {
+            **base,
+            "status": "INSUFFICIENT_CONTIGUOUS_HISTORY",
+            "bar_count": len(raw_bars),
+            "required_bar_count": 500,
+        }
+
+    bars = [
+        Bar(
+            timestamp=int(item["ts"]),
+            open=D(str(item["open"])),
+            high=D(str(item["high"])),
+            low=D(str(item["low"])),
+            close=D(str(item["close"])),
+            base_volume=D(str(item["volume"])),
+        )
+        for item in raw_bars
+    ]
+    if any(bars[index].timestamp >= bars[index + 1].timestamp for index in range(len(bars) - 1)):
+        return {**base, "status": "INVALID_BAR_ORDER", "bar_count": len(bars)}
+    gap_count = sum(
+        1 for index in range(len(bars) - 1)
+        if bars[index + 1].timestamp - bars[index].timestamp != 3600
+    )
+    if gap_count:
+        return {
+            **base,
+            "status": "INCOMPLETE_HOURLY_BAR_GAPS",
+            "bar_count": len(bars),
+            "hourly_gap_count": gap_count,
+        }
+    try:
+        train_bars, validation_bars, test_bars = chronological_split(bars)
+    except ValueError as exc:
+        return {**base, "status": "CHRONOLOGICAL_SPLIT_FAILED", "reason": str(exc)}
+
+    rollover_count = max(0, int(holding_hours) // 4)
+    event_count = 1 + rollover_count
+    scenario_results: list[dict[str, Any]] = []
+    for total_margin_budget_bps in (D("5"), D("10"), D("20"), D("40")):
+        per_fee_event = total_margin_budget_bps / D(event_count)
+        costs = BacktestCosts(
+            taker_fee_bps_per_side=taker_fee_bps,
+            spread_bps_round_trip=current_spread_bps,
+            slippage_bps_per_side=RESEARCH_SLIPPAGE_BPS_PER_SIDE,
+            margin_open_bps_on_extended_amount=per_fee_event,
+            margin_rollover_bps_on_extended_amount=per_fee_event,
+            holding_hours=int(holding_hours),
+            leverage=2,
+            max_volume_participation=D("0.01"),
+            minimum_order_usd=D("5"),
+        )
+        split_results: dict[str, Any] = {}
+        for split_name, split_bars in (
+            ("train_first_60_percent", train_bars),
+            ("validation_next_20_percent", validation_bars),
+            ("test_last_20_percent", test_bars),
+        ):
+            trades = simulate_trend_trades(
+                split_bars,
+                costs,
+                equity_usd=D("10000"),
+                position_pct=D("10"),
+                fast_threshold_bps=fast_threshold_bps,
+                slow_threshold_bps=slow_threshold_bps,
+                max_holding_bars=int(holding_hours),
+                stop_pct=stop_pct,
+            )
+            split_results[split_name] = {
+                **summary_metrics(trades),
+                "start_bar_ts": split_bars[0].timestamp if split_bars else None,
+                "end_bar_ts": split_bars[-1].timestamp if split_bars else None,
+            }
+        scenario_results.append({
+            "assumed_combined_margin_fee_budget_bps": str(total_margin_budget_bps),
+            "assumed_opening_and_each_rollover_fee_bps": str(per_fee_event),
+            "assumed_rollover_count_for_full_holding_period": rollover_count,
+            "splits": split_results,
+            "status": "SENSITIVITY_ASSUMPTION_NOT_KRAKEN_QUOTE",
+        })
+
+    return {
+        **base,
+        "status": "SCENARIO_ONLY_NOT_LIVE_VALIDATION",
+        "bar_count": len(bars),
+        "first_bar_ts": bars[0].timestamp,
+        "last_bar_ts": bars[-1].timestamp,
+        "chronological_split_fractions": {"train": "60%", "validation": "20%", "test": "20%"},
+        "historical_spread_source": "CURRENT_TICKER_PROXY_NOT_HISTORICAL_SPREAD",
+        "historical_taker_fee_source": "CURRENT_TRADE_VOLUME_TIER_NOT_HISTORICAL_TIER",
+        "simulator_method": "OHLCV_NEXT_BAR_OPEN_VOLUME_PARTICIPATION_PROXY",
+        "scenario_results": scenario_results,
+        "limitations": [
+            "Uses current spread and current account fee tier as proxies for historical costs.",
+            "Margin fee budgets are sensitivity assumptions and not dynamic Kraken rates.",
+            "Uses 2x leverage and 10% position sizing rather than the live risk sizing calculation.",
+            "Does not model historical order-book depth, queue position, actual fills, cancellations, latency or per-order margin eligibility.",
+            "Results are research scenarios, not actual orders, fills, portfolio PnL or proof of profitability.",
+        ],
+    }
+
+
 def _metrics(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     returns = [
         D(str(row["spot_net_return_bps"]))
