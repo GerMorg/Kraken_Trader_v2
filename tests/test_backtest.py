@@ -356,3 +356,22 @@ def test_orderbook_replay_fails_closed_when_entry_has_unfilled_remainder():
         issue.reason == "ENTRY_PARTIAL_REMAINDER_CANCEL_NOT_SIMULATED"
         for issue in replay.issues
     )
+
+
+def test_ohlcv_backtest_uses_actual_simulated_holding_duration_for_rollover_costs():
+    trades = simulate_trend_trades(
+        bars(180),
+        BacktestCosts(
+            D("20"), D("2"), D("5"), D("10"), D("10"),
+            holding_hours=8, leverage=2,
+        ),
+        max_holding_bars=3,
+        stop_pct=D("3"),
+    )
+
+    assert trades
+    assert all(trade.exit_time - trade.entry_time == 3 * 3600 for trade in trades)
+    assert all(
+        trade.margin_cost_usd == trade.notional_usd * D("10") / D("10000")
+        for trade in trades
+    )
