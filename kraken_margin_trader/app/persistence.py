@@ -150,7 +150,7 @@ class Persistence:
                     cost_quality TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    UNIQUE(pair,interval_minutes,bar_ts,strategy_version,fast_threshold_bps,slow_threshold_bps)
+                    UNIQUE(pair,interval_minutes,bar_ts,strategy_version,fast_threshold_bps,slow_threshold_bps,horizon_seconds)
                 );
                 CREATE INDEX IF NOT EXISTS research_pending_idx
                     ON research_observations(status,target_epoch);
@@ -257,6 +257,7 @@ class Persistence:
         key = (
             pair, interval, bar_ts, str(observation["strategy_version"]),
             str(observation["fast_threshold_bps"]), str(observation["slow_threshold_bps"]),
+            horizon_seconds,
         )
         values = (
             str(observation["observation_id"]), pair, interval, bar_ts, decision_ts,
@@ -282,7 +283,8 @@ class Persistence:
                 self.connection.execute(
                     "UPDATE research_observations SET taker_fee_bps=COALESCE(taker_fee_bps,?),updated_at=? "
                     "WHERE pair=? AND interval_minutes=? AND bar_ts=? AND strategy_version=? "
-                    "AND fast_threshold_bps=? AND slow_threshold_bps=? AND status IN ('PENDING','NO_DIRECTION')",
+                    "AND fast_threshold_bps=? AND slow_threshold_bps=? AND horizon_seconds=? "
+                    "AND status IN ('PENDING','NO_DIRECTION')",
                     (str(fee_value), now, *key),
                 )
             return cursor.rowcount == 1
