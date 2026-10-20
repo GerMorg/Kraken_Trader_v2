@@ -884,6 +884,7 @@ class TraderRuntime:
                                 strategy_version=STRATEGY_VERSION,
                                 fast_threshold_bps=self.settings.strategy_fast_bps,
                                 slow_threshold_bps=self.settings.strategy_slow_bps,
+                                horizon_seconds=self.settings.expected_holding_hours * 3600,
                             ),
                             "pair": instrument.pair_id,
                             "interval_minutes": 60,
