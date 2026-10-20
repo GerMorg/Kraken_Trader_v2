@@ -22,7 +22,12 @@ from app.market import executable_reference_price, parse_ohlc_rows, parse_ticker
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.position_management import evaluate_position_exits
-from app.research import observation_id, settle_due_observations, summarize_shadow_research
+from app.research import (
+    observation_id,
+    run_ohlcv_backtest_scenarios,
+    settle_due_observations,
+    summarize_shadow_research,
+)
 from app.portfolio import aggregate_position_exposure
 from app.portfolio_reconciliation import reconcile_positions_to_fills, reconcile_wallet_balance_deltas
 from app.reconciliation import reconcile_order_intents
@@ -930,6 +935,52 @@ class TraderRuntime:
                                 }
                                 self.persistence.record_event("SHADOW_RESEARCH_OBSERVATION_RECORDED", event_payload)
                                 self.audit.emit("SHADOW_RESEARCH_OBSERVATION_RECORDED", **event_payload)
+                                margin_supported_both_directions = (
+                                    any(level >= 2 for level in instrument.leverage_buy)
+                                    and any(level >= 2 for level in instrument.leverage_sell)
+                                )
+                                if fee is not None and margin_supported_both_directions:
+                                    try:
+                                        backtest_report = run_ohlcv_backtest_scenarios(
+                                            bars,
+                                            pair=instrument.wsname,
+                                            taker_fee_bps=fee,
+                                            current_spread_bps=ticker.spread_bps,
+                                            holding_hours=self.settings.expected_holding_hours,
+                                            fast_threshold_bps=self.settings.strategy_fast_bps,
+                                            slow_threshold_bps=self.settings.strategy_slow_bps,
+                                            stop_pct=self.settings.position_stop_loss_pct,
+                                        )
+                                        backtest_payload = {
+                                            "cycle_id": cycle_id,
+                                            "observation_id": observation["observation_id"],
+                                            **backtest_report,
+                                        }
+                                        self.persistence.record_event(
+                                            "OHLCV_BACKTEST_SCENARIO_REPORT", backtest_payload
+                                        )
+                                        self.audit.emit(
+                                            "OHLCV_BACKTEST_SCENARIO_REPORT", **backtest_payload
+                                        )
+                                    except (ArithmeticError, TypeError, ValueError) as exc:
+                                        self.audit.emit(
+                                            "OHLCV_BACKTEST_SCENARIO_ERROR",
+                                            cycle_id=cycle_id,
+                                            pair=instrument.wsname,
+                                            exception_type=type(exc).__name__,
+                                            reason=str(exc)[:120],
+                                            release_gate_eligible=False,
+                                        )
+                                else:
+                                    self.audit.emit(
+                                        "OHLCV_BACKTEST_SCENARIO_SKIPPED",
+                                        cycle_id=cycle_id,
+                                        pair=instrument.wsname,
+                                        reason=(
+                                            "CURRENT_TAKER_FEE_UNKNOWN" if fee is None
+                                            else "MARGIN_NOT_SUPPORTED_IN_BOTH_DIRECTIONS"
+                                        ),
+                                    )
                         except (ArithmeticError, TypeError, ValueError) as exc:
                             self.audit.emit(
                                 "SHADOW_RESEARCH_OBSERVATION_REJECTED",
