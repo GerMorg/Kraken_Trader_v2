@@ -151,7 +151,8 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
         exit_bar=ordered[exit_index]
         exit_reference_price = exit_price
         exit_price-=sign*exit_reference_price*costs.slippage_bps_per_side/D(10000)
-        rollovers=max(0,costs.holding_hours//4)
+        simulated_holding_seconds = max(0, exit_bar.timestamp - entry_bar.timestamp)
+        rollovers = simulated_holding_seconds // (4 * 60 * 60)
         margin_cost_bps = D(0)
         if costs.leverage > 1:
             # Conservative backtest projection uses full extended notional until
