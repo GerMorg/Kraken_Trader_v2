@@ -110,6 +110,26 @@ def test_public_network_breaker_stays_active_without_complete_health_evidence():
     db.close()
 
 
+def test_other_kraken_api_breaker_reasons_are_not_auto_resolved():
+    runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker("KRAKEN_API", "KRAKEN_AUTHENTICATION_FAILURE")
+
+    recovered = _recover_transient_public_network_breaker(
+        db, audit, cycle_id="different-error-cycle", system_status="online",
+        instruments_count=625, initial_ticker_count=624, refreshed_ticker_count=624,
+        credentials_present=True, api_permissions_ready=True,
+        history_ready_for_entries=True, history_evidence_gaps=[],
+        account_snapshot_available=True,
+    )
+
+    assert recovered is False
+    assert [(row["name"], row["reason"]) for row in db.circuit_breakers()] == [
+        ("KRAKEN_API", "KRAKEN_AUTHENTICATION_FAILURE")
+    ]
+    audit.close()
+    db.close()
+
+
 def test_exchange_order_parser_requires_valid_order_mapping():
     from app.runtime import _exchange_order_rows
 
