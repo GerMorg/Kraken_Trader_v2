@@ -5,7 +5,7 @@ from decimal import Decimal
 from app.audit import AuditLogger
 from app.config import Settings
 from app.persistence import Persistence
-from app.runtime import TraderRuntime, _open_position_rows
+from app.runtime import TraderRuntime, _circuit_breaker_diagnostics, _open_position_rows
 
 
 D = Decimal
@@ -20,6 +20,53 @@ def test_open_positions_parser_accepts_wrapped_shape_and_ignores_metadata():
     raw={"open":{"TX1":{"pair":"XXBTZUSD","type":"buy","posstatus":"open","vol":"1"}},"last":"abc"}
     rows=_open_position_rows(raw)
     assert list(rows)==["TX1"]
+
+
+def test_circuit_breaker_diagnostics_include_reason_and_safe_context_only():
+    diagnostics = _circuit_breaker_diagnostics([{
+        "name": "KRAKEN_API",
+        "reason": "EAPI:Invalid nonce",
+        "ts": "2026-10-20T16:00:00Z",
+        "active": True,
+        "detail": {
+            "cycle_id": "cycle-123",
+            "code": "EAPI:Invalid nonce",
+            "api_secret": "must-not-be-emitted",
+        },
+    }])
+
+    assert diagnostics == [{
+        "name": "KRAKEN_API",
+        "reason": "EAPI:Invalid nonce",
+        "ts": "2026-10-20T16:00:00Z",
+        "cycle_id": "cycle-123",
+        "code": "EAPI:Invalid nonce",
+    }]
+    assert "must-not-be-emitted" not in str(diagnostics)
+    assert "api_secret" not in str(diagnostics)
+
+
+def test_circuit_breaker_diagnostics_identify_wallet_mismatch_assets():
+    diagnostics = _circuit_breaker_diagnostics([{
+        "name": "WALLET_BALANCE_RECONCILIATION",
+        "reason": "WALLET_BALANCE_MISMATCH",
+        "ts": "2026-10-20T16:00:00Z",
+        "detail": {
+            "cycle_id": "cycle-456",
+            "evidence_gaps": ["ZUSD:BALANCE_DIFFERS_FROM_LEDGER"],
+            "asset_results": [
+                {"asset": "ZUSD", "status": "BALANCE_DIFFERS_FROM_LEDGER", "difference": "1.25"},
+                {"asset": "XXBT", "status": "BALANCE_STABLE", "difference": "0"},
+            ],
+        },
+    }])
+
+    assert diagnostics[0]["asset_result_count"] == 2
+    assert diagnostics[0]["mismatched_assets"] == [{
+        "asset": "ZUSD",
+        "status": "BALANCE_DIFFERS_FROM_LEDGER",
+        "difference": "1.25",
+    }]
 
 
 def test_exchange_order_parser_requires_valid_order_mapping():
@@ -448,6 +495,13 @@ def test_runtime_probes_history_when_key_metadata_is_missing_and_keeps_position_
     assert client.trade_volume_calls == 0
     assert db.circuit_breakers() == []
     logs = audit.stream.getvalue()
+    breaker_statuses = [
+        json.loads(line) for line in logs.splitlines()
+        if line.strip() and '"event":"CIRCUIT_BREAKER_STATUS"' in line
+    ]
+    assert breaker_statuses
+    assert breaker_statuses[-1]["payload"]["active"] is False
+    assert breaker_statuses[-1]["payload"]["count"] == 0
     assert "KRAKEN_API_KEY_METADATA_INCOMPLETE" in logs
     assert "KRAKEN_HISTORY_SYNC_SKIPPED" not in logs
     assert "NEW_RISK_BLOCKED_HISTORY_INCOMPLETE" in logs
