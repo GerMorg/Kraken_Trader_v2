@@ -950,6 +950,7 @@ class TraderRuntime:
                                             fast_threshold_bps=self.settings.strategy_fast_bps,
                                             slow_threshold_bps=self.settings.strategy_slow_bps,
                                             stop_pct=self.settings.position_stop_loss_pct,
+                                            strategy_version=STRATEGY_VERSION,
                                         )
                                         backtest_payload = {
                                             "cycle_id": cycle_id,
