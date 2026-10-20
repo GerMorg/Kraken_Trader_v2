@@ -183,3 +183,76 @@ def test_research_summary_uses_chronological_holdout_and_never_releases_live_gat
     )
     assert summary["release_gate_eligible"] is False
     assert summary["portfolio_pnl"] is False
+
+
+def synthetic_raw_bars(count=600, *, hourly_gap_at=None):
+    result = []
+    for index in range(count):
+        timestamp = index * 3600
+        if hourly_gap_at is not None and index >= hourly_gap_at:
+            timestamp += 3600
+        close = D("100") + D(index) / D("5")
+        result.append({
+            "ts": timestamp,
+            "open": close,
+            "high": close * D("1.01"),
+            "low": close * D("0.99"),
+            "close": close,
+            "volume": D("10000"),
+        })
+    return result
+
+
+def test_ohlcv_backtest_scenarios_run_chronologically_and_are_explicitly_non_live():
+    from app.research import run_ohlcv_backtest_scenarios
+
+    report = run_ohlcv_backtest_scenarios(
+        synthetic_raw_bars(),
+        pair="XBT/USD",
+        taker_fee_bps=D("20"),
+        current_spread_bps=D("2"),
+        holding_hours=8,
+        fast_threshold_bps=D("120"),
+        slow_threshold_bps=D("180"),
+        stop_pct=D("3"),
+    )
+
+    assert report["status"] == "SCENARIO_ONLY_NOT_LIVE_VALIDATION"
+    assert report["chronological_split_fractions"] == {
+        "train": "60%", "validation": "20%", "test": "20%"
+    }
+    assert report["margin_cost_budgets_are_exchange_quotes"] is False
+    assert len(report["scenario_results"]) == 4
+    assert [item["assumed_combined_margin_fee_budget_bps"] for item in report["scenario_results"]] == [
+        "5", "10", "20", "40"
+    ]
+    assert all(
+        item["status"] == "SENSITIVITY_ASSUMPTION_NOT_KRAKEN_QUOTE"
+        for item in report["scenario_results"]
+    )
+    assert report["scenario_results"][0]["splits"]["test_last_20_percent"]["end_bar_ts"] > (
+        report["scenario_results"][0]["splits"]["validation_next_20_percent"]["end_bar_ts"]
+    )
+
+
+def test_ohlcv_backtest_scenarios_refuse_hourly_gaps_and_missing_fee():
+    from app.research import run_ohlcv_backtest_scenarios
+
+    args = {
+        "pair": "LOW-VOLUME/USD",
+        "taker_fee_bps": D("20"),
+        "current_spread_bps": D("2"),
+        "holding_hours": 8,
+        "fast_threshold_bps": D("120"),
+        "slow_threshold_bps": D("180"),
+        "stop_pct": D("3"),
+    }
+    gap_report = run_ohlcv_backtest_scenarios(
+        synthetic_raw_bars(hourly_gap_at=400), **args
+    )
+    assert gap_report["status"] == "INCOMPLETE_HOURLY_BAR_GAPS"
+
+    fee_unknown_report = run_ohlcv_backtest_scenarios(
+        synthetic_raw_bars(), **{**args, "taker_fee_bps": None}
+    )
+    assert fee_unknown_report["status"] == "SKIPPED_TAKER_FEE_UNKNOWN"
