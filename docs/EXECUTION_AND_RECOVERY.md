@@ -1,5 +1,9 @@
 # Ausführung, Orderzustände und Wiederherstellung
 
+## v0.1.38: Begrenzte Wiederherstellung nach Netzwerkfehler
+
+Nur ein persistierter Breaker mit Name `KRAKEN_API` und exakt dem Grund `KRAKEN_PUBLIC_NETWORK_ERROR` wird nach einem gesunden Folgezyklus aufgelöst. Der Zyklus muss Online-Status, nichtleere USD-Instrumente und Ticker vor und nach den Konten-/Historienabfragen, erfolgreiche private Leseberechtigungen, vollständige Historie ohne Qualitätslücken und einen verfügbaren Kontosnapshot belegen. Die Auflösung ist an den erwarteten Grund gebunden und wird mit `CIRCUIT_BREAKER_RECOVERED` protokolliert; der Datenbankeintrag bleibt als inaktiv erhalten. Andere Breaker sowie die unabhängigen Portfolio-, Kosten-, Strategie- und internen Live-Freigabegates bleiben bestehen. Es werden dadurch keine echten Orders freigegeben.
+
 ## v0.1.35: Wiederherstellung über Kraken-Trades-Export
 
 Der Export ist der nächste Recovery-Pfad, wenn QueryTrades und TradesHistory die Ledger-Relation nicht liefern. AddExport wird für ein Zeitfenster von 15 Sekunden vor/nach dem gespeicherten Trade-Zeitpunkt angefordert. Die Export-ID, die Beschreibung, das Zeitfenster und der letzte Status werden an der bestehenden Trade-Zeile gespeichert, sodass der asynchrone Vorgang nach einem Neustart fortgesetzt werden kann.
