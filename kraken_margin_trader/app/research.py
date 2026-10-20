@@ -19,6 +19,7 @@ def observation_id(
     strategy_version: str,
     fast_threshold_bps: Decimal,
     slow_threshold_bps: Decimal,
+    horizon_seconds: int,
 ) -> str:
     identity = "|".join(
         (
@@ -28,6 +29,7 @@ def observation_id(
             strategy_version,
             str(fast_threshold_bps),
             str(slow_threshold_bps),
+            str(horizon_seconds),
         )
     )
     return sha256(identity.encode("utf-8")).hexdigest()
@@ -177,6 +179,31 @@ def summarize_shadow_research(observations: Sequence[dict[str, Any]]) -> dict[st
         1 for row in directional if str(row.get("status", "")).startswith("INCOMPLETE")
     )
     no_fee_settled = sum(1 for row in settled if row.get("spot_net_return_bps") is None)
+    margin_fee_sensitivity = []
+    for assumed_combined_margin_fee_bps in (D("5"), D("10"), D("20"), D("40")):
+        positive_after_margin_cost = sum(
+            1 for value in margin_break_even if value > assumed_combined_margin_fee_bps
+        )
+        average_net_proxy = (
+            sum(
+                (value - assumed_combined_margin_fee_bps for value in margin_break_even),
+                D(0),
+            ) / D(len(margin_break_even))
+            if margin_break_even else None
+        )
+        margin_fee_sensitivity.append({
+            "assumed_combined_margin_fee_budget_bps": str(assumed_combined_margin_fee_bps),
+            "positive_sample_count": positive_after_margin_cost,
+            "sample_count": len(margin_break_even),
+            "positive_pct": (
+                str(D(positive_after_margin_cost) / D(len(margin_break_even)) * D(100))
+                if margin_break_even else None
+            ),
+            "mean_net_proxy_after_assumed_margin_fee_bps": (
+                str(average_net_proxy) if average_net_proxy is not None else None
+            ),
+            "status": "SENSITIVITY_ASSUMPTION_NOT_KRAKEN_QUOTE",
+        })
 
     return {
         "research_schema": "shadow-forward-v1",
@@ -208,6 +235,7 @@ def summarize_shadow_research(observations: Sequence[dict[str, Any]]) -> dict[st
             ),
             "positive_break_even_budget_count": sum(1 for value in margin_break_even if value > 0),
             "margin_net_return_calculated": False,
+            "fee_budget_sensitivity": margin_fee_sensitivity,
             "status": "BREAK_EVEN_ONLY_MARGIN_OPEN_AND_ROLLOVER_FEES_UNKNOWN",
         },
         "holdout_sample_available_for_review": holdout_ready,
