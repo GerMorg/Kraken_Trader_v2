@@ -245,7 +245,7 @@ def test_orderbook_replay_accepts_explicit_financing_in_the_usd_quote_currency()
 
 def test_orderbook_replay_fails_closed_if_exit_book_is_missing_or_stale():
     data = bars()
-    missing_exit_timestamp = data[76].timestamp
+    missing_exit_timestamp = data[77].timestamp
     snapshots = [
         snapshot for snapshot in order_books(data)
         if snapshot.timestamp != missing_exit_timestamp
@@ -262,7 +262,7 @@ def test_orderbook_replay_fails_closed_if_exit_book_is_missing_or_stale():
 
 def test_orderbook_replay_does_not_mark_a_partially_exited_lot_closed():
     data = bars()
-    partial_timestamp = data[76].timestamp
+    partial_timestamp = data[77].timestamp
     snapshots = order_books(data, shallow_timestamp=partial_timestamp)
     replay = replay_orderbook(data, snapshots, leverage=1)
 
