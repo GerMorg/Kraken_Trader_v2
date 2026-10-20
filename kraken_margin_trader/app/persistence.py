@@ -119,6 +119,43 @@ class Persistence:
                     updated_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS circuit_breakers(name TEXT PRIMARY KEY,active INTEGER NOT NULL,reason TEXT NOT NULL,ts TEXT NOT NULL,detail_json TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS research_observations(
+                    observation_id TEXT PRIMARY KEY,
+                    pair TEXT NOT NULL,
+                    interval_minutes INTEGER NOT NULL,
+                    bar_ts INTEGER NOT NULL,
+                    decision_ts INTEGER NOT NULL,
+                    strategy_version TEXT NOT NULL,
+                    fast_threshold_bps TEXT NOT NULL,
+                    slow_threshold_bps TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    signal_reason TEXT NOT NULL,
+                    momentum_fast_bps TEXT NOT NULL,
+                    momentum_slow_bps TEXT NOT NULL,
+                    signal_score TEXT NOT NULL,
+                    stop_distance_pct TEXT NOT NULL,
+                    entry_mid_price TEXT NOT NULL,
+                    entry_spread_bps TEXT NOT NULL,
+                    taker_fee_bps TEXT,
+                    horizon_seconds INTEGER NOT NULL,
+                    target_epoch INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    outcome_bar_ts INTEGER,
+                    exit_close_price TEXT,
+                    exit_spread_bps TEXT,
+                    gross_return_bps TEXT,
+                    spot_cost_estimate_bps TEXT,
+                    spot_net_return_bps TEXT,
+                    margin_cost_break_even_bps TEXT,
+                    cost_quality TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(pair,interval_minutes,bar_ts,strategy_version,fast_threshold_bps,slow_threshold_bps)
+                );
+                CREATE INDEX IF NOT EXISTS research_pending_idx
+                    ON research_observations(status,target_epoch);
+                CREATE INDEX IF NOT EXISTS research_pair_target_idx
+                    ON research_observations(pair,interval_minutes,target_epoch);
             """)
             history_columns = {
                 str(row["name"]) for row in self.connection.execute("PRAGMA table_info(history_sync_state)")
@@ -130,7 +167,7 @@ class Persistence:
                     "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','5') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','6') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
@@ -168,6 +205,155 @@ class Persistence:
                 (pair, interval, max(1, limit)),
             ).fetchall()
         return [str(row["close"]) for row in reversed(rows)]
+
+    def record_research_observation(self, observation: dict[str, Any]) -> bool:
+        """Persist one immutable strategy observation per closed bar and strategy configuration."""
+        required = (
+            "observation_id", "pair", "interval_minutes", "bar_ts", "decision_ts",
+            "strategy_version", "fast_threshold_bps", "slow_threshold_bps", "direction",
+            "signal_reason", "momentum_fast_bps", "momentum_slow_bps", "signal_score",
+            "stop_distance_pct", "entry_mid_price", "entry_spread_bps", "horizon_seconds",
+            "target_epoch",
+        )
+        if any(key not in observation for key in required):
+            raise ValueError("RESEARCH_OBSERVATION_REQUIRED_FIELD_MISSING")
+        pair = str(observation["pair"]).strip()
+        direction = str(observation["direction"]).upper()
+        if not pair or direction not in {"LONG", "SHORT", "NONE"}:
+            raise ValueError("RESEARCH_OBSERVATION_IDENTITY_INVALID")
+        interval = int(observation["interval_minutes"])
+        bar_ts = int(observation["bar_ts"])
+        decision_ts = int(observation["decision_ts"])
+        horizon_seconds = int(observation["horizon_seconds"])
+        target_epoch = int(observation["target_epoch"])
+        if (
+            interval <= 0 or bar_ts < 0 or decision_ts < 0 or horizon_seconds <= 0
+            or target_epoch <= decision_ts or target_epoch - decision_ts != horizon_seconds
+        ):
+            raise ValueError("RESEARCH_OBSERVATION_TIME_RANGE_INVALID")
+        for field in (
+            "fast_threshold_bps", "slow_threshold_bps", "momentum_fast_bps",
+            "momentum_slow_bps", "signal_score", "stop_distance_pct",
+            "entry_mid_price", "entry_spread_bps",
+        ):
+            try:
+                number = Decimal(str(observation[field]))
+            except (ArithmeticError, TypeError, ValueError) as exc:
+                raise ValueError("RESEARCH_OBSERVATION_NUMERIC_FIELD_INVALID:" + field) from exc
+            if not number.is_finite():
+                raise ValueError("RESEARCH_OBSERVATION_NUMERIC_FIELD_NON_FINITE:" + field)
+        if Decimal(str(observation["entry_mid_price"])) <= 0 or Decimal(str(observation["entry_spread_bps"])) < 0:
+            raise ValueError("RESEARCH_OBSERVATION_ENTRY_QUOTE_INVALID")
+        fee_value = observation.get("taker_fee_bps")
+        if fee_value is not None:
+            try:
+                fee = Decimal(str(fee_value))
+            except (ArithmeticError, TypeError, ValueError) as exc:
+                raise ValueError("RESEARCH_OBSERVATION_TAKER_FEE_INVALID") from exc
+            if not fee.is_finite() or fee < 0:
+                raise ValueError("RESEARCH_OBSERVATION_TAKER_FEE_INVALID")
+        now = _now()
+        status = "PENDING" if direction in {"LONG", "SHORT"} else "NO_DIRECTION"
+        key = (
+            pair, interval, bar_ts, str(observation["strategy_version"]),
+            str(observation["fast_threshold_bps"]), str(observation["slow_threshold_bps"]),
+        )
+        values = (
+            str(observation["observation_id"]), pair, interval, bar_ts, decision_ts,
+            str(observation["strategy_version"]), str(observation["fast_threshold_bps"]),
+            str(observation["slow_threshold_bps"]), direction, str(observation["signal_reason"]),
+            str(observation["momentum_fast_bps"]), str(observation["momentum_slow_bps"]),
+            str(observation["signal_score"]), str(observation["stop_distance_pct"]),
+            str(observation["entry_mid_price"]), str(observation["entry_spread_bps"]),
+            str(fee_value) if fee_value is not None else None, horizon_seconds, target_epoch,
+            status, now, now,
+        )
+        with self.lock:
+            cursor = self.connection.execute(
+                "INSERT OR IGNORE INTO research_observations("
+                "observation_id,pair,interval_minutes,bar_ts,decision_ts,strategy_version,"
+                "fast_threshold_bps,slow_threshold_bps,direction,signal_reason,momentum_fast_bps,"
+                "momentum_slow_bps,signal_score,stop_distance_pct,entry_mid_price,entry_spread_bps,"
+                "taker_fee_bps,horizon_seconds,target_epoch,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                values,
+            )
+            if cursor.rowcount == 0 and fee_value is not None:
+                self.connection.execute(
+                    "UPDATE research_observations SET taker_fee_bps=COALESCE(taker_fee_bps,?),updated_at=? "
+                    "WHERE pair=? AND interval_minutes=? AND bar_ts=? AND strategy_version=? "
+                    "AND fast_threshold_bps=? AND slow_threshold_bps=? AND status IN ('PENDING','NO_DIRECTION')",
+                    (str(fee_value), now, *key),
+                )
+            return cursor.rowcount == 1
+
+    def pending_research_observations(self, pair: str, interval_minutes: int = 60, limit: int = 500) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT * FROM research_observations WHERE status='PENDING' AND pair=? "
+                "AND interval_minutes=? ORDER BY target_epoch,decision_ts LIMIT ?",
+                (pair, interval_minutes, max(1, min(int(limit), 5000))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def research_bar_covering_epoch(self, pair: str, interval_minutes: int, target_epoch: int) -> dict[str, Any] | None:
+        """Return the stored closed candle whose interval contains target_epoch."""
+        duration = int(interval_minutes) * 60
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT pair,interval_minutes,ts,open,high,low,close,volume FROM bars "
+                "WHERE pair=? AND interval_minutes=? AND ts<=? AND ts+? >= ? "
+                "ORDER BY ts DESC LIMIT 1",
+                (pair, interval_minutes, int(target_epoch), duration, int(target_epoch)),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def latest_bar_timestamp(self, pair: str, interval_minutes: int = 60) -> int | None:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT MAX(ts) AS latest_ts FROM bars WHERE pair=? AND interval_minutes=?",
+                (pair, interval_minutes),
+            ).fetchone()
+        return int(row["latest_ts"]) if row is not None and row["latest_ts"] is not None else None
+
+    def settle_research_observation(self, observation_id: str, outcome: dict[str, Any]) -> bool:
+        required = (
+            "status", "outcome_bar_ts", "exit_close_price", "exit_spread_bps",
+            "gross_return_bps", "spot_cost_estimate_bps", "spot_net_return_bps",
+            "margin_cost_break_even_bps", "cost_quality",
+        )
+        if any(key not in outcome for key in required):
+            raise ValueError("RESEARCH_OUTCOME_REQUIRED_FIELD_MISSING")
+        if str(outcome["status"]) not in {"SETTLED_COST_ESTIMATE", "SETTLED_GROSS_ONLY", "INCOMPLETE_MISSING_TARGET_BAR"}:
+            raise ValueError("RESEARCH_OUTCOME_STATUS_INVALID")
+        now = _now()
+        with self.lock:
+            cursor = self.connection.execute(
+                "UPDATE research_observations SET status=?,outcome_bar_ts=?,exit_close_price=?,"
+                "exit_spread_bps=?,gross_return_bps=?,spot_cost_estimate_bps=?,spot_net_return_bps=?,"
+                "margin_cost_break_even_bps=?,cost_quality=?,updated_at=? "
+                "WHERE observation_id=? AND status='PENDING'",
+                (
+                    str(outcome["status"]),
+                    int(outcome["outcome_bar_ts"]) if outcome["outcome_bar_ts"] is not None else None,
+                    str(outcome["exit_close_price"]) if outcome["exit_close_price"] is not None else None,
+                    str(outcome["exit_spread_bps"]) if outcome["exit_spread_bps"] is not None else None,
+                    str(outcome["gross_return_bps"]) if outcome["gross_return_bps"] is not None else None,
+                    str(outcome["spot_cost_estimate_bps"]) if outcome["spot_cost_estimate_bps"] is not None else None,
+                    str(outcome["spot_net_return_bps"]) if outcome["spot_net_return_bps"] is not None else None,
+                    str(outcome["margin_cost_break_even_bps"]) if outcome["margin_cost_break_even_bps"] is not None else None,
+                    str(outcome["cost_quality"]), now, str(observation_id),
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def research_observations(self, limit: int = 5000) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT * FROM research_observations ORDER BY decision_ts DESC,observation_id DESC LIMIT ?",
+                (max(1, min(int(limit), 20000)),),
+            ).fetchall()
+        return [dict(row) for row in reversed(rows)]
 
     def create_intent(self, intent: dict[str, Any], *, initial_state: str = "INTENT_CREATED") -> bool:
         required = ("intent_id", "decision_id", "client_order_id", "pair", "action", "side", "volume")
