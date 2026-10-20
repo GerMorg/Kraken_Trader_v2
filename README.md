@@ -2,9 +2,11 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.38
+## Aktueller Status — 0.1.39
 
-**Version 0.1.38 behebt den dauerhaften Hänger eines eng begrenzten, vorübergehenden Public-API-Netzwerkfehlers: `KRAKEN_API:KRAKEN_PUBLIC_NETWORK_ERROR` wird nur nach erfolgreichem öffentlichen Datenabruf, frischen nichtleeren Tickern, erfolgreicher privater Berechtigungsprüfung, vollständiger Historie ohne Qualitätslücken und verfügbarem Kontosnapshot kontrolliert aufgelöst. Die Auflösung wird als `CIRCUIT_BREAKER_RECOVERED` protokolliert. Andere Sperren werden nicht aufgehoben; Portfolio-Vollabgleich, Margin-Kosten und Strategie-Edge bleiben unzureichend belegt. Echte Orders bleiben durch die interne Code-Freigabe gesperrt.**
+**Version 0.1.39 ergänzt einen persistenten Shadow-Research-Prozess: Signale und Nicht-Signale werden pro geschlossenem Stundenbalken und Strategieversion gespeichert. Nach dem Beobachtungshorizont werden Forward-Ergebnisse gegen den passenden Stundenbalken ausgewertet und chronologisch in Entwicklungs-, Validierungs- und Holdout-Abschnitte geteilt. Gebühren, Spreads und angenommene Slippage werden ausdrücklich als Schätzung gekennzeichnet; unbekannte Margin-Eröffnungs- und Rollover-Gebühren werden nicht als null eingesetzt. Der Report kann niemals die interne Live-Freigabe ändern.**
+
+**Version 0.1.38 behebt den dauerhaften Hänger eines eng begrenzten, vorübergehenden Public-API-Netzwerkfehlers. `KRAKEN_API:KRAKEN_PUBLIC_NETWORK_ERROR` wird nur nach einem vollständig erfolgreichen Folgezyklus kontrolliert aufgelöst; andere Sperren bleiben bestehen. Die interne Code-Freigabe blockiert weiterhin echte Orders.**
 
 **Version 0.1.37 führte die detaillierte Circuit-Breaker-Diagnose über `CIRCUIT_BREAKER_STATUS`, `NO_TRADE` und `CYCLE_SUMMARY` ein.**
 
