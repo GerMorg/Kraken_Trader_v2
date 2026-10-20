@@ -436,7 +436,7 @@ def settle_due_observations(
             newest_bar_ts = persistence.latest_bar_timestamp(pair, interval_minutes)
             if newest_bar_ts is None or newest_bar_ts < target_epoch:
                 continue
-            outcome = {
+            outcome: dict[str, Any] = {
                 "status": "INCOMPLETE_MISSING_TARGET_BAR",
                 "outcome_bar_ts": None,
                 "exit_close_price": None,
