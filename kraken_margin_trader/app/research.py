@@ -113,6 +113,7 @@ def run_ohlcv_backtest_scenarios(
     fast_threshold_bps: Decimal,
     slow_threshold_bps: Decimal,
     stop_pct: Decimal,
+    strategy_version: str = "tsm-0.1.2",
 ) -> dict[str, Any]:
     """Run the existing OHLCV simulator on chronological splits and margin-cost budgets.
 
@@ -133,7 +134,7 @@ def run_ohlcv_backtest_scenarios(
         "actual_fills": False,
         "portfolio_pnl": False,
         "parameter_promotion": False,
-        "strategy_version": "tsm-0.1.2",
+        "strategy_version": strategy_version,
         "cost_source_quality": "CURRENT_FEE_AND_SPREAD_PROXIES;MARGIN_FEE_BUDGET_SENSITIVITY",
         "taker_fee_bps_per_side": str(taker_fee_bps) if taker_fee_bps is not None else None,
         "current_spread_bps_assumed_for_history": str(current_spread_bps),
