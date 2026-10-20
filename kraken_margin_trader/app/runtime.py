@@ -55,6 +55,47 @@ def _exchange_order_rows(response: Any, key: str) -> dict[str, dict[str, Any]] |
         return None
     return {str(order_id): row for order_id, row in rows.items()}
 
+
+def _circuit_breaker_diagnostics(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expose actionable breaker causes without dumping arbitrary persisted detail."""
+    diagnostics: list[dict[str, Any]] = []
+    for row in rows:
+        detail = row.get("detail")
+        detail = detail if isinstance(detail, dict) else {}
+        item: dict[str, Any] = {
+            "name": str(row.get("name", "UNKNOWN")),
+            "reason": str(row.get("reason", "UNKNOWN")),
+            "ts": row.get("ts"),
+        }
+        for key in (
+            "cycle_id", "status", "code", "exception_type", "snapshot_id", "evidence_gaps",
+        ):
+            if key in detail:
+                item[key] = detail[key]
+        asset_results = detail.get("asset_results")
+        if isinstance(asset_results, list):
+            item["asset_result_count"] = len(asset_results)
+            mismatches = [
+                {
+                    "asset": result.get("asset"),
+                    "status": result.get("status"),
+                    "difference": result.get("difference"),
+                }
+                for result in asset_results
+                if isinstance(result, dict)
+                and str(result.get("status", "")) not in {"MATCHED", "BALANCE_STABLE"}
+            ]
+            if mismatches:
+                item["mismatched_assets"] = mismatches[:20]
+        if not any(key in item for key in (
+            "cycle_id", "status", "code", "exception_type", "snapshot_id",
+            "evidence_gaps", "asset_result_count",
+        )) and detail:
+            item["detail_keys"] = sorted(str(key) for key in detail)[:20]
+        diagnostics.append(item)
+    return diagnostics
+
+
 class TraderRuntime:
     def __init__(self,settings: Settings,persistence: Persistence,audit: AuditLogger) -> None:
         self.settings,self.persistence,self.audit=settings,persistence,audit
@@ -652,6 +693,16 @@ class TraderRuntime:
                 )
             else:
                 self.audit.emit("ACCOUNT_UNAVAILABLE_PUBLIC_ONLY",reason="API_CREDENTIALS_NOT_CONFIGURED")
+            active_breaker_rows = self.persistence.circuit_breakers()
+            active_breaker_diagnostics = _circuit_breaker_diagnostics(active_breaker_rows)
+            self.audit.emit(
+                "CIRCUIT_BREAKER_STATUS",
+                cycle_id=cycle_id,
+                active=bool(active_breaker_rows),
+                count=len(active_breaker_rows),
+                new_entries_blocked=bool(active_breaker_rows),
+                breakers=active_breaker_diagnostics,
+            )
             for instrument in candidates:
                 if account is not None:
                     try:
@@ -789,9 +840,16 @@ class TraderRuntime:
                     counts["blocked"]+=1
                     self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,reason="ACCOUNT_SNAPSHOT_REQUIRED")
                     continue
-                if self.persistence.circuit_breakers():
-                    counts["blocked"]+=1
-                    self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,reason="PERSISTED_CIRCUIT_BREAKER_ACTIVE")
+                if active_breaker_rows:
+                    counts["blocked"] += 1
+                    self.audit.emit(
+                        "NO_TRADE",
+                        cycle_id=cycle_id,
+                        pair=instrument.wsname,
+                        reason="PERSISTED_CIRCUIT_BREAKER_ACTIVE",
+                        active_circuit_breakers=active_breaker_diagnostics,
+                        no_new_position_risk=True,
+                    )
                     continue
                 proposed=size_position_usd(equity_usd=snapshot.equity_usd,stop_distance_pct=signal.stop_distance_pct,
                     gap_buffer_pct=max(D("0.5"),signal.stop_distance_pct*D("0.5")),cost_bps=cost.total_round_trip_bps,
@@ -909,6 +967,8 @@ class TraderRuntime:
                         state="SHADOW_ONLY",
                         **intent,
                     )
+            final_breaker_rows = self.persistence.circuit_breakers()
+            final_breaker_diagnostics = _circuit_breaker_diagnostics(final_breaker_rows)
             result = {
                 "cycle_id": cycle_id,
                 "status": "OK",
@@ -919,6 +979,8 @@ class TraderRuntime:
                 "internal_live_release": INTERNAL_LIVE_EXECUTION_RELEASED,
                 "history_ready_for_entries": history_ready_for_entries,
                 "history_evidence_gaps": list(history_evidence_gaps),
+                "active_circuit_breaker_count": len(final_breaker_rows),
+                "active_circuit_breakers": final_breaker_diagnostics,
                 "note": (
                     "Real order submission also requires the internal release gate; "
                     "INTERNAL_LIVE_EXECUTION_RELEASED is false in this version. "
