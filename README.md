@@ -2,7 +2,9 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.36
+## Aktueller Status — 0.1.37
+
+**Version 0.1.37 ergänzt die Diagnose persistenter Circuit Breaker: `CIRCUIT_BREAKER_STATUS` protokolliert Anzahl, Name und Ursache aktiver Sperren sowie ausgewählte Details; `NO_TRADE` und `CYCLE_SUMMARY` weisen die aktive Sperre ebenfalls aus. Die Diagnose setzt keine Sperre zurück. Die interne Live-Freigabe bleibt deaktiviert.**
 
 **Version 0.1.36 erzwingt die interne Live-Sperre direkt in der zentralen Order Authority: `INTERNAL_LIVE_EXECUTION_RELEASED = False`. Auch `mode: LIVE`, `live_enabled: true` und `kill_switch: false` reichen deshalb nicht zur Übermittlung echter Orders. Die Historien-Reconciliation protokolliert zusätzlich ihren endgültigen Zustand über `KRAKEN_HISTORY_RECONCILED`; `CYCLE_SUMMARY` nennt jetzt den Historienstatus und den tatsächlichen Wert der internen Live-Freigabe.**
 
