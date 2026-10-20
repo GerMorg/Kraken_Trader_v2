@@ -1,5 +1,11 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.38 — Kontrollierte API-Fehler-Erholung
+
+Nur der exakte Fehler `KRAKEN_API:KRAKEN_PUBLIC_NETWORK_ERROR` kann nach einem erfolgreichen vollständigen Lesezyklus automatisch aufgelöst werden. Voraussetzungen sind Kraken-Status `online`, nichtleere Markt- und Tickerdaten vor und nach den Kontenabfragen, erfolgreiche private Leserechte, vollständige Trade-/Ledger-/ClosedOrders-Historie ohne Evidenzlücken und ein verfügbarer Kontosnapshot.
+
+Die Auflösung markiert den Datenbankeintrag inaktiv, löscht ihn nicht und protokolliert `CIRCUIT_BREAKER_RECOVERED`. Andere Circuit Breaker bleiben unverändert. Portfolioabgleich, Kostenmodell, Edge-Kalibrierung und interne Live-Freigabe bleiben separate Gates; diese Änderung schaltet Live-Handel nicht frei.
+
 ## Version 0.1.37 — Ursachen persistenter Circuit Breaker nachvollziehbar machen
 
 Das Ereignis `CIRCUIT_BREAKER_STATUS` wird je regulär abgeschlossenen Zyklus einmal geschrieben und enthält `active`, `count`, `new_entries_blocked` sowie eine begrenzte Liste aktiver Sperren mit Name, Grund, Zeitstempel und ausgewähltem Diagnosekontext. Bei Wallet-Abstimmungen werden abweichende Assets gezielt genannt. Eine Sperre wird nicht automatisch zurückgesetzt oder verändert.

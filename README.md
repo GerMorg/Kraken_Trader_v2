@@ -2,9 +2,11 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.37
+## Aktueller Status — 0.1.38
 
-**Version 0.1.37 ergänzt die Diagnose persistenter Circuit Breaker: `CIRCUIT_BREAKER_STATUS` protokolliert Anzahl, Name und Ursache aktiver Sperren sowie ausgewählte Details; `NO_TRADE` und `CYCLE_SUMMARY` weisen die aktive Sperre ebenfalls aus. Die Diagnose setzt keine Sperre zurück. Die interne Live-Freigabe bleibt deaktiviert.**
+**Version 0.1.38 behebt den dauerhaften Hänger eines eng begrenzten, vorübergehenden Public-API-Netzwerkfehlers: `KRAKEN_API:KRAKEN_PUBLIC_NETWORK_ERROR` wird nur nach erfolgreichem öffentlichen Datenabruf, frischen nichtleeren Tickern, erfolgreicher privater Berechtigungsprüfung, vollständiger Historie ohne Qualitätslücken und verfügbarem Kontosnapshot kontrolliert aufgelöst. Die Auflösung wird als `CIRCUIT_BREAKER_RECOVERED` protokolliert. Andere Sperren werden nicht aufgehoben; Portfolio-Vollabgleich, Margin-Kosten und Strategie-Edge bleiben unzureichend belegt. Echte Orders bleiben durch die interne Code-Freigabe gesperrt.**
+
+**Version 0.1.37 führte die detaillierte Circuit-Breaker-Diagnose über `CIRCUIT_BREAKER_STATUS`, `NO_TRADE` und `CYCLE_SUMMARY` ein.**
 
 **Version 0.1.36 erzwingt die interne Live-Sperre direkt in der zentralen Order Authority: `INTERNAL_LIVE_EXECUTION_RELEASED = False`. Auch `mode: LIVE`, `live_enabled: true` und `kill_switch: false` reichen deshalb nicht zur Übermittlung echter Orders. Die Historien-Reconciliation protokolliert zusätzlich ihren endgültigen Zustand über `KRAKEN_HISTORY_RECONCILED`; `CYCLE_SUMMARY` nennt jetzt den Historienstatus und den tatsächlichen Wert der internen Live-Freigabe.**
 

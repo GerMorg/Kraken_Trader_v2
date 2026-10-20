@@ -37,6 +37,70 @@ def _decimal(value: Any) -> Decimal | None:
     except (ArithmeticError,TypeError,ValueError):
         return None
 
+def _recover_transient_public_network_breaker(
+    persistence: Persistence,
+    audit: AuditLogger,
+    *,
+    cycle_id: str,
+    system_status: str,
+    instruments_count: int,
+    initial_ticker_count: int,
+    refreshed_ticker_count: int,
+    credentials_present: bool,
+    api_permissions_ready: bool,
+    history_ready_for_entries: bool,
+    history_evidence_gaps: list[str],
+    account_snapshot_available: bool,
+) -> bool:
+    """Resolve only a stale public-network breaker after a successful account-read cycle.
+
+    This narrowly handles KRAKEN_PUBLIC_NETWORK_ERROR. Auth, history, account,
+    reconciliation, cost, strategy and other risk gates remain independently active.
+    """
+    checks = {
+        "system_status_online": str(system_status).lower() == "online",
+        "usd_instruments_available": instruments_count > 0,
+        "initial_ticker_snapshot_nonempty": initial_ticker_count > 0,
+        "refreshed_ticker_snapshot_nonempty": refreshed_ticker_count > 0,
+        "api_credentials_present": credentials_present,
+        "private_api_permissions_ready": api_permissions_ready,
+        "history_ready_for_entries": history_ready_for_entries,
+        "history_evidence_gaps_empty": not history_evidence_gaps,
+        "account_snapshot_available": account_snapshot_available,
+    }
+    if not all(checks.values()):
+        return False
+
+    for breaker in persistence.circuit_breakers():
+        if (
+            breaker.get("name") != "KRAKEN_API"
+            or breaker.get("reason") != "KRAKEN_PUBLIC_NETWORK_ERROR"
+        ):
+            continue
+        verified_checks = [name for name, passed in checks.items() if passed]
+        recovery_detail = {
+            "cycle_id": cycle_id,
+            "recovery_method": "SUCCESSFUL_PUBLIC_AND_ACCOUNT_READ_CYCLE",
+            "verified_checks": verified_checks,
+        }
+        if persistence.resolve_circuit_breaker(
+            "KRAKEN_API",
+            "KRAKEN_PUBLIC_NETWORK_ERROR",
+            recovery_detail,
+        ):
+            audit.emit(
+                "CIRCUIT_BREAKER_RECOVERED",
+                cycle_id=cycle_id,
+                name="KRAKEN_API",
+                previous_reason="KRAKEN_PUBLIC_NETWORK_ERROR",
+                recovery_method="SUCCESSFUL_PUBLIC_AND_ACCOUNT_READ_CYCLE",
+                verified_checks=verified_checks,
+                other_entry_gates_remain_in_force=True,
+            )
+            return True
+    return False
+
+
 def _open_position_rows(response: dict[str,Any]) -> dict[str,dict[str,Any]]:
     wrapped=response.get("open")
     source=wrapped if isinstance(wrapped,dict) else response
@@ -239,6 +303,7 @@ class TraderRuntime:
                 self.persistence.trip_circuit_breaker("MARKET_UNIVERSE","NO_VALID_USD_MARKETS")
                 return {"cycle_id":cycle_id,"status":"BLOCKED","reason":"NO_VALID_USD_MARKETS"}
             tickers=parse_tickers(self.client.public("Ticker"),instruments)
+            initial_ticker_count = len(tickers)
             ticker_observed_at = time.time()
             ticker_times = {pair_id: ticker_observed_at for pair_id in tickers}
             ranked=sorted((i for i in instruments if i.pair_id in tickers),
@@ -693,6 +758,20 @@ class TraderRuntime:
                 )
             else:
                 self.audit.emit("ACCOUNT_UNAVAILABLE_PUBLIC_ONLY",reason="API_CREDENTIALS_NOT_CONFIGURED")
+            recovered_transient_public_network_breaker = _recover_transient_public_network_breaker(
+                self.persistence,
+                self.audit,
+                cycle_id=cycle_id,
+                system_status=status,
+                instruments_count=len(instruments),
+                initial_ticker_count=initial_ticker_count,
+                refreshed_ticker_count=len(tickers),
+                credentials_present=self.settings.credentials_present,
+                api_permissions_ready=api_permissions_ready,
+                history_ready_for_entries=history_ready_for_entries,
+                history_evidence_gaps=history_evidence_gaps,
+                account_snapshot_available=account is not None,
+            )
             active_breaker_rows = self.persistence.circuit_breakers()
             active_breaker_diagnostics = _circuit_breaker_diagnostics(active_breaker_rows)
             self.audit.emit(
@@ -701,6 +780,7 @@ class TraderRuntime:
                 active=bool(active_breaker_rows),
                 count=len(active_breaker_rows),
                 new_entries_blocked=bool(active_breaker_rows),
+                recovered_transient_public_network_breaker=recovered_transient_public_network_breaker,
                 breakers=active_breaker_diagnostics,
             )
             for instrument in candidates:
@@ -981,6 +1061,7 @@ class TraderRuntime:
                 "history_evidence_gaps": list(history_evidence_gaps),
                 "active_circuit_breaker_count": len(final_breaker_rows),
                 "active_circuit_breakers": final_breaker_diagnostics,
+                "recovered_transient_public_network_breaker": recovered_transient_public_network_breaker,
                 "note": (
                     "Real order submission also requires the internal release gate; "
                     "INTERNAL_LIVE_EXECUTION_RELEASED is false in this version. "

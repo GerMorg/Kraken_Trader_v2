@@ -5,7 +5,7 @@ from decimal import Decimal
 from app.audit import AuditLogger
 from app.config import Settings
 from app.persistence import Persistence
-from app.runtime import TraderRuntime, _circuit_breaker_diagnostics, _open_position_rows
+from app.runtime import (TraderRuntime, _circuit_breaker_diagnostics, _open_position_rows, _recover_transient_public_network_breaker)
 
 
 D = Decimal
@@ -67,6 +67,67 @@ def test_circuit_breaker_diagnostics_identify_wallet_mismatch_assets():
         "status": "BALANCE_DIFFERS_FROM_LEDGER",
         "difference": "1.25",
     }]
+
+
+def test_transient_public_network_breaker_recovers_after_healthy_account_cycle():
+    runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker("KRAKEN_API", "KRAKEN_PUBLIC_NETWORK_ERROR", {"cycle_id": "failed-cycle"})
+    db.trip_circuit_breaker("ORDER_SNAPSHOT", "ORDER_RESPONSE_SHAPE_INVALID", {})
+
+    recovered = _recover_transient_public_network_breaker(
+        db, audit, cycle_id="recovery-cycle", system_status="online",
+        instruments_count=625, initial_ticker_count=624, refreshed_ticker_count=624,
+        credentials_present=True, api_permissions_ready=True,
+        history_ready_for_entries=True, history_evidence_gaps=[],
+        account_snapshot_available=True,
+    )
+
+    assert recovered is True
+    assert [(row["name"], row["reason"]) for row in db.circuit_breakers()] == [
+        ("ORDER_SNAPSHOT", "ORDER_RESPONSE_SHAPE_INVALID")
+    ]
+    audit.close()
+    db.close()
+
+
+def test_public_network_breaker_stays_active_without_complete_health_evidence():
+    runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker("KRAKEN_API", "KRAKEN_PUBLIC_NETWORK_ERROR")
+
+    recovered = _recover_transient_public_network_breaker(
+        db, audit, cycle_id="incomplete-cycle", system_status="online",
+        instruments_count=625, initial_ticker_count=624, refreshed_ticker_count=0,
+        credentials_present=True, api_permissions_ready=True,
+        history_ready_for_entries=True, history_evidence_gaps=[],
+        account_snapshot_available=True,
+    )
+
+    assert recovered is False
+    assert [(row["name"], row["reason"]) for row in db.circuit_breakers()] == [
+        ("KRAKEN_API", "KRAKEN_PUBLIC_NETWORK_ERROR")
+    ]
+    audit.close()
+    db.close()
+
+
+def test_other_kraken_api_breaker_reasons_are_not_auto_resolved():
+    runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker("KRAKEN_API", "KRAKEN_AUTHENTICATION_FAILURE")
+
+    recovered = _recover_transient_public_network_breaker(
+        db, audit, cycle_id="different-error-cycle", system_status="online",
+        instruments_count=625, initial_ticker_count=624, refreshed_ticker_count=624,
+        credentials_present=True, api_permissions_ready=True,
+        history_ready_for_entries=True, history_evidence_gaps=[],
+        account_snapshot_available=True,
+    )
+
+    assert recovered is False
+    assert [(row["name"], row["reason"]) for row in db.circuit_breakers()] == [
+        ("KRAKEN_API", "KRAKEN_AUTHENTICATION_FAILURE")
+    ]
+    audit.close()
+    db.close()
 
 
 def test_exchange_order_parser_requires_valid_order_mapping():
