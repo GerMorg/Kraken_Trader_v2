@@ -222,3 +222,102 @@ def summarize_shadow_research(observations: Sequence[dict[str, Any]]) -> dict[st
             "This report cannot calibrate edge or release live order execution automatically.",
         ],
     }
+
+
+def settle_due_observations(
+    persistence: Any,
+    *,
+    pair: str,
+    current_exit_spread_bps: Decimal,
+    interval_minutes: int = 60,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Settle forward labels only against a stored candle covering the target time."""
+    if not current_exit_spread_bps.is_finite() or current_exit_spread_bps < 0:
+        return []
+    results: list[dict[str, Any]] = []
+    for row in persistence.pending_research_observations(pair, interval_minutes, limit):
+        target_epoch = int(row["target_epoch"])
+        target_bar = persistence.research_bar_covering_epoch(
+            pair, interval_minutes, target_epoch
+        )
+        if target_bar is None:
+            newest_bar_ts = persistence.latest_bar_timestamp(pair, interval_minutes)
+            if newest_bar_ts is None or newest_bar_ts < target_epoch:
+                continue
+            outcome = {
+                "status": "INCOMPLETE_MISSING_TARGET_BAR",
+                "outcome_bar_ts": None,
+                "exit_close_price": None,
+                "exit_spread_bps": str(current_exit_spread_bps),
+                "gross_return_bps": None,
+                "spot_cost_estimate_bps": None,
+                "spot_net_return_bps": None,
+                "margin_cost_break_even_bps": None,
+                "cost_quality": "TARGET_HOURLY_BAR_MISSING;NO_OUTCOME_INFERRED",
+            }
+            if persistence.settle_research_observation(row["observation_id"], outcome):
+                results.append({
+                    "event": "SHADOW_RESEARCH_OUTCOME_INCOMPLETE",
+                    "payload": {
+                        "observation_id": row["observation_id"],
+                        "pair": pair,
+                        "direction": row["direction"],
+                        "target_epoch": target_epoch,
+                        "latest_bar_ts": newest_bar_ts,
+                        "reason": "TARGET_HOURLY_BAR_MISSING",
+                    },
+                })
+            continue
+
+        fee = D(str(row["taker_fee_bps"])) if row.get("taker_fee_bps") is not None else None
+        estimate = estimate_forward_outcome(
+            direction=str(row["direction"]),
+            entry_mid_price=D(str(row["entry_mid_price"])),
+            exit_close_price=D(str(target_bar["close"])),
+            entry_spread_bps=D(str(row["entry_spread_bps"])),
+            exit_spread_bps=current_exit_spread_bps,
+            taker_fee_bps=fee,
+        )
+        status = "SETTLED_COST_ESTIMATE" if fee is not None else "SETTLED_GROSS_ONLY"
+        outcome = {
+            "status": status,
+            "outcome_bar_ts": int(target_bar["ts"]),
+            "exit_close_price": str(target_bar["close"]),
+            "exit_spread_bps": str(current_exit_spread_bps),
+            "gross_return_bps": estimate["gross_return_bps"],
+            "spot_cost_estimate_bps": estimate["spot_cost_estimate_bps"],
+            "spot_net_return_bps": estimate["spot_net_return_bps"],
+            "margin_cost_break_even_bps": estimate["margin_cost_break_even_bps"],
+            "cost_quality": str(estimate["cost_quality"]),
+        }
+        if persistence.settle_research_observation(row["observation_id"], outcome):
+            results.append({
+                "event": "SHADOW_RESEARCH_OUTCOME_SETTLED",
+                "payload": {
+                    "observation_id": row["observation_id"],
+                    "pair": pair,
+                    "direction": row["direction"],
+                    "decision_ts": int(row["decision_ts"]),
+                    "target_epoch": target_epoch,
+                    "outcome_bar_ts": int(target_bar["ts"]),
+                    "gross_return_bps": str(estimate["gross_return_bps"]),
+                    "spot_cost_estimate_bps": (
+                        str(estimate["spot_cost_estimate_bps"])
+                        if estimate["spot_cost_estimate_bps"] is not None else None
+                    ),
+                    "spot_net_return_bps": (
+                        str(estimate["spot_net_return_bps"])
+                        if estimate["spot_net_return_bps"] is not None else None
+                    ),
+                    "margin_cost_break_even_bps": (
+                        str(estimate["margin_cost_break_even_bps"])
+                        if estimate["margin_cost_break_even_bps"] is not None else None
+                    ),
+                    "status": status,
+                    "cost_quality": estimate["cost_quality"],
+                    "portfolio_pnl": False,
+                    "actual_fill": False,
+                },
+            })
+    return results
