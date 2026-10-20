@@ -1,5 +1,13 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.37 — Ursachen persistenter Circuit Breaker nachvollziehbar machen
+
+Das Ereignis `CIRCUIT_BREAKER_STATUS` wird je regulär abgeschlossenen Zyklus einmal geschrieben und enthält `active`, `count`, `new_entries_blocked` sowie eine begrenzte Liste aktiver Sperren mit Name, Grund, Zeitstempel und ausgewähltem Diagnosekontext. Bei Wallet-Abstimmungen werden abweichende Assets gezielt genannt. Eine Sperre wird nicht automatisch zurückgesetzt oder verändert.
+
+`NO_TRADE` mit Grund `PERSISTED_CIRCUIT_BREAKER_ACTIVE` enthält jetzt die zugehörigen Diagnoseinformationen. `CYCLE_SUMMARY` gibt `active_circuit_breaker_count` und `active_circuit_breakers` aus. Damit lässt sich die Ursache einer bestehenden Sperre im AppLog bestimmen, ohne die persistente Schutzmaßnahme zu umgehen.
+
+Diese Version ist weiterhin nicht für unbeaufsichtigten Live-Handel freigegeben.
+
 ## Version 0.1.36 — technische Sperre für Live-Orders
 
 `INTERNAL_LIVE_EXECUTION_RELEASED` ist eine interne, nicht über Home-Assistant-Optionen überschreibbare Konstante. Sie bleibt in dieser Version `False` und wird von der zentralen `OrderAuthority` vor jedem echten Orderaufruf geprüft. Ein falsch oder versehentlich gesetzter Live-Schalter kann diese Sperre nicht umgehen. `validate=true` für reine API-Validierung ist davon getrennt und löst keine echte Ausführung aus.
