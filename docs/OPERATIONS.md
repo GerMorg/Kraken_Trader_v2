@@ -4,6 +4,8 @@
 
 Der Runtime-Zyklus speichert pro Paar, geschlossenem Stundenbalken, Strategieversion und festgelegten Momentum-Schwellen genau eine Research-Beobachtung. LONG-, SHORT- und gültige NONE-Signale werden erfasst; unzureichende Historie und veraltete Kerzen werden nicht als valide Beobachtungen bewertet. Die Datenbankmigration aktualisiert das Schema auf Version 6, ohne bestehende Orders, Historie oder Kontosnapshots zu löschen.
 
+Zusätzlich wird bei einer neuen Beobachtung und vorhandener Taker-Gebühr ein `OHLCV_BACKTEST_SCENARIO_REPORT` ausgegeben, sofern das Instrument beide Margin-Richtungen unterstützt. Die Historie wird nur bei mindestens 500 lückenlosen Stundenkerzen ausgewertet. Train, Validation und Test werden chronologisch getrennt. Es gibt vier separate Budgets für die kombinierten Margin-Eröffnungs-/Rollover-Kosten: 5, 10, 20 und 40 Basispunkte pro simuliertem Roundtrip. Diese Budgets sind explizite Sensitivitätsannahmen, keine aktuellen Kraken-Gebührenangebote. Der Bericht nutzt den aktuellen Spread und die aktuelle Taker-Stufe nur als historische Proxys sowie 2x Hebel und 10 Prozent Positionsgröße; er ist ausdrücklich `SCENARIO_ONLY_NOT_LIVE_VALIDATION` und steuert keine Entries.
+
 Relevante AppLog-Ereignisse:
 
 - `SHADOW_RESEARCH_OBSERVATION_RECORDED`: Signal, Kerzenzeit, Entscheidungszeit, Einstieg-Midpreis, aktueller Spread, verfügbare Kraken-Taker-Gebühr und Zielzeit.
