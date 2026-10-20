@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.38 — Kontrollierte Wiederherstellung eines vorübergehenden Public-API-Fehlers
+
+- Ein gespeicherter Breaker `KRAKEN_API:KRAKEN_PUBLIC_NETWORK_ERROR` wird nur nach einem nachweislich erfolgreichen Folgezyklus mit Online-Status, nichtleeren Markt-/Tickerdaten, erfolgreicher API-Berechtigungsprüfung, vollständig bereiter Historie ohne Evidenzlücken und verfügbarem Kontosnapshot aufgelöst.
+- Die Auflösung ist an den erwarteten Namen und Grund gebunden, löscht keinen Auditdatensatz und erzeugt `CIRCUIT_BREAKER_RECOVERED` in der Datenbank und im AppLog.
+- Andere Circuit Breaker bleiben unverändert. Vollständige Portfolio-Reconciliation, bestätigte Margin-Kosten, kalibrierte Edge und die interne Live-Freigabe bleiben unabhängige Voraussetzungen; diese Version schaltet Live-Handel nicht frei.
+
 ## 0.1.37 — Persistente Circuit Breaker im AppLog diagnostizieren
 
 - Neues Ereignis `CIRCUIT_BREAKER_STATUS` zeigt pro regulär abgeschlossenem Zyklus, ob neue Entries blockiert sind, und benennt aktive Sperren mit Grund, Zeitstempel sowie begrenztem Kontext.
