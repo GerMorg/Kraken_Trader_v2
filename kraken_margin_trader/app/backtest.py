@@ -139,7 +139,7 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
         sign=D(1) if signal.direction=="LONG" else D(-1)
         entry_reference_price = entry_bar.open
         entry=entry_reference_price+sign*entry_reference_price*costs.slippage_bps_per_side/D(10000)
-        end=min(len(ordered)-1,index+max(1,max_holding_bars))
+        end=min(len(ordered)-1,index+1+max(1,max_holding_bars))
         exit_price=ordered[end].open; exit_reason="TIME_EXIT"; exit_index=end
         for probe_index,probe in enumerate(ordered[index+1:end+1],start=index+1):
             adverse=((probe.low / entry - D(1)) * D(100) if signal.direction == "LONG"
@@ -466,7 +466,7 @@ def replay_trend_strategy_on_order_books(
             index += 1
             continue
 
-        last_exit_index = min(len(ordered) - 1, index + max(1, max_holding_bars))
+        last_exit_index = min(len(ordered) - 1, index + 1 + max(1, max_holding_bars))
         exit_index = last_exit_index
         exit_reason = "TIME_EXIT"
         entry_reference = (entry_book.bids[0].price + entry_book.asks[0].price) / D(2)
