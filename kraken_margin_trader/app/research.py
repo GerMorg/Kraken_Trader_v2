@@ -191,6 +191,8 @@ def run_ohlcv_backtest_scenarios(
     except ValueError as exc:
         return {**base, "status": "CHRONOLOGICAL_SPLIT_FAILED", "reason": str(exc)}
 
+    # The OHLCV simulator enters at the bar after the signal and exits after
+    # max_holding_bars counted from that entry bar.
     rollover_count = max(0, int(holding_hours) // 4)
     event_count = 1 + rollover_count
     scenario_results: list[dict[str, Any]] = []
