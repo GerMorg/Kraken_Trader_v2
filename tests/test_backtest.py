@@ -115,10 +115,14 @@ def test_backtest_does_not_double_charge_slippage_already_applied_to_fill_prices
     )
     trades = simulate_trend_trades(bars(), costs, max_holding_bars=4)
     assert trades
-    # 52 bps trading fees + 8 bps spread + 20 bps open + 2 * 20 bps rollover.
+    # Trading fees, spread and opening fees always apply. Rollover fees apply only
+    # when the simulated position actually crosses four-hour funding boundaries.
     # The 5 bps/side slippage is already reflected in entry/exit execution prices.
     for trade in trades:
-        assert trade.total_cost_pct == D("1.20")
+        elapsed_seconds = trade.exit_time - trade.entry_time
+        rollover_count = elapsed_seconds // (4 * 3600)
+        expected_cost_bps = D("52") + D("8") + D("20") + D(rollover_count) * D("20")
+        assert trade.total_cost_pct == expected_cost_bps / D(100)
         direction_sign = D(1) if trade.direction == "LONG" else D(-1)
         assert trade.gross_pnl_usd == (
             trade.quantity * (trade.exit - trade.entry) * direction_sign
@@ -372,6 +376,8 @@ def test_ohlcv_backtest_uses_actual_simulated_holding_duration_for_rollover_cost
     assert trades
     assert all(trade.exit_time - trade.entry_time == 3 * 3600 for trade in trades)
     assert all(
-        trade.margin_cost_usd == trade.notional_usd * D("10") / D("10000")
+        trade.margin_cost_usd == trade.notional_usd * (
+            D("10") + D((trade.exit_time - trade.entry_time) // (4 * 3600)) * D("10")
+        ) / D("10000")
         for trade in trades
     )
