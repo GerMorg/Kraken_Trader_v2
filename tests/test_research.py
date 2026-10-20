@@ -118,7 +118,7 @@ def test_forward_observation_settles_only_when_target_hourly_bar_exists():
     assert rows[0]["status"] == "SETTLED_COST_ESTIMATE"
     assert D(rows[0]["gross_return_bps"]) == D("100")
     assert D(rows[0]["spot_net_return_bps"]) == D("83")
-    assert rows[0]["margin_cost_break_even_bps"] == "83"
+    assert D(rows[0]["margin_cost_break_even_bps"]) == D("83")
     db.close()
 
 
