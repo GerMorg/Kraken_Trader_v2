@@ -119,9 +119,9 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
     trades = []
     index = 72
     current_equity = equity_usd
-    # Require at least one bar after entry so a simulated trade cannot be
-    # opened and closed against the same timestamp at the end of the dataset.
-    while index + 2 < len(ordered) and current_equity > 0:
+    # Keep the complete planned holding horizon available in the dataset.
+    # Otherwise an end-of-file cutoff would create a fictitious early time exit.
+    while index + 1 + max(1, max_holding_bars) < len(ordered) and current_equity > 0:
         signal=generate_trend_signal("SIM",[x.close for x in ordered[:index+1]],
                                      fast_threshold_bps=fast_threshold_bps,slow_threshold_bps=slow_threshold_bps)
         if not signal.has_direction:
@@ -429,7 +429,9 @@ def replay_trend_strategy_on_order_books(
     issues: list[OrderBookReplayIssue] = []
     current_equity = equity_usd
     index = 72
-    while index + 2 < len(ordered) and current_equity > 0:
+    # Do not open a scenario position unless the data contains its full planned
+    # holding horizon. Missing future bars are not simulated as an early time exit.
+    while index + 1 + max(1, max_holding_bars) < len(ordered) and current_equity > 0:
         signal = generate_trend_signal(
             "SIM",
             [item.close for item in ordered[: index + 1]],
