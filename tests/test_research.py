@@ -26,6 +26,7 @@ def make_observation(
             strategy_version="tsm-test",
             fast_threshold_bps=D("120"),
             slow_threshold_bps=D("180"),
+            horizon_seconds=28800,
         ),
         "pair": pair,
         "interval_minutes": 60,
@@ -175,5 +176,10 @@ def test_research_summary_uses_chronological_holdout_and_never_releases_live_gat
     assert summary["chronological_splits"]["validation_next_20_percent"]["sample_count"] == 20
     assert summary["chronological_splits"]["test_last_20_percent"]["sample_count"] == 20
     assert summary["margin_cost_diagnostics"]["margin_net_return_calculated"] is False
+    assert len(summary["margin_cost_diagnostics"]["fee_budget_sensitivity"]) == 4
+    assert all(
+        item["status"] == "SENSITIVITY_ASSUMPTION_NOT_KRAKEN_QUOTE"
+        for item in summary["margin_cost_diagnostics"]["fee_budget_sensitivity"]
+    )
     assert summary["release_gate_eligible"] is False
     assert summary["portfolio_pnl"] is False
