@@ -6,6 +6,8 @@
 - Wertet Forward-Bewegungen nach dem konfigurierten Haltedauerhorizont nur dann aus, wenn eine gespeicherte Stundenkerze den Zielzeitpunkt abdeckt. Fehlende Zielkerzen werden als unvollständig markiert, niemals durch geschätzte Kurse ersetzt.
 - Berechnet bei verfügbarer Kraken-TradeVolume-Taker-Gebühr einen ausdrücklich geschätzten Spot-Kostenproxy und ein Break-even-Budget für unbekannte kombinierte Margin-Eröffnungs-/Rollover-Gebühren.
 - Protokolliert `SHADOW_RESEARCH_OBSERVATION_RECORDED`, `SHADOW_RESEARCH_OUTCOME_SETTLED`, `SHADOW_RESEARCH_OUTCOME_INCOMPLETE` und `SHADOW_RESEARCH_SUMMARY`; die Zusammenfassung trennt Train/Validation/Holdout chronologisch nach Entscheidungszeitpunkt.
+- Führt bei ausreichend langer, lückenloser Stundenhistorie einen OHLCV-Szenario-Backtest mit chronologischen 60/20/20-Splits und vier expliziten Margin-Kostenbudgets (5/10/20/40 Basispunkte je Roundtrip) aus. Aktueller Spread und aktuelle Taker-Stufe sind nur historische Proxys; Reports bleiben `SCENARIO_ONLY_NOT_LIVE_VALIDATION`.
+- Der OHLCV- und Orderbuch-Simulator zählt Margin-Rollover jetzt anhand der simulierten Haltedauer statt der pauschal konfigurierten Höchstdauer.
 - Keine echte Fill-/Portfolio-PnL-Behauptung, keine automatische Edge-Kalibrierung und keine Live-Freigabe. Margin-Nettoergebnisse bleiben unbekannt, bis tatsächliche quellen- und zeitbezogene Gebührenevidenz vorhanden ist.
 
 ## 0.1.38 — Kontrollierte Wiederherstellung eines vorübergehenden Public-API-Fehlers
