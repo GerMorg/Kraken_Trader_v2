@@ -158,11 +158,17 @@ def summarize_shadow_research(observations: Sequence[dict[str, Any]]) -> dict[st
         and D(str(row["margin_cost_break_even_bps"])).is_finite()
     ]
     n = len(costed)
-    train_end = int(n * 0.60)
-    validation_end = int(n * 0.80)
-    train = costed[:train_end]
-    validation = costed[train_end:validation_end]
-    test = costed[validation_end:]
+    # Split by unique decision timestamps so observations from the same market
+    # cycle cannot leak across train, validation and test partitions.
+    unique_decision_times = sorted({int(row.get("decision_ts", 0)) for row in costed})
+    train_time_end = int(len(unique_decision_times) * 0.60)
+    validation_time_end = int(len(unique_decision_times) * 0.80)
+    train_times = set(unique_decision_times[:train_time_end])
+    validation_times = set(unique_decision_times[train_time_end:validation_time_end])
+    test_times = set(unique_decision_times[validation_time_end:])
+    train = [row for row in costed if int(row.get("decision_ts", 0)) in train_times]
+    validation = [row for row in costed if int(row.get("decision_ts", 0)) in validation_times]
+    test = [row for row in costed if int(row.get("decision_ts", 0)) in test_times]
     holdout_ready = (
         n >= MINIMUM_COSTED_FORWARD_OBSERVATIONS
         and len(test) >= MINIMUM_HOLDOUT_OBSERVATIONS_FOR_REVIEW
