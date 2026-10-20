@@ -370,7 +370,7 @@ def test_ohlcv_backtest_uses_actual_simulated_holding_duration_for_rollover_cost
             holding_hours=8, leverage=2,
         ),
         max_holding_bars=3,
-        stop_pct=D("3"),
+        stop_pct=D("20"),
     )
 
     assert trades
