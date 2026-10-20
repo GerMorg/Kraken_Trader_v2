@@ -1,10 +1,14 @@
 # Changelog
 
-## 0.1.38 — Kontrollierte Wiederherstellung eines vorübergehenden Public-API-Fehlers
+## 0.1.39 — Persistente Shadow-Research-Pipeline
 
-- Ein gespeicherter Breaker `KRAKEN_API:KRAKEN_PUBLIC_NETWORK_ERROR` wird nur nach einem nachweislich erfolgreichen Folgezyklus mit Online-Status, nichtleeren Markt-/Tickerdaten, erfolgreicher API-Berechtigungsprüfung, vollständig bereiter Historie ohne Evidenzlücken und verfügbarem Kontosnapshot aufgelöst.
-- Die Auflösung ist an den erwarteten Namen und Grund gebunden, löscht keinen Auditdatensatz und erzeugt `CIRCUIT_BREAKER_RECOVERED` in der Datenbank und im AppLog.
-- Andere Circuit Breaker bleiben unverändert. Vollständige Portfolio-Reconciliation, bestätigte Margin-Kosten, kalibrierte Edge und die interne Live-Freigabe bleiben unabhängige Voraussetzungen; diese Version schaltet Live-Handel nicht frei.
+- Speichert pro Paar, geschlossenem Stundenbalken, Strategieversion und festen Schwellen eine eindeutige Beobachtung in SQLite; LONG, SHORT und gültige NONE-Signale werden nachvollziehbar erfasst.
+- Wertet Forward-Bewegungen nach dem konfigurierten Haltedauerhorizont nur dann aus, wenn eine gespeicherte Stundenkerze den Zielzeitpunkt abdeckt. Fehlende Zielkerzen werden als unvollständig markiert, niemals durch geschätzte Kurse ersetzt.
+- Berechnet bei verfügbarer Kraken-TradeVolume-Taker-Gebühr einen ausdrücklich geschätzten Spot-Kostenproxy und ein Break-even-Budget für unbekannte kombinierte Margin-Eröffnungs-/Rollover-Gebühren.
+- Protokolliert `SHADOW_RESEARCH_OBSERVATION_RECORDED`, `SHADOW_RESEARCH_OUTCOME_SETTLED`, `SHADOW_RESEARCH_OUTCOME_INCOMPLETE` und `SHADOW_RESEARCH_SUMMARY`; die Zusammenfassung trennt Train/Validation/Holdout chronologisch nach Entscheidungszeitpunkt.
+- Führt bei ausreichend langer, lückenloser Stundenhistorie einen OHLCV-Szenario-Backtest mit chronologischen 60/20/20-Splits und vier expliziten Margin-Kostenbudgets (5/10/20/40 Basispunkte je Roundtrip) aus. Aktueller Spread und aktuelle Taker-Stufe sind nur historische Proxys; Reports bleiben `SCENARIO_ONLY_NOT_LIVE_VALIDATION`.
+- Der OHLCV- und Orderbuch-Simulator zählt Margin-Rollover jetzt anhand der simulierten Haltedauer statt der pauschal konfigurierten Höchstdauer.
+- Keine echte Fill-/Portfolio-PnL-Behauptung, keine automatische Edge-Kalibrierung und keine Live-Freigabe. Margin-Nettoergebnisse bleiben unbekannt, bis tatsächliche quellen- und zeitbezogene Gebührenevidenz vorhanden ist.
 
 ## 0.1.38 — Kontrollierte Wiederherstellung eines vorübergehenden Public-API-Fehlers
 

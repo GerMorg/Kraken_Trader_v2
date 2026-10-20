@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app import STRATEGY_VERSION
 from app.audit import AuditLogger
 from app.config import INTERNAL_LIVE_EXECUTION_RELEASED, Settings
 from app.costs import estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
@@ -21,6 +22,12 @@ from app.market import executable_reference_price, parse_ohlc_rows, parse_ticker
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.position_management import evaluate_position_exits
+from app.research import (
+    observation_id,
+    run_ohlcv_backtest_scenarios,
+    settle_due_observations,
+    summarize_shadow_research,
+)
 from app.portfolio import aggregate_position_exposure
 from app.portfolio_reconciliation import reconcile_positions_to_fills, reconcile_wallet_balance_deltas
 from app.reconciliation import reconcile_order_intents
@@ -282,7 +289,7 @@ class TraderRuntime:
 
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
-        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0}
+        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0}
         history_ready_for_entries = False
         history_evidence_gaps = ["ACCOUNT_HISTORY_NOT_CHECKED"]
         api_permissions_ready = False
@@ -836,12 +843,162 @@ class TraderRuntime:
                 for bar in bars:
                     self.persistence.record_bar(instrument.pair_id,60,bar["ts"],str(bar["open"]),str(bar["high"]),
                                                 str(bar["low"]),str(bar["close"]),str(bar["volume"]))
+                try:
+                    settlement_events = settle_due_observations(
+                        self.persistence,
+                        pair=instrument.pair_id,
+                        current_exit_spread_bps=ticker.spread_bps,
+                        interval_minutes=60,
+                    )
+                    for research_event in settlement_events:
+                        event_name = research_event["event"]
+                        payload = research_event["payload"]
+                        self.persistence.record_event(event_name, payload)
+                        self.audit.emit(event_name, **payload)
+                        if event_name == "SHADOW_RESEARCH_OUTCOME_SETTLED":
+                            counts["research_outcomes_settled"] += 1
+                        elif event_name == "SHADOW_RESEARCH_OUTCOME_INCOMPLETE":
+                            counts["research_outcomes_incomplete"] += 1
+                except (ArithmeticError, TypeError, ValueError) as exc:
+                    self.audit.emit(
+                        "SHADOW_RESEARCH_SETTLEMENT_ERROR",
+                        cycle_id=cycle_id,
+                        pair=instrument.wsname,
+                        exception_type=type(exc).__name__,
+                        reason=str(exc)[:120],
+                    )
                 signal=generate_trend_signal(instrument.pair_id,[b["close"] for b in bars],
                     fast_threshold_bps=self.settings.strategy_fast_bps,slow_threshold_bps=self.settings.strategy_slow_bps)
                 self.audit.emit("MARKET_SIGNAL_EVALUATED",cycle_id=cycle_id,pair=instrument.wsname,
                     direction=signal.direction,reason=signal.reason,momentum_fast_bps=signal.momentum_fast_bps,
                     momentum_slow_bps=signal.momentum_slow_bps,score_is_calibrated_probability=False,
                     spread_bps=ticker.spread_bps)
+                fee=taker_fee_from_trade_volume(trade_volume,(instrument.pair_id,instrument.altname,instrument.wsname))
+                if bars and signal.reason not in {"INSUFFICIENT_HISTORY", "INVALID_PRICE_HISTORY"}:
+                    decision_ts = int(time.time())
+                    latest_bar_ts = int(bars[-1]["ts"])
+                    bar_close_epoch = latest_bar_ts + 3600
+                    bar_age_seconds = decision_ts - bar_close_epoch
+                    if -60 <= bar_age_seconds <= 3900:
+                        entry_mid = (ticker.bid + ticker.ask) / D(2)
+                        observation = {
+                            "observation_id": observation_id(
+                                pair=instrument.pair_id,
+                                interval_minutes=60,
+                                bar_ts=latest_bar_ts,
+                                strategy_version=STRATEGY_VERSION,
+                                fast_threshold_bps=self.settings.strategy_fast_bps,
+                                slow_threshold_bps=self.settings.strategy_slow_bps,
+                                horizon_seconds=self.settings.expected_holding_hours * 3600,
+                            ),
+                            "pair": instrument.pair_id,
+                            "interval_minutes": 60,
+                            "bar_ts": latest_bar_ts,
+                            "decision_ts": decision_ts,
+                            "strategy_version": STRATEGY_VERSION,
+                            "fast_threshold_bps": self.settings.strategy_fast_bps,
+                            "slow_threshold_bps": self.settings.strategy_slow_bps,
+                            "direction": signal.direction,
+                            "signal_reason": signal.reason,
+                            "momentum_fast_bps": signal.momentum_fast_bps,
+                            "momentum_slow_bps": signal.momentum_slow_bps,
+                            "signal_score": signal.score,
+                            "stop_distance_pct": signal.stop_distance_pct,
+                            "entry_mid_price": entry_mid,
+                            "entry_spread_bps": ticker.spread_bps,
+                            "taker_fee_bps": fee,
+                            "horizon_seconds": self.settings.expected_holding_hours * 3600,
+                            "target_epoch": decision_ts + self.settings.expected_holding_hours * 3600,
+                        }
+                        try:
+                            recorded = self.persistence.record_research_observation(observation)
+                            if recorded:
+                                counts["research_observations_recorded"] += 1
+                                event_payload = {
+                                    "cycle_id": cycle_id,
+                                    "observation_id": observation["observation_id"],
+                                    "pair": instrument.wsname,
+                                    "strategy_version": STRATEGY_VERSION,
+                                    "signal_bar_ts": latest_bar_ts,
+                                    "decision_ts": decision_ts,
+                                    "direction": signal.direction,
+                                    "reason": signal.reason,
+                                    "entry_mid_price": str(entry_mid),
+                                    "entry_spread_bps": str(ticker.spread_bps),
+                                    "taker_fee_bps": str(fee) if fee is not None else None,
+                                    "taker_fee_source": "KRAKEN_TRADE_VOLUME" if fee is not None else "UNKNOWN",
+                                    "target_epoch": observation["target_epoch"],
+                                    "outcome_model": "FORWARD_HOURLY_BAR_CLOSE_COST_ESTIMATE",
+                                    "margin_cost_status": "UNKNOWN_BREAK_EVEN_ONLY",
+                                    "actual_fill": False,
+                                    "portfolio_pnl": False,
+                                }
+                                self.persistence.record_event("SHADOW_RESEARCH_OBSERVATION_RECORDED", event_payload)
+                                self.audit.emit("SHADOW_RESEARCH_OBSERVATION_RECORDED", **event_payload)
+                                margin_supported_both_directions = (
+                                    any(level >= 2 for level in instrument.leverage_buy)
+                                    and any(level >= 2 for level in instrument.leverage_sell)
+                                )
+                                if fee is not None and margin_supported_both_directions:
+                                    try:
+                                        backtest_report = run_ohlcv_backtest_scenarios(
+                                            bars,
+                                            pair=instrument.wsname,
+                                            taker_fee_bps=fee,
+                                            current_spread_bps=ticker.spread_bps,
+                                            holding_hours=self.settings.expected_holding_hours,
+                                            fast_threshold_bps=self.settings.strategy_fast_bps,
+                                            slow_threshold_bps=self.settings.strategy_slow_bps,
+                                            stop_pct=self.settings.position_stop_loss_pct,
+                                            strategy_version=STRATEGY_VERSION,
+                                        )
+                                        backtest_payload = {
+                                            "cycle_id": cycle_id,
+                                            "observation_id": observation["observation_id"],
+                                            **backtest_report,
+                                        }
+                                        self.persistence.record_event(
+                                            "OHLCV_BACKTEST_SCENARIO_REPORT", backtest_payload
+                                        )
+                                        self.audit.emit(
+                                            "OHLCV_BACKTEST_SCENARIO_REPORT", **backtest_payload
+                                        )
+                                    except (ArithmeticError, TypeError, ValueError) as exc:
+                                        self.audit.emit(
+                                            "OHLCV_BACKTEST_SCENARIO_ERROR",
+                                            cycle_id=cycle_id,
+                                            pair=instrument.wsname,
+                                            exception_type=type(exc).__name__,
+                                            reason=str(exc)[:120],
+                                            release_gate_eligible=False,
+                                        )
+                                else:
+                                    self.audit.emit(
+                                        "OHLCV_BACKTEST_SCENARIO_SKIPPED",
+                                        cycle_id=cycle_id,
+                                        pair=instrument.wsname,
+                                        reason=(
+                                            "CURRENT_TAKER_FEE_UNKNOWN" if fee is None
+                                            else "MARGIN_NOT_SUPPORTED_IN_BOTH_DIRECTIONS"
+                                        ),
+                                    )
+                        except (ArithmeticError, TypeError, ValueError) as exc:
+                            self.audit.emit(
+                                "SHADOW_RESEARCH_OBSERVATION_REJECTED",
+                                cycle_id=cycle_id,
+                                pair=instrument.wsname,
+                                exception_type=type(exc).__name__,
+                                reason=str(exc)[:120],
+                            )
+                    else:
+                        self.audit.emit(
+                            "SHADOW_RESEARCH_OBSERVATION_SKIPPED",
+                            cycle_id=cycle_id,
+                            pair=instrument.wsname,
+                            reason="LATEST_CLOSED_BAR_STALE",
+                            signal_bar_ts=latest_bar_ts,
+                            bar_age_seconds=bar_age_seconds,
+                        )
                 if not signal.has_direction: continue
                 counts["signals"]+=1
                 if account is not None and not api_permissions_ready:
@@ -868,7 +1025,6 @@ class TraderRuntime:
                         no_new_position_risk=True,
                     )
                     continue
-                fee=taker_fee_from_trade_volume(trade_volume,(instrument.pair_id,instrument.altname,instrument.wsname))
                 margin_leverage=choose_trade_leverage(instrument,signal.direction,self.settings)
                 is_margin=signal.direction=="SHORT" or bool(margin_leverage)
                 leverage=margin_leverage if is_margin else 1
@@ -1047,6 +1203,11 @@ class TraderRuntime:
                         state="SHADOW_ONLY",
                         **intent,
                     )
+            research_summary = summarize_shadow_research(
+                self.persistence.research_observations(limit=5000)
+            )
+            self.persistence.record_event("SHADOW_RESEARCH_SUMMARY", research_summary)
+            self.audit.emit("SHADOW_RESEARCH_SUMMARY", **research_summary)
             final_breaker_rows = self.persistence.circuit_breakers()
             final_breaker_diagnostics = _circuit_breaker_diagnostics(final_breaker_rows)
             result = {
@@ -1062,6 +1223,10 @@ class TraderRuntime:
                 "active_circuit_breaker_count": len(final_breaker_rows),
                 "active_circuit_breakers": final_breaker_diagnostics,
                 "recovered_transient_public_network_breaker": recovered_transient_public_network_breaker,
+                "shadow_research_validation_status": research_summary["validation_status"],
+                "shadow_research_costed_sample_count": research_summary["costed_spot_proxy_observations"],
+                "shadow_research_holdout_available": research_summary["holdout_sample_available_for_review"],
+                "shadow_research_release_gate_eligible": research_summary["release_gate_eligible"],
                 "note": (
                     "Real order submission also requires the internal release gate; "
                     "INTERNAL_LIVE_EXECUTION_RELEASED is false in this version. "

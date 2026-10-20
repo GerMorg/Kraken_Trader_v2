@@ -1,5 +1,22 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.39 — Persistente Shadow-Research-Pipeline
+
+Der Runtime-Zyklus speichert pro Paar, geschlossenem Stundenbalken, Strategieversion und festgelegten Momentum-Schwellen genau eine Research-Beobachtung. LONG-, SHORT- und gültige NONE-Signale werden erfasst; unzureichende Historie und veraltete Kerzen werden nicht als valide Beobachtungen bewertet. Die Datenbankmigration aktualisiert das Schema auf Version 6, ohne bestehende Orders, Historie oder Kontosnapshots zu löschen.
+
+Zusätzlich wird bei einer neuen Beobachtung und vorhandener Taker-Gebühr ein `OHLCV_BACKTEST_SCENARIO_REPORT` ausgegeben, sofern das Instrument beide Margin-Richtungen unterstützt. Die Historie wird nur bei mindestens 500 lückenlosen Stundenkerzen ausgewertet. Train, Validation und Test werden chronologisch getrennt. Es gibt vier separate Budgets für die kombinierten Margin-Eröffnungs-/Rollover-Kosten: 5, 10, 20 und 40 Basispunkte pro simuliertem Roundtrip. Diese Budgets sind explizite Sensitivitätsannahmen, keine aktuellen Kraken-Gebührenangebote. Der Bericht nutzt den aktuellen Spread und die aktuelle Taker-Stufe nur als historische Proxys sowie 2x Hebel und 10 Prozent Positionsgröße; er ist ausdrücklich `SCENARIO_ONLY_NOT_LIVE_VALIDATION` und steuert keine Entries.
+
+Relevante AppLog-Ereignisse:
+
+- `SHADOW_RESEARCH_OBSERVATION_RECORDED`: Signal, Kerzenzeit, Entscheidungszeit, Einstieg-Midpreis, aktueller Spread, verfügbare Kraken-Taker-Gebühr und Zielzeit.
+- `SHADOW_RESEARCH_OUTCOME_SETTLED`: Forward-Kursbewegung am Zielhorizont, geschätzte Spotkosten und Break-even-Budget für unbekannte Margin-Gebühren.
+- `SHADOW_RESEARCH_OUTCOME_INCOMPLETE`: Zielkerze fehlt; kein Kursresultat wird erfunden.
+- `SHADOW_RESEARCH_SUMMARY`: Gesamtstichprobe, Long-/Short-Aufteilung, kostenbereinigte Proxy-Kennzahlen, chronologische Teilmengen und Einschränkungen.
+
+Die Kostenformel nutzt bei bekannter `TradeVolume`-Taker-Gebühr zweimal die aktuelle Gebühr, den halben Entry-/Exit-Spread im Mittel und 5 Basispunkte angenommene Slippage pro Seite. Der Exit-Spread ist beim Eintreffen der Zielkerze aktuell beobachtet, aber kein historischer Orderbuch-Spread. Das ist daher ein Shadow-Signaltest, kein realer Fill- oder Portfolio-PnL-Nachweis.
+
+Margin-Eröffnungs- und Rollover-Gebühren sind in dieser Stufe weiterhin unbekannt. `margin_cost_break_even_bps` ist nur die höchstens tragbare kombinierte Margin-Gebühr, bevor die geschätzte Nettobewegung null erreicht; es ist keine Gebührenquote von Kraken. Der Report kennzeichnet diese Lücke und verändert niemals `edge_calibrated` oder die interne Live-Freigabe. Die letzte zeitliche Teilmenge bleibt Holdout; auch bei ausreichender Stichprobe ist der Status nur `HOLDOUT_AVAILABLE_REVIEW_REQUIRED` und verlangt weitere manuelle Prüfung.
+
 ## Version 0.1.38 — Kontrollierte API-Fehler-Erholung
 
 Nur der exakte Fehler `KRAKEN_API:KRAKEN_PUBLIC_NETWORK_ERROR` kann nach einem erfolgreichen vollständigen Lesezyklus automatisch aufgelöst werden. Voraussetzungen sind Kraken-Status `online`, nichtleere Markt- und Tickerdaten vor und nach den Kontenabfragen, erfolgreiche private Leserechte, vollständige Trade-/Ledger-/ClosedOrders-Historie ohne Evidenzlücken und ein verfügbarer Kontosnapshot.
@@ -37,7 +54,7 @@ Offizielle Referenz: [Request Export Report](https://docs.kraken.com/api-referen
 
 ## Version 0.1.32 – bestehende HA-Mounts direkt verwenden
 
-Version 0.1.31 hat nach den vorherigen Änderungen noch versucht, `/data/state/private` und `/data/logs/private` anzulegen. Auf den bestehenden, bereits auf UID/GID `10001:10001` und Modus `0700` gesetzten Mountverzeichnissen war das für den Root-Prozess nicht erlaubt. Version 0.1.32 legt deshalb keine Unterverzeichnisse unter `/data/state` und `/data/logs` an; der Trader nutzt diese Verzeichnisse direkt. Ihre Modi werden nicht geändert. Für den Migrationsschritt wird ihre Eigentümerschaft vorübergehend an root und vor dem Benutzerwechsel zurück an UID/GID `10001:10001` gegeben; Dateien auf der obersten Verzeichnisebene werden einzeln neu zugeordnet, ohne rekursiv in alte Unterverzeichnisse abzusteigen. Die Datenbank bleibt `/data/state/kraken_trader.sqlite3`, das AppLog `/data/logs/events.jsonl`. Aktualisiere auf Version `0.1.32` und prüfe im Startprotokoll `version=0.1.32` sowie `uid=10001 gid=10001`.
+Version 0.1.31 hat nach den vorherigen Änderungen noch versucht, `/data/state/private` und `/data/logs/private` anzulegen. Auf den bestehenden, bereits auf UID/GID `10001:10001` und Modus `0700` gesetzten Mountverzeichnissen war das für den Root-Prozess nicht erlaubt. Version 0.1.32 legt deshalb keine Unterverzeichnisse unter `/data/state` und `/data/logs` an; der Trader nutzt diese Verzeichnisse direkt. Ihre Modi werden nicht geändert. Für den Migrationsschritt wird ihre Eigentümerschaft vorübergehend an root und vor dem Benutzerwechsel zurück an UID/GID `10001:10001` gegeben; Dateien auf der obersten Verzeichnisebene werden einzeln neu zugeordnet, ohne rekursiv in alte Unterverzeichnisse abzusteigen. Die Datenbank bleibt `/data/state/kraken_trader.sqlite3`, das AppLog `/data/logs/events.jsonl`. Aktualisiere auf Version `0.1.32` und prüfe im Startprotokoll `version=0.1.39` sowie `uid=10001 gid=10001`.
 ## Version 0.1.29 – Laufzeit als unprivilegierter Benutzer
 
 Home Assistant kann den App-Container zunächst als root starten. `run.sh` nutzt diese Phase nur, um `/data/state`, `/data/logs` und `/config/reports/tax` für UID/GID `10001:10001` vorzubereiten. Das Verzeichnis `/data` selbst bleibt root-owned und für die App nicht beschreibbar; `/data/options.json` bleibt root-owned und unverändert. Eine temporäre Kopie unter `/run/kraken-trader-options.json` wird dem App-Benutzer mit Modus `0400` übergeben. Anschließend startet Python als `uid=10001 gid=10001`. Beim ersten Start ab 0.1.29 wird die bisherige SQLite-Datei `/data/kraken_trader.sqlite3` mitsamt vorhandenen `-wal`, `-shm`- und `-journal`-Dateien nach `/data/state/kraken_trader.sqlite3` migriert. Ein persistenter Migrationsmarker ermöglicht die kontrollierte Fortsetzung nach einem unterbrochenen Neustart; doppelte Datenbanken, Seitendatei-Kollisionen und verwaiste Dateien führen zu einem Fehler und werden nicht stillschweigend überschrieben. In der Startdiagnose muss `uid=10001 gid=10001` stehen. Wenn weiterhin `uid=0 gid=0` erscheint, läuft noch ein älteres Image oder der neue Startpfad wurde nicht aktiviert.
@@ -56,7 +73,7 @@ Wenn `QueryTrades` eine gültige Trade-Zeile ohne `ledgers`-Feld liefert, persis
 
 1. In Home Assistant **Einstellungen → Apps → App-Repository hinzufügen** öffnen.
 2. `https://github.com/GerMorg/Kraken_Trader_v2` als benutzerdefiniertes Repository hinzufügen und den Store aktualisieren.
-3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.32` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.32` und die Python-Bootstrap-Diagnose `uid=10001 gid=10001` zeigen; andernfalls läuft noch nicht das neue Image oder der Privilegienwechsel ist fehlgeschlagen. Anschließend starten und das App-Protokoll prüfen.
+3. `Kraken Margin Trader` installieren bzw. über **Aktualisieren** auf Version `0.1.39` aktualisieren. Nach der Aktualisierung muss das Startprotokoll `version=0.1.32` und die Python-Bootstrap-Diagnose `uid=10001 gid=10001` zeigen; andernfalls läuft noch nicht das neue Image oder der Privilegienwechsel ist fehlgeschlagen. Anschließend starten und das App-Protokoll prüfen.
 4. `mode: SHADOW`, `live_enabled: false` und `kill_switch: true` beibehalten.
 5. Für die erste Datenerfassung einen Kraken-API-Key mit den erforderlichen **Lese-Rechten** konfigurieren. Keine Auszahlungsrechte und zunächst keine Handelsrechte aktivieren.
 

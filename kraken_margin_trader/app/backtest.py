@@ -119,9 +119,9 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
     trades = []
     index = 72
     current_equity = equity_usd
-    # Require at least one bar after entry so a simulated trade cannot be
-    # opened and closed against the same timestamp at the end of the dataset.
-    while index + 2 < len(ordered) and current_equity > 0:
+    # Keep the complete planned holding horizon available in the dataset.
+    # Otherwise an end-of-file cutoff would create a fictitious early time exit.
+    while index + 1 + max(1, max_holding_bars) < len(ordered) and current_equity > 0:
         signal=generate_trend_signal("SIM",[x.close for x in ordered[:index+1]],
                                      fast_threshold_bps=fast_threshold_bps,slow_threshold_bps=slow_threshold_bps)
         if not signal.has_direction:
@@ -139,7 +139,7 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
         sign=D(1) if signal.direction=="LONG" else D(-1)
         entry_reference_price = entry_bar.open
         entry=entry_reference_price+sign*entry_reference_price*costs.slippage_bps_per_side/D(10000)
-        end=min(len(ordered)-1,index+max(1,max_holding_bars))
+        end=min(len(ordered)-1,index+1+max(1,max_holding_bars))
         exit_price=ordered[end].open; exit_reason="TIME_EXIT"; exit_index=end
         for probe_index,probe in enumerate(ordered[index+1:end+1],start=index+1):
             adverse=((probe.low / entry - D(1)) * D(100) if signal.direction == "LONG"
@@ -151,7 +151,8 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
         exit_bar=ordered[exit_index]
         exit_reference_price = exit_price
         exit_price-=sign*exit_reference_price*costs.slippage_bps_per_side/D(10000)
-        rollovers=max(0,costs.holding_hours//4)
+        simulated_holding_seconds = max(0, exit_bar.timestamp - entry_bar.timestamp)
+        rollovers = simulated_holding_seconds // (4 * 60 * 60)
         margin_cost_bps = D(0)
         if costs.leverage > 1:
             # Conservative backtest projection uses full extended notional until
@@ -428,7 +429,9 @@ def replay_trend_strategy_on_order_books(
     issues: list[OrderBookReplayIssue] = []
     current_equity = equity_usd
     index = 72
-    while index + 2 < len(ordered) and current_equity > 0:
+    # Do not open a scenario position unless the data contains its full planned
+    # holding horizon. Missing future bars are not simulated as an early time exit.
+    while index + 1 + max(1, max_holding_bars) < len(ordered) and current_equity > 0:
         signal = generate_trend_signal(
             "SIM",
             [item.close for item in ordered[: index + 1]],
@@ -465,7 +468,7 @@ def replay_trend_strategy_on_order_books(
             index += 1
             continue
 
-        last_exit_index = min(len(ordered) - 1, index + max(1, max_holding_bars))
+        last_exit_index = min(len(ordered) - 1, index + 1 + max(1, max_holding_bars))
         exit_index = last_exit_index
         exit_reason = "TIME_EXIT"
         entry_reference = (entry_book.bids[0].price + entry_book.asks[0].price) / D(2)

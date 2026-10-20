@@ -115,10 +115,14 @@ def test_backtest_does_not_double_charge_slippage_already_applied_to_fill_prices
     )
     trades = simulate_trend_trades(bars(), costs, max_holding_bars=4)
     assert trades
-    # 52 bps trading fees + 8 bps spread + 20 bps open + 2 * 20 bps rollover.
+    # Trading fees, spread and opening fees always apply. Rollover fees apply only
+    # when the simulated position actually crosses four-hour funding boundaries.
     # The 5 bps/side slippage is already reflected in entry/exit execution prices.
     for trade in trades:
-        assert trade.total_cost_pct == D("1.20")
+        elapsed_seconds = trade.exit_time - trade.entry_time
+        rollover_count = elapsed_seconds // (4 * 3600)
+        expected_cost_bps = D("52") + D("8") + D("20") + D(rollover_count) * D("20")
+        assert trade.total_cost_pct == expected_cost_bps / D(100)
         direction_sign = D(1) if trade.direction == "LONG" else D(-1)
         assert trade.gross_pnl_usd == (
             trade.quantity * (trade.exit - trade.entry) * direction_sign
@@ -245,7 +249,7 @@ def test_orderbook_replay_accepts_explicit_financing_in_the_usd_quote_currency()
 
 def test_orderbook_replay_fails_closed_if_exit_book_is_missing_or_stale():
     data = bars()
-    missing_exit_timestamp = data[76].timestamp
+    missing_exit_timestamp = data[77].timestamp
     snapshots = [
         snapshot for snapshot in order_books(data)
         if snapshot.timestamp != missing_exit_timestamp
@@ -262,7 +266,7 @@ def test_orderbook_replay_fails_closed_if_exit_book_is_missing_or_stale():
 
 def test_orderbook_replay_does_not_mark_a_partially_exited_lot_closed():
     data = bars()
-    partial_timestamp = data[76].timestamp
+    partial_timestamp = data[77].timestamp
     snapshots = order_books(data, shallow_timestamp=partial_timestamp)
     replay = replay_orderbook(data, snapshots, leverage=1)
 
@@ -355,4 +359,25 @@ def test_orderbook_replay_fails_closed_when_entry_has_unfilled_remainder():
     assert any(
         issue.reason == "ENTRY_PARTIAL_REMAINDER_CANCEL_NOT_SIMULATED"
         for issue in replay.issues
+    )
+
+
+def test_ohlcv_backtest_uses_actual_simulated_holding_duration_for_rollover_costs():
+    trades = simulate_trend_trades(
+        bars(180),
+        BacktestCosts(
+            D("20"), D("2"), D("5"), D("10"), D("10"),
+            holding_hours=8, leverage=2,
+        ),
+        max_holding_bars=3,
+        stop_pct=D("20"),
+    )
+
+    assert trades
+    assert all(trade.exit_time - trade.entry_time == 3 * 3600 for trade in trades)
+    assert all(
+        trade.margin_cost_usd == trade.notional_usd * (
+            D("10") + D((trade.exit_time - trade.entry_time) // (4 * 3600)) * D("10")
+        ) / D("10000")
+        for trade in trades
     )
