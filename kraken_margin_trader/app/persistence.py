@@ -259,7 +259,7 @@ class Persistence:
                 raise ValueError("RESEARCH_OBSERVATION_NUMERIC_FIELD_INVALID:" + field) from exc
             if not number.is_finite():
                 raise ValueError("RESEARCH_OBSERVATION_NUMERIC_FIELD_NON_FINITE:" + field)
-            if field.startswith("trend_efficiency_") and not D(0) <= number <= D(1):
+            if field.startswith("trend_efficiency_") and not Decimal(0) <= number <= Decimal(1):
                 raise ValueError("RESEARCH_OBSERVATION_TREND_EFFICIENCY_OUT_OF_RANGE:" + field)
         if Decimal(str(observation["entry_mid_price"])) <= 0 or Decimal(str(observation["entry_spread_bps"])) < 0:
             raise ValueError("RESEARCH_OBSERVATION_ENTRY_QUOTE_INVALID")
