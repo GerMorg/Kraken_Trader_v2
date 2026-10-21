@@ -295,10 +295,29 @@ def _metrics(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def summarize_shadow_research(observations: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    """Summarize chronological forward labels without declaring strategy calibration."""
+def summarize_shadow_research(
+    observations: Sequence[dict[str, Any]],
+    *,
+    strategy_version: str | None = None,
+) -> dict[str, Any]:
+    """Summarize one strategy version only; never blend outcomes across rule changes."""
+    active_version = strategy_version
+    if active_version is None and observations:
+        latest = max(
+            observations,
+            key=lambda row: (
+                int(row.get("decision_ts", 0)),
+                str(row.get("observation_id", "")),
+            ),
+        )
+        active_version = str(latest.get("strategy_version", "unknown"))
+    version_rows = [
+        row for row in observations
+        if active_version is None
+        or str(row.get("strategy_version", "unknown")) == active_version
+    ]
     ordered = sorted(
-        observations,
+        version_rows,
         key=lambda row: (int(row.get("decision_ts", 0)), str(row.get("observation_id", ""))),
     )
     directional = [row for row in ordered if row.get("direction") in {"LONG", "SHORT"}]
