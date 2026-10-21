@@ -295,6 +295,28 @@ def _metrics(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _feature_metrics(
+    rows: Sequence[dict[str, Any]],
+    field: str,
+) -> dict[str, Any]:
+    values: list[Decimal] = []
+    for row in rows:
+        raw = row.get(field)
+        if raw is None:
+            continue
+        try:
+            value = D(str(raw))
+        except (ArithmeticError, TypeError, ValueError):
+            continue
+        if value.is_finite() and D(0) <= value <= D(1):
+            values.append(value)
+    return {
+        "sample_count": len(values),
+        "mean": str(sum(values, D(0)) / D(len(values))) if values else None,
+        "median": str(D(str(median(values)))) if values else None,
+    }
+
+
 def summarize_shadow_research(
     observations: Sequence[dict[str, Any]],
     *,
@@ -351,10 +373,15 @@ def summarize_shadow_research(
         n >= MINIMUM_COSTED_FORWARD_OBSERVATIONS
         and len(test) >= MINIMUM_HOLDOUT_OBSERVATIONS_FOR_REVIEW
     )
+    no_direction = [row for row in ordered if row.get("direction") == "NONE"]
     incomplete = sum(
         1 for row in directional if str(row.get("status", "")).startswith("INCOMPLETE")
     )
     no_fee_settled = sum(1 for row in settled if row.get("spot_net_return_bps") is None)
+    efficiency_filter_rejections = sum(
+        1 for row in no_direction
+        if str(row.get("signal_reason", "")) == "TREND_EFFICIENCY_TOO_LOW"
+    )
     margin_fee_sensitivity = []
     for assumed_combined_margin_fee_bps in (D("5"), D("10"), D("20"), D("40")):
         positive_after_margin_cost = sum(
@@ -383,7 +410,11 @@ def summarize_shadow_research(
 
     return {
         "research_schema": "shadow-forward-v1",
-        "strategy_version": str(ordered[-1].get("strategy_version", "unknown")) if ordered else "unknown",
+        "strategy_version": (
+            active_version
+            if active_version is not None
+            else str(ordered[-1].get("strategy_version", "unknown")) if ordered else "unknown"
+        ),
         "total_observations": len(ordered),
         "directional_observations": len(directional),
         "long_observations": sum(1 for row in directional if row.get("direction") == "LONG"),
@@ -397,6 +428,14 @@ def summarize_shadow_research(
         "spot_cost_proxy_by_direction": {
             direction: _metrics([row for row in costed if row.get("direction") == direction])
             for direction in ("LONG", "SHORT")
+        },
+        "trend_quality_diagnostics": {
+            "efficiency_filter_rejection_count": efficiency_filter_rejections,
+            "directional_efficiency_24h": _feature_metrics(directional, "trend_efficiency_24h"),
+            "directional_efficiency_72h": _feature_metrics(directional, "trend_efficiency_72h"),
+            "no_direction_efficiency_24h": _feature_metrics(no_direction, "trend_efficiency_24h"),
+            "no_direction_efficiency_72h": _feature_metrics(no_direction, "trend_efficiency_72h"),
+            "legacy_missing_features_excluded": True,
         },
         "chronological_splits": {
             "train_first_60_percent": _metrics(train),
