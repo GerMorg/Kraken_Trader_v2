@@ -204,7 +204,15 @@ def reconcile_wallet_balance_deltas(
         result["assets_checked"] += 1
 
     result["complete"] = result["mismatches"] == 0
-    result["status"] = "WALLET_BALANCES_MATCH_LEDGER_WINDOW" if result["complete"] else "WALLET_BALANCE_MISMATCH"
+    if not result["complete"]:
+        result["status"] = "WALLET_BALANCE_MISMATCH"
+    elif result["assets_matched_to_latest_ledger_balance"] > 0:
+        result["status"] = "WALLET_BALANCES_MATCH_LEDGER_WINDOW"
+    else:
+        result["status"] = "WALLET_BALANCES_STABLE_NO_LEDGER_ACTIVITY"
+    result["reconciliation_scope"] = "WALLET_DELTA_WINDOW_ONLY"
+    result["ledger_verified_asset_count"] = result["assets_matched_to_latest_ledger_balance"]
+    result["stable_without_ledger_activity_count"] = result["assets_stable_without_ledger_activity"]
     # A wallet delta match cannot prove credit balances, margin obligations, position lots,
     # funding/rollover attribution, external-transfer coverage, or whole-portfolio equality.
     result["full_portfolio_reconciliation"] = False
