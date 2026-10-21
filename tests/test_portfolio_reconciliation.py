@@ -342,3 +342,19 @@ def test_opening_fill_aggregate_must_match_position_and_exchange_executed_volume
         for item in db.circuit_breakers()
     )
     db.close()
+
+
+def test_wallet_status_does_not_claim_ledger_match_when_all_assets_are_only_stable():
+    from app.portfolio_reconciliation import reconcile_wallet_balance_deltas
+
+    previous = {"captured_at": "100", "balance": {"USDC": "10", "XXBT": "0.5"}}
+    current = {"captured_at": "120", "balance": {"USDC": "10", "XXBT": "0.5"}}
+    result = reconcile_wallet_balance_deltas(
+        previous, current, [], ledger_history_complete=True
+    )
+    assert result["complete"] is True
+    assert result["status"] == "WALLET_BALANCES_STABLE_NO_LEDGER_ACTIVITY"
+    assert result["reconciliation_scope"] == "WALLET_DELTA_WINDOW_ONLY"
+    assert result["ledger_verified_asset_count"] == 0
+    assert result["stable_without_ledger_activity_count"] == 2
+    assert result["full_portfolio_reconciliation"] is False

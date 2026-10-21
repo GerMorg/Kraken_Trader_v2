@@ -19,6 +19,34 @@ class CostEstimate:
     quality: str
     reasons: tuple[str,...]
 
+def cost_diagnostic(cost: CostEstimate | None) -> dict[str, Any] | None:
+    """Expose known cost components without treating missing margin inputs as zero."""
+    if cost is None:
+        return None
+    return {
+        "complete": cost.complete,
+        "total_round_trip_bps": str(cost.total_round_trip_bps)
+        if cost.total_round_trip_bps is not None else None,
+        "trade_fee_round_trip_bps": str(cost.trade_fee_bps)
+        if cost.trade_fee_bps is not None else None,
+        "spread_round_trip_bps": str(cost.spread_bps)
+        if cost.spread_bps.is_finite() else None,
+        "slippage_round_trip_bps": str(cost.slippage_bps_per_side * D(2))
+        if cost.slippage_bps_per_side.is_finite() else None,
+        "margin_open_fee_bps_on_extended_amount": str(cost.margin_open_bps_on_extended_amount)
+        if cost.margin_open_bps_on_extended_amount is not None
+        and cost.margin_open_bps_on_extended_amount.is_finite() else None,
+        "margin_rollover_fee_bps_per_event_on_extended_amount": (
+            str(cost.margin_rollover_bps_on_extended_amount)
+            if cost.margin_rollover_bps_on_extended_amount is not None
+            and cost.margin_rollover_bps_on_extended_amount.is_finite() else None
+        ),
+        "rollover_count": cost.rollover_count,
+        "quality": cost.quality,
+        "reasons": list(cost.reasons),
+    }
+
+
 def rollover_count_for_hold(hours: int | Decimal) -> int:
     try:
         duration = D(str(hours))
@@ -74,9 +102,12 @@ def estimate_round_trip_cost(*, is_margin: bool, taker_fee_bps: Decimal | None,
             margin_cost += D(rollovers) * margin_rollover_bps
     complete=not reasons
     total=None
-    fee_total=None
-    if complete and taker_fee_bps is not None:
-        fee_total=taker_fee_bps*D(2)
+    fee_total=(
+        taker_fee_bps*D(2)
+        if taker_fee_bps is not None and taker_fee_bps.is_finite() and taker_fee_bps>=0
+        else None
+    )
+    if complete and fee_total is not None:
         total=fee_total+spread_bps+slippage_bps_per_side*D(2)+margin_cost
     return CostEstimate(complete,total,fee_total,spread_bps,slippage_bps_per_side,
                         margin_open_bps,margin_rollover_bps,rollovers,

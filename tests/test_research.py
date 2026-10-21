@@ -40,6 +40,8 @@ def make_observation(
         "momentum_fast_bps": D("200"),
         "momentum_slow_bps": D("220"),
         "signal_score": D("0.5"),
+        "trend_efficiency_24h": D("0.75"),
+        "trend_efficiency_72h": D("0.65"),
         "stop_distance_pct": D("3"),
         "entry_mid_price": D("100"),
         "entry_spread_bps": D("2"),
@@ -87,6 +89,28 @@ def test_forward_outcome_handles_short_direction_and_unknown_taker_fee():
     assert outcome["spot_cost_estimate_bps"] is None
     assert outcome["spot_net_return_bps"] is None
     assert outcome["margin_cost_break_even_bps"] is None
+
+
+def test_research_persists_trend_efficiency_features_and_rejects_out_of_range():
+    db = Persistence(":memory:")
+    observation = make_observation()
+    assert db.record_research_observation(observation)
+    row = db.research_observations()[0]
+    assert D(row["trend_efficiency_24h"]) == D("0.75")
+    assert D(row["trend_efficiency_72h"]) == D("0.65")
+    db.close()
+
+    invalid_db = Persistence(":memory:")
+    invalid = make_observation()
+    invalid["observation_id"] = "invalid-efficiency"
+    invalid["bar_ts"] = 100
+    invalid["trend_efficiency_24h"] = D("1.01")
+    try:
+        invalid_db.record_research_observation(invalid)
+        assert False, "expected invalid trend efficiency to be rejected"
+    except ValueError as exc:
+        assert "TREND_EFFICIENCY_OUT_OF_RANGE" in str(exc)
+    invalid_db.close()
 
 
 def test_research_observation_is_deduplicated_and_missing_fee_can_be_enriched():
@@ -183,6 +207,81 @@ def test_research_summary_uses_chronological_holdout_and_never_releases_live_gat
     )
     assert summary["release_gate_eligible"] is False
     assert summary["portfolio_pnl"] is False
+
+
+def test_research_summary_never_combines_different_strategy_versions():
+    rows = []
+    for index in range(30):
+        rows.append({
+            "observation_id": f"old-{index}",
+            "decision_ts": index,
+            "strategy_version": "tsm-0.1.2",
+            "direction": "LONG",
+            "status": "SETTLED_COST_ESTIMATE",
+            "spot_net_return_bps": "-100",
+            "margin_cost_break_even_bps": "-100",
+        })
+    for index in range(5):
+        rows.append({
+            "observation_id": f"new-{index}",
+            "decision_ts": 100 + index,
+            "strategy_version": "tsm-0.2.0",
+            "direction": "LONG",
+            "status": "SETTLED_COST_ESTIMATE",
+            "spot_net_return_bps": "10",
+            "margin_cost_break_even_bps": "10",
+            "trend_efficiency_24h": "0.8",
+            "trend_efficiency_72h": "0.7",
+        })
+
+    summary = summarize_shadow_research(rows, strategy_version="tsm-0.2.0")
+    assert summary["strategy_version"] == "tsm-0.2.0"
+    assert summary["total_observations"] == 5
+    assert summary["costed_spot_proxy_observations"] == 5
+    assert D(summary["spot_cost_proxy_all"]["mean_net_return_bps"]) == D("10")
+    assert D(summary["trend_quality_diagnostics"]["directional_efficiency_24h"]["mean"]) == D("0.8")
+    assert D(summary["trend_quality_diagnostics"]["directional_efficiency_72h"]["mean"]) == D("0.7")
+
+    automatic = summarize_shadow_research(rows)
+    assert automatic["strategy_version"] == "tsm-0.2.0"
+    assert automatic["total_observations"] == 5
+
+
+def test_existing_schema_is_migrated_to_store_trend_efficiency(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "research-schema.sqlite3")
+    db = Persistence(path)
+    observation = make_observation()
+    observation.pop("trend_efficiency_24h")
+    observation.pop("trend_efficiency_72h")
+    assert db.record_research_observation(observation)
+    db.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE research_observations DROP COLUMN trend_efficiency_24h")
+    connection.execute("ALTER TABLE research_observations DROP COLUMN trend_efficiency_72h")
+    connection.execute("UPDATE schema_meta SET value='6' WHERE key='schema_version'")
+    connection.commit()
+    connection.close()
+
+    reopened = Persistence(path)
+    columns = {
+        row["name"] for row in reopened.connection.execute(
+            "PRAGMA table_info(research_observations)"
+        )
+    }
+    assert "trend_efficiency_24h" in columns
+    assert "trend_efficiency_72h" in columns
+    stored = reopened.research_observations()
+    assert len(stored) == 1
+    assert stored[0]["trend_efficiency_24h"] is None
+    assert stored[0]["trend_efficiency_72h"] is None
+    version = reopened.connection.execute(
+        "SELECT value FROM schema_meta WHERE key='schema_version'"
+    ).fetchone()["value"]
+    assert version == "7"
+    reopened.close()
 
 
 def synthetic_raw_bars(count=600, *, hourly_gap_at=None):

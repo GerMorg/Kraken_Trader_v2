@@ -1,8 +1,22 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.40 — Trendqualität und Kosten-Diagnostik
+
+`MARKET_SIGNAL_EVALUATED` enthält jetzt `trend_efficiency_24h`, `trend_efficiency_72h` und `trend_strength_score`. Ein Signal muss weiterhin das übereinstimmende 24-/72-Stunden-Momentum und die Mittelwertbestätigung erfüllen. Zusätzlich verwirft der neue Filter Trendkandidaten, deren Netto-Bewegung im Verhältnis zum gesamten absoluten Preisweg zu gering ist. Die Startwerte 0,20 (24 Stunden) und 0,12 (72 Stunden) sind vorab gesetzte Forschungsfilter, nicht angepasste oder ergebnisgarantierende Parameter.
+
+Der Score ist eine begrenzte Diagnose der Trendstärke, keine Eintrittswahrscheinlichkeit und kein erwarteter Netto-Return. Die bisherige lineare Momentum-Projektion wird in Entry-Logs explizit als `UNVALIDATED_LINEAR_MOMENTUM_HEURISTIC` und `gross_edge_proxy_is_expected_return=false` markiert. `NO_TRADE` nennt, ob diese Projektion unter der geschätzten Spot-Kostenschwelle liegt oder Margin-Kostendaten fehlen. Der Risk-Gate verlangt weiterhin eine separat validierte Edge.
+
+`cost_diagnostic` unterscheidet bekannte Handelsgebühren, Spread und angenommene Slippage von unbekannten Margin-Eröffnungs-/Rollover-Gebühren. Ein unvollständiges Margin-Kostenmodell erhält keine Gesamtkosten als Zahl; bekannte Handelsgebühren werden trotzdem ausgewiesen.
+
+`WALLET_BALANCES_STABLE_NO_LEDGER_ACTIVITY` bedeutet nur, dass sich die beobachteten Wallet-Salden im abgegrenzten Snapshot-Zeitraum nicht verändert haben und keine passende Ledger-Aktivität festgestellt wurde. Es bedeutet **nicht** Ledger-Verifikation. `WALLET_BALANCES_MATCH_LEDGER_WINDOW` wird nur vergeben, wenn mindestens ein Asset über einen passenden Ledger-Bestand im Delta-Zeitraum geprüft wurde und kein Widerspruch vorliegt. Beide Statuswerte sind nur ein begrenzter Wallet-Delta-Abgleich, keine vollständige Portfolio-Reconciliation.
+
+Die neuen Beobachtungen speichern zusätzlich beide Effizienzmerkmale direkt in SQLite (Schema 7); bestehende Daten werden durch eine additive Migration erhalten und ältere Zeilen erhalten für diese neuen Features `NULL` (unbekannt); sie werden nicht nachträglich als Effizienz `0` fehlinterpretiert. Research-Zusammenfassungen filtern explizit nach der aktiven Strategieversion, damit `tsm-0.1.2`-Ergebnisse nicht mit `tsm-0.2.0` zusammengezählt werden.
+
+Die Strategieversion `tsm-0.2.0` beginnt eine neue Forschungsserie; vorherige `tsm-0.1.2`-Beobachtungen werden nicht als Ergebnisse der neuen Regel behandelt. Kein neuer Bericht kann automatisch Parameter promoten oder die interne Live-Sperre verändern.
+
 ## Version 0.1.39 — Persistente Shadow-Research-Pipeline
 
-Der Runtime-Zyklus speichert pro Paar, geschlossenem Stundenbalken, Strategieversion und festgelegten Momentum-Schwellen genau eine Research-Beobachtung. LONG-, SHORT- und gültige NONE-Signale werden erfasst; unzureichende Historie und veraltete Kerzen werden nicht als valide Beobachtungen bewertet. Die Datenbankmigration aktualisiert das Schema auf Version 6, ohne bestehende Orders, Historie oder Kontosnapshots zu löschen.
+Der Runtime-Zyklus speichert pro Paar, geschlossenem Stundenbalken, Strategieversion und festgelegten Momentum-Schwellen genau eine Research-Beobachtung. LONG-, SHORT- und gültige NONE-Signale werden erfasst; unzureichende Historie und veraltete Kerzen werden nicht als valide Beobachtungen bewertet. Die Datenbankmigration aktualisiert das Schema auf Version 7, ohne bestehende Orders, Historie oder Kontosnapshots zu löschen.
 
 Zusätzlich wird bei einer neuen Beobachtung und vorhandener Taker-Gebühr ein `OHLCV_BACKTEST_SCENARIO_REPORT` ausgegeben, sofern das Instrument beide Margin-Richtungen unterstützt. Die Historie wird nur bei mindestens 500 lückenlosen Stundenkerzen ausgewertet. Train, Validation und Test werden chronologisch getrennt. Es gibt vier separate Budgets für die kombinierten Margin-Eröffnungs-/Rollover-Kosten: 5, 10, 20 und 40 Basispunkte pro simuliertem Roundtrip. Diese Budgets sind explizite Sensitivitätsannahmen, keine aktuellen Kraken-Gebührenangebote. Der Bericht nutzt den aktuellen Spread und die aktuelle Taker-Stufe nur als historische Proxys sowie 2x Hebel und 10 Prozent Positionsgröße; er ist ausdrücklich `SCENARIO_ONLY_NOT_LIVE_VALIDATION` und steuert keine Entries.
 

@@ -1,10 +1,16 @@
 # Strategie- und Research-Hypothese
 
-## Kandidat v1
+## Kandidat v2 — H1-Time-Series-Momentum mit Trendeffizienz (`tsm-0.2.0`)
 
-Der erste Kandidat ist eine einfache H1-Time-Series-Momentum-/Trendfolge-Regel, kein Machine-Learning-Modell. Sie berechnet 24-Kerzen- und 72-Kerzen-Renditen in Basispunkten sowie 24-/72-Kerzen-Mittelwerte. LONG bzw. SHORT setzt ein gleichgerichtetes Momentum beider Zeitfenster und eine passende Mittelwertbestätigung voraus. Bei unzureichender Historie wird kein Signal erzeugt.
+Die Laufzeitregel bleibt ein einfacher, reproduzierbarer Preis-Trendkandidat. Sie berechnet 24- und 72-Stunden-Momentum in Basispunkten und verlangt für LONG/SHORT eine übereinstimmende Richtung sowie passende 24-/72-Kerzen-Mittelwerte. Version `tsm-0.2.0` ergänzt ein Efficiency-Ratio-Filter: absolute Netto-Bewegung geteilt durch die Summe der absoluten Ein-Kerzen-Bewegungen. Ein hoher Wert bedeutet einen direkteren Preisweg; ein niedriger Wert zeigt, dass das Momentum durch häufige Richtungswechsel zustande kommt.
 
-Die Standardschwellen sind 120 bps über 24 Stunden und 180 bps über 72 Stunden. Sie sind vorab festgelegte Forschungsparameter, nicht empirisch optimierte oder als profitabel nachgewiesene Werte. Das interne Signal-Score ist ausdrücklich **keine kalibrierte Wahrscheinlichkeit**. Die Kostenfilter sollen Spread, Ausführungsgebühr, Slippage und Margin-Gebühren vor einer Entscheidung einbeziehen.
+Die vorab festgelegten Mindestwerte sind 0,20 über 24 Stunden und 0,12 über 72 Stunden. Sie wurden nicht aus den bisherigen Shadow-Ergebnissen optimiert. Sie sind eine zu prüfende Hypothese zur Verringerung von Signalen in seitwärts-/rauschgeprägten Phasen. Schwellen bleiben 120 Basispunkte/24 Stunden und 180 Basispunkte/72 Stunden; Stops basieren weiterhin auf realisierter Kurzzeitvolatilität und werden auf 1,5–5,0 Prozent begrenzt.
+
+Der neue `trend_strength_score` kombiniert die Momentum-Intensität mit den beiden Effizienzmaßen. Er ist nur ein begrenzter Feature-Score — **keine Wahrscheinlichkeit, kein erwarteter Return und kein kalibrierter Edge**. Kosten- und Risk-Gates entscheiden unabhängig weiter; Edge-Kalibrierung bleibt gesperrt, bis eine neue, ausreichend große und zeitlich saubere Out-of-Sample-/Forward-Evaluation besteht.
+
+## Vorherige Regel (`tsm-0.1.2`)
+
+Die vorherige Version nutzte dieselben Momentum- und Mittelwertbedingungen, jedoch keinen Trendeffizienzfilter. Ihre Beobachtungen und Ergebnisse bleiben für Vergleichszwecke erhalten, dürfen nicht als Ergebnisse der neuen Strategieversion gezählt werden.
 
 ## Wissenschaftliche Motivation (Hypothese, kein Profitabilitätsnachweis)
 
@@ -25,6 +31,10 @@ Konsequenzen für diese Implementierung:
 - Backtest-Ergebnisse benötigen Mehrfachtest-/Overfitting-Kontrollen und einen nicht zur Parametersuche verwendeten finalen Test; eine gute In-Sample-Mittelrendite genügt nicht.
 
 Die Studien betrachten andere Stichproben, Regeln, Zeiträume und Ausführungsannahmen. Sie belegen nicht, dass dieses Modell für dieses Konto oder gehebelte Kraken-Spot-Margin-Trades profitabel ist. Krypto-Returns sind häufig fett-schwänzig und Drawdowns können steil sein; der Mittelwert allein reicht nicht zur Risikobeurteilung.
+
+## Laufzeit-Shadow-Research ab v0.1.40
+
+Die Research-Zusammenfassung filtert verbindlich nach der aktiven Strategieversion. Ergebnisse von `tsm-0.1.2` werden weder in Stichprobengröße noch Train-/Validation-/Test-Kennzahlen der neuen `tsm-0.2.0`-Regel gezählt. Ein Versionswechsel startet eine separate Evaluationsserie; frühere Beobachtungen bleiben persistent, aber getrennt.
 
 ## Laufzeit-Shadow-Research ab v0.1.39
 
