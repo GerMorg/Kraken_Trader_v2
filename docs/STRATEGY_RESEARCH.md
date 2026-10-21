@@ -32,6 +32,10 @@ Konsequenzen für diese Implementierung:
 
 Die Studien betrachten andere Stichproben, Regeln, Zeiträume und Ausführungsannahmen. Sie belegen nicht, dass dieses Modell für dieses Konto oder gehebelte Kraken-Spot-Margin-Trades profitabel ist. Krypto-Returns sind häufig fett-schwänzig und Drawdowns können steil sein; der Mittelwert allein reicht nicht zur Risikobeurteilung.
 
+## Laufzeit-Shadow-Research ab v0.1.40
+
+Die Research-Zusammenfassung filtert verbindlich nach der aktiven Strategieversion. Ergebnisse von `tsm-0.1.2` werden weder in Stichprobengröße noch Train-/Validation-/Test-Kennzahlen der neuen `tsm-0.2.0`-Regel gezählt. Ein Versionswechsel startet eine separate Evaluationsserie; frühere Beobachtungen bleiben persistent, aber getrennt.
+
 ## Laufzeit-Shadow-Research ab v0.1.39
 
 Die Laufzeit erfasst jetzt unveränderlich zuordenbare Beobachtungen in SQLite (`research_observations`) pro Paar, Stundenkerze, Strategieversion und festgelegten Schwellen. Einmal pro geschlossener Kerze werden LONG, SHORT oder ein gültiges NONE-Signal erfasst, soweit die Historie ausreichend und die letzte geschlossene Kerze zeitlich plausibel ist. Die Beobachtung speichert Entscheidungszeit, Kerzenzeit, Signalmerkmale, Midpreis aus aktuellem Bid/Ask, Entry-Spread und die verfügbare `TradeVolume`-Taker-Gebühr. Ein doppelter Runtime-Aufruf derselben Kerze erzeugt keine zweite Beobachtung.
