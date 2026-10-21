@@ -40,6 +40,8 @@ def make_observation(
         "momentum_fast_bps": D("200"),
         "momentum_slow_bps": D("220"),
         "signal_score": D("0.5"),
+        "trend_efficiency_24h": D("0.75"),
+        "trend_efficiency_72h": D("0.65"),
         "stop_distance_pct": D("3"),
         "entry_mid_price": D("100"),
         "entry_spread_bps": D("2"),
@@ -87,6 +89,28 @@ def test_forward_outcome_handles_short_direction_and_unknown_taker_fee():
     assert outcome["spot_cost_estimate_bps"] is None
     assert outcome["spot_net_return_bps"] is None
     assert outcome["margin_cost_break_even_bps"] is None
+
+
+def test_research_persists_trend_efficiency_features_and_rejects_out_of_range():
+    db = Persistence(":memory:")
+    observation = make_observation()
+    assert db.record_research_observation(observation)
+    row = db.research_observations()[0]
+    assert D(row["trend_efficiency_24h"]) == D("0.75")
+    assert D(row["trend_efficiency_72h"]) == D("0.65")
+    db.close()
+
+    invalid_db = Persistence(":memory:")
+    invalid = make_observation()
+    invalid["observation_id"] = "invalid-efficiency"
+    invalid["bar_ts"] = 100
+    invalid["trend_efficiency_24h"] = D("1.01")
+    try:
+        invalid_db.record_research_observation(invalid)
+        assert False, "expected invalid trend efficiency to be rejected"
+    except ValueError as exc:
+        assert "TREND_EFFICIENCY_OUT_OF_RANGE" in str(exc)
+    invalid_db.close()
 
 
 def test_research_observation_is_deduplicated_and_missing_fee_can_be_enriched():
