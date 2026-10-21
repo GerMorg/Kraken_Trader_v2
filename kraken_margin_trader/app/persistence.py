@@ -133,8 +133,8 @@ class Persistence:
                     momentum_fast_bps TEXT NOT NULL,
                     momentum_slow_bps TEXT NOT NULL,
                     signal_score TEXT NOT NULL,
-                    trend_efficiency_24h TEXT NOT NULL DEFAULT '0',
-                    trend_efficiency_72h TEXT NOT NULL DEFAULT '0',
+                    trend_efficiency_24h TEXT,
+                    trend_efficiency_72h TEXT,
                     stop_distance_pct TEXT NOT NULL,
                     entry_mid_price TEXT NOT NULL,
                     entry_spread_bps TEXT NOT NULL,
@@ -165,12 +165,12 @@ class Persistence:
             if "trend_efficiency_24h" not in research_columns:
                 self.connection.execute(
                     "ALTER TABLE research_observations ADD COLUMN trend_efficiency_24h "
-                    "TEXT NOT NULL DEFAULT '0'"
+                    "TEXT"
                 )
             if "trend_efficiency_72h" not in research_columns:
                 self.connection.execute(
                     "ALTER TABLE research_observations ADD COLUMN trend_efficiency_72h "
-                    "TEXT NOT NULL DEFAULT '0'"
+                    "TEXT"
                 )
             history_columns = {
                 str(row["name"]) for row in self.connection.execute("PRAGMA table_info(history_sync_state)")
