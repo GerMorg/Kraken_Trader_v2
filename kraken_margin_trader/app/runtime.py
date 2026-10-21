@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from app import STRATEGY_VERSION
 from app.audit import AuditLogger
 from app.config import INTERNAL_LIVE_EXECUTION_RELEASED, Settings
-from app.costs import estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
+from app.costs import cost_diagnostic, estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
 from app.kraken import (
     KrakenAPIError, KrakenAmbiguousError, KrakenClient,
     api_key_permission_gate_reasons,
@@ -871,8 +871,9 @@ class TraderRuntime:
                     fast_threshold_bps=self.settings.strategy_fast_bps,slow_threshold_bps=self.settings.strategy_slow_bps)
                 self.audit.emit("MARKET_SIGNAL_EVALUATED",cycle_id=cycle_id,pair=instrument.wsname,
                     direction=signal.direction,reason=signal.reason,momentum_fast_bps=signal.momentum_fast_bps,
-                    momentum_slow_bps=signal.momentum_slow_bps,score_is_calibrated_probability=False,
-                    spread_bps=ticker.spread_bps)
+                    momentum_slow_bps=signal.momentum_slow_bps,trend_efficiency_24h=signal.trend_efficiency_24h,
+                    trend_efficiency_72h=signal.trend_efficiency_72h,trend_strength_score=signal.score,
+                    score_is_calibrated_probability=False,spread_bps=ticker.spread_bps)
                 fee=taker_fee_from_trade_volume(trade_volume,(instrument.pair_id,instrument.altname,instrument.wsname))
                 if bars and signal.reason not in {"INSUFFICIENT_HISTORY", "INVALID_PRICE_HISTORY"}:
                     decision_ts = int(time.time())
@@ -923,6 +924,9 @@ class TraderRuntime:
                                     "decision_ts": decision_ts,
                                     "direction": signal.direction,
                                     "reason": signal.reason,
+                                    "trend_efficiency_24h": str(signal.trend_efficiency_24h),
+                                    "trend_efficiency_72h": str(signal.trend_efficiency_72h),
+                                    "trend_strength_score": str(signal.score),
                                     "entry_mid_price": str(entry_mid),
                                     "entry_spread_bps": str(ticker.spread_bps),
                                     "taker_fee_bps": str(fee) if fee is not None else None,
@@ -1034,10 +1038,13 @@ class TraderRuntime:
                     continue
                 if signal.direction=="LONG" and leverage is None:
                     is_margin=False; leverage=1
+                # Historical momentum magnitude is only a diagnostic proxy. It has not
+                # been calibrated to expected returns and must never be described as edge.
                 gross_edge_proxy=max(
                     abs(signal.momentum_fast_bps),
                     abs(signal.momentum_slow_bps)/D(3),
                 )*D("0.25")
+                gross_edge_proxy_kind = "UNVALIDATED_LINEAR_MOMENTUM_HEURISTIC"
                 margin_cost=estimate_round_trip_cost(is_margin=True,taker_fee_bps=fee,
                     spread_bps=ticker.spread_bps,slippage_bps_per_side=D(5),
                     holding_hours=self.settings.expected_holding_hours,
@@ -1051,12 +1058,31 @@ class TraderRuntime:
                     cost_candidates=[margin_cost]+([spot_cost] if spot_cost is not None else [])
                     any_complete=any(c.complete and c.total_round_trip_bps is not None for c in cost_candidates)
                     counts["blocked"]+=1
+                    if (
+                        spot_cost is not None
+                        and spot_cost.total_round_trip_bps is not None
+                        and gross_edge_proxy <= spot_cost.total_round_trip_bps
+                    ):
+                        no_trade_reason = "MOMENTUM_PROXY_BELOW_ESTIMATED_SPOT_COSTS"
+                    elif not margin_cost.complete and (
+                        signal.direction == "SHORT" or spot_cost is None
+                    ):
+                        no_trade_reason = "MARGIN_COSTS_UNKNOWN_AND_EDGE_UNVALIDATED"
+                    elif not any_complete:
+                        no_trade_reason = "COST_INPUTS_INCOMPLETE_AND_EDGE_UNVALIDATED"
+                    else:
+                        no_trade_reason = "NO_POSITIVE_COSTED_PLAN_FROM_UNVALIDATED_PROXY"
                     self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,
-                        reason="NON_POSITIVE_UNCALIBRATED_EDGE_PROXY" if any_complete else "COST_INPUTS_INCOMPLETE",
+                        reason=no_trade_reason,
                         margin_cost_reasons=list(margin_cost.reasons),
+                        margin_cost_diagnostic=cost_diagnostic(margin_cost),
                         spot_cost_reasons=list(spot_cost.reasons) if spot_cost is not None else [],
-                        gross_edge_proxy_bps=gross_edge_proxy,edge_is_calibrated=False,
-                        margin_fee_rates_confirmed=False)
+                        spot_cost_diagnostic=cost_diagnostic(spot_cost),
+                        gross_edge_proxy_bps=gross_edge_proxy,
+                        gross_edge_proxy_kind=gross_edge_proxy_kind,
+                        gross_edge_proxy_is_expected_return=False,
+                        edge_is_calibrated=False,margin_fee_rates_confirmed=False,
+                        release_gate_eligible=False)
                     continue
                 is_margin=plan.product_type=="SPOT_MARGIN"
                 leverage=plan.leverage
@@ -1065,8 +1091,13 @@ class TraderRuntime:
                 if not is_margin and margin_leverage is not None:
                     self.audit.emit("MARGIN_PLAN_NOT_SELECTED",cycle_id=cycle_id,pair=instrument.wsname,
                         reason=plan.reason,margin_cost_reasons=list(margin_cost.reasons),
-                        spot_cost_bps=cost.total_round_trip_bps,spot_edge_proxy_bps=edge,
-                        edge_is_calibrated=False)
+                        margin_cost_diagnostic=cost_diagnostic(margin_cost),
+                        spot_cost_bps=cost.total_round_trip_bps,
+                        spot_cost_diagnostic=cost_diagnostic(cost),spot_edge_proxy_bps=edge,
+                        gross_edge_proxy_bps=gross_edge_proxy,
+                        gross_edge_proxy_kind=gross_edge_proxy_kind,
+                        gross_edge_proxy_is_expected_return=False,
+                        edge_is_calibrated=False,release_gate_eligible=False)
                 if not cost.complete or cost.total_round_trip_bps is None:
                     counts["blocked"]+=1
                     self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,
@@ -1097,7 +1128,13 @@ class TraderRuntime:
                 if not gate.allowed:
                     counts["blocked"]+=1
                     self.audit.emit("RISK_GATE_REJECTED",cycle_id=cycle_id,pair=instrument.wsname,
-                                    direction=signal.direction,reasons=list(gate.reasons))
+                                    direction=signal.direction,reasons=list(gate.reasons),
+                                    product_type=plan.product_type,leverage=leverage,
+                                    gross_edge_proxy_bps=gross_edge_proxy,
+                                    gross_edge_proxy_kind=gross_edge_proxy_kind,
+                                    gross_edge_proxy_is_expected_return=False,
+                                    selected_cost_diagnostic=cost_diagnostic(cost),
+                                    edge_is_calibrated=False,release_gate_eligible=False)
                     continue
                 execution_reference_price = executable_reference_price(ticker, signal.direction)
                 volume=volume_for_notional_usd(
