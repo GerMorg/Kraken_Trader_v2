@@ -122,3 +122,27 @@ def test_non_finite_holding_hours_fail_closed():
     assert not cost.complete
     assert cost.total_round_trip_bps is None
     assert "HOLDING_HOURS_INVALID" in cost.reasons
+
+
+def test_cost_diagnostic_keeps_known_trade_fees_visible_when_margin_fees_are_unknown():
+    from app.costs import cost_diagnostic
+
+    cost = estimate_round_trip_cost(
+        is_margin=True,
+        taker_fee_bps=D("20"),
+        spread_bps=D("5"),
+        slippage_bps_per_side=D("2"),
+        holding_hours=8,
+        leverage=2,
+    )
+    report = cost_diagnostic(cost)
+    assert report is not None
+    assert report["complete"] is False
+    assert report["total_round_trip_bps"] is None
+    assert report["trade_fee_round_trip_bps"] == "40"
+    assert report["spread_round_trip_bps"] == "5"
+    assert report["slippage_round_trip_bps"] == "4"
+    assert report["margin_open_fee_bps_on_extended_amount"] is None
+    assert report["margin_rollover_fee_bps_per_event_on_extended_amount"] is None
+    assert report["rollover_count"] == 2
+    assert "MARGIN_OPEN_FEE_UNKNOWN" in report["reasons"]
