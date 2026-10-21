@@ -133,6 +133,8 @@ class Persistence:
                     momentum_fast_bps TEXT NOT NULL,
                     momentum_slow_bps TEXT NOT NULL,
                     signal_score TEXT NOT NULL,
+                    trend_efficiency_24h TEXT NOT NULL DEFAULT '0',
+                    trend_efficiency_72h TEXT NOT NULL DEFAULT '0',
                     stop_distance_pct TEXT NOT NULL,
                     entry_mid_price TEXT NOT NULL,
                     entry_spread_bps TEXT NOT NULL,
@@ -157,6 +159,19 @@ class Persistence:
                 CREATE INDEX IF NOT EXISTS research_pair_target_idx
                     ON research_observations(pair,interval_minutes,target_epoch);
             """)
+            research_columns = {
+                str(row["name"]) for row in self.connection.execute("PRAGMA table_info(research_observations)")
+            }
+            if "trend_efficiency_24h" not in research_columns:
+                self.connection.execute(
+                    "ALTER TABLE research_observations ADD COLUMN trend_efficiency_24h "
+                    "TEXT NOT NULL DEFAULT '0'"
+                )
+            if "trend_efficiency_72h" not in research_columns:
+                self.connection.execute(
+                    "ALTER TABLE research_observations ADD COLUMN trend_efficiency_72h "
+                    "TEXT NOT NULL DEFAULT '0'"
+                )
             history_columns = {
                 str(row["name"]) for row in self.connection.execute("PRAGMA table_info(history_sync_state)")
             }
@@ -167,7 +182,7 @@ class Persistence:
                     "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','6') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','7') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
@@ -233,15 +248,19 @@ class Persistence:
             raise ValueError("RESEARCH_OBSERVATION_TIME_RANGE_INVALID")
         for field in (
             "fast_threshold_bps", "slow_threshold_bps", "momentum_fast_bps",
-            "momentum_slow_bps", "signal_score", "stop_distance_pct",
-            "entry_mid_price", "entry_spread_bps",
+            "momentum_slow_bps", "signal_score", "trend_efficiency_24h",
+            "trend_efficiency_72h", "stop_distance_pct", "entry_mid_price",
+            "entry_spread_bps",
         ):
+            raw_value = observation.get(field, "0") if field.startswith("trend_efficiency_") else observation[field]
             try:
-                number = Decimal(str(observation[field]))
+                number = Decimal(str(raw_value))
             except (ArithmeticError, TypeError, ValueError) as exc:
                 raise ValueError("RESEARCH_OBSERVATION_NUMERIC_FIELD_INVALID:" + field) from exc
             if not number.is_finite():
                 raise ValueError("RESEARCH_OBSERVATION_NUMERIC_FIELD_NON_FINITE:" + field)
+            if field.startswith("trend_efficiency_") and not D(0) <= number <= D(1):
+                raise ValueError("RESEARCH_OBSERVATION_TREND_EFFICIENCY_OUT_OF_RANGE:" + field)
         if Decimal(str(observation["entry_mid_price"])) <= 0 or Decimal(str(observation["entry_spread_bps"])) < 0:
             raise ValueError("RESEARCH_OBSERVATION_ENTRY_QUOTE_INVALID")
         fee_value = observation.get("taker_fee_bps")
@@ -264,8 +283,11 @@ class Persistence:
             str(observation["strategy_version"]), str(observation["fast_threshold_bps"]),
             str(observation["slow_threshold_bps"]), direction, str(observation["signal_reason"]),
             str(observation["momentum_fast_bps"]), str(observation["momentum_slow_bps"]),
-            str(observation["signal_score"]), str(observation["stop_distance_pct"]),
-            str(observation["entry_mid_price"]), str(observation["entry_spread_bps"]),
+            str(observation["signal_score"]),
+            str(observation.get("trend_efficiency_24h", "0")),
+            str(observation.get("trend_efficiency_72h", "0")),
+            str(observation["stop_distance_pct"]), str(observation["entry_mid_price"]),
+            str(observation["entry_spread_bps"]),
             str(fee_value) if fee_value is not None else None, horizon_seconds, target_epoch,
             status, now, now,
         )
@@ -274,9 +296,10 @@ class Persistence:
                 "INSERT OR IGNORE INTO research_observations("
                 "observation_id,pair,interval_minutes,bar_ts,decision_ts,strategy_version,"
                 "fast_threshold_bps,slow_threshold_bps,direction,signal_reason,momentum_fast_bps,"
-                "momentum_slow_bps,signal_score,stop_distance_pct,entry_mid_price,entry_spread_bps,"
-                "taker_fee_bps,horizon_seconds,target_epoch,status,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "momentum_slow_bps,signal_score,trend_efficiency_24h,trend_efficiency_72h,"
+                "stop_distance_pct,entry_mid_price,entry_spread_bps,taker_fee_bps,horizon_seconds,"
+                "target_epoch,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 values,
             )
             if cursor.rowcount == 0 and fee_value is not None:
