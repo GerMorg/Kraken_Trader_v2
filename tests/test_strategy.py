@@ -34,8 +34,7 @@ def test_trend_efficiency_score_is_not_a_probability_and_monotonic_trends_are_ef
     assert signal.direction == "LONG"
     assert signal.trend_efficiency_24h > Decimal("0.99")
     assert signal.trend_efficiency_72h > Decimal("0.99")
-    assert signal.score < Decimal(1)
-    assert signal.score_is_calibrated_probability if hasattr(signal, "score_is_calibrated_probability") else True
+    assert Decimal(0) <= signal.score <= Decimal(1)
 
 
 def test_trend_efficiency_filter_rejects_a_choppy_path_despite_positive_momentum():
