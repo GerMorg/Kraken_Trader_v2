@@ -2,7 +2,9 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.39
+## Aktueller Status — 0.1.40
+
+**Version 0.1.40 ergänzt einen 24-/72-Stunden-Trendeffizienzfilter, protokolliert die Trendstärke ausdrücklich nicht als Renditeprognose und zerlegt bekannte Handelskosten von weiterhin unbekannten Margin-Gebühren. Die Wallet-Reconciliation unterscheidet jetzt stabile Salden ohne Ledger-Aktivität von tatsächlich ledgerbestätigten Salden. Neue Beobachtungen verwenden `tsm-0.2.0`; das ist eine Strategieänderung, kein Profitabilitätsnachweis. Portfolio-/PnL-/Drawdown-Freigaben bleiben geschlossen und `INTERNAL_LIVE_EXECUTION_RELEASED = False` bleibt erzwungen.**
 
 **Version 0.1.39 ergänzt einen persistenten Shadow-Research-Prozess: Signale und Nicht-Signale werden pro geschlossenem Stundenbalken und Strategieversion gespeichert, nach dem Haltehorizont als Forward-Ergebnisse ausgewertet und chronologisch geteilt. Bei ausreichender lückenloser Historie laufen zusätzlich OHLCV-Backtests mit getrennten Train-/Validation-/Test-Zeitabschnitten und vier klar gekennzeichneten Margin-Kostenbudgets. Aktueller Spread und aktuelle Taker-Gebühr sind nur historische Proxys; Margin-Kostenbudgets sind Sensitivitätsannahmen, keine Kraken-Gebührenquotes. Diese Berichte sind keine Profitabilitätsfreigabe und können niemals die interne Live-Sperre ändern.**
 
