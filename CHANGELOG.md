@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.40 — Trendqualität und ehrliche Kosten-/Reconciliation-Diagnostik
+
+- Die H1-Time-Series-Momentum-Regel prüft zusätzlich eine vorab festgelegte 24-/72-Stunden-Trendeffizienz (Netto-Bewegung geteilt durch den absoluten Bewegungspfad). Ein rohes Trend-Momentum ohne ausreichend gerichteten Verlauf wird als `TREND_EFFICIENCY_TOO_LOW` abgelehnt.
+- Der begrenzte Trendstärke-Score berücksichtigt Trendintensität und beide Effizienzwerte. Er bleibt ausdrücklich weder Wahrscheinlichkeit noch erwartete Rendite und wird nicht zur Live-Kalibrierung verwendet.
+- `MARKET_SIGNAL_EVALUATED` protokolliert die beiden Trend-Effizienzen und den Trendstärke-Score. Die Strategieversion wurde auf `tsm-0.2.0` erhöht, damit neue Beobachtungen nicht mit Ergebnissen der vorherigen Regel vermischt werden.
+- Kosten-Diagnostik weist bekannte Roundtrip-Handelsgebühren, Spread, Slippage-Annahme und fehlende Margin-Eröffnungs-/Rollover-Gebühren getrennt aus. Das bekannte Handelsentgelt bleibt sichtbar, selbst wenn das vollständige Margin-Kostenmodell unvollständig ist.
+- `NO_TRADE` unterscheidet einen Momentum-Proxy unter geschätzten Spotkosten von unbekannten Margin-Kosten und kennzeichnet jeden Momentum-Proxy ausdrücklich als keine erwartete Rendite.
+- Wallet-Abgleich unterscheidet eine stabile Bilanz ohne Ledger-Aktivität von Salden, die tatsächlich gegen Ledger-Bestände verifiziert wurden. Der begrenzte Wallet-Delta-Abgleich wird weiterhin nicht als vollständige Portfolio-Reconciliation ausgegeben.
+- Ergänzt Regressionstests für seitwärts/wechselhaft verlaufende Preiswege mit gleichgerichtetem Momentum, unvollständige Margin-Gebühren und die Wallet-Reconciliation-Diagnose.
+- **Keine Live-Freigabe:** Die Strategie bleibt nicht kalibriert; Portfolio-Reconciliation, PnL-/Drawdown-Baselines und belastbare Margin-Kostenevidenz sind weiter offene Voraussetzungen.
+
 ## 0.1.39 — Persistente Shadow-Research-Pipeline
 
 - Speichert pro Paar, geschlossenem Stundenbalken, Strategieversion und festen Schwellen eine eindeutige Beobachtung in SQLite; LONG, SHORT und gültige NONE-Signale werden nachvollziehbar erfasst.
