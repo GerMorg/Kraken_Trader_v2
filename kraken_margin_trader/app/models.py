@@ -78,6 +78,8 @@ class TrendSignal:
     score: Decimal
     stop_distance_pct: Decimal
     reason: str
+    trend_efficiency_24h: Decimal = D(0)
+    trend_efficiency_72h: Decimal = D(0)
 
     @property
     def has_direction(self) -> bool:
