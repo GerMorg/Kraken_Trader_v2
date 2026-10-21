@@ -1243,7 +1243,8 @@ class TraderRuntime:
                         **intent,
                     )
             research_summary = summarize_shadow_research(
-                self.persistence.research_observations(limit=5000)
+                self.persistence.research_observations(limit=5000),
+                strategy_version=STRATEGY_VERSION,
             )
             self.persistence.record_event("SHADOW_RESEARCH_SUMMARY", research_summary)
             self.audit.emit("SHADOW_RESEARCH_SUMMARY", **research_summary)
