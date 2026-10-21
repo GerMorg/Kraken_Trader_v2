@@ -10,7 +10,7 @@ Der Score ist eine begrenzte Diagnose der Trendstärke, keine Eintrittswahrschei
 
 `WALLET_BALANCES_STABLE_NO_LEDGER_ACTIVITY` bedeutet nur, dass sich die beobachteten Wallet-Salden im abgegrenzten Snapshot-Zeitraum nicht verändert haben und keine passende Ledger-Aktivität festgestellt wurde. Es bedeutet **nicht** Ledger-Verifikation. `WALLET_BALANCES_MATCH_LEDGER_WINDOW` wird nur vergeben, wenn mindestens ein Asset über einen passenden Ledger-Bestand im Delta-Zeitraum geprüft wurde und kein Widerspruch vorliegt. Beide Statuswerte sind nur ein begrenzter Wallet-Delta-Abgleich, keine vollständige Portfolio-Reconciliation.
 
-Die neuen Beobachtungen speichern zusätzlich beide Effizienzmerkmale direkt in SQLite (Schema 7); bestehende Daten werden durch eine additive Migration erhalten und ältere Zeilen erhalten für diese neuen Features den neutralen Standardwert `0`. Research-Zusammenfassungen filtern explizit nach der aktiven Strategieversion, damit `tsm-0.1.2`-Ergebnisse nicht mit `tsm-0.2.0` zusammengezählt werden.
+Die neuen Beobachtungen speichern zusätzlich beide Effizienzmerkmale direkt in SQLite (Schema 7); bestehende Daten werden durch eine additive Migration erhalten und ältere Zeilen erhalten für diese neuen Features `NULL` (unbekannt); sie werden nicht nachträglich als Effizienz `0` fehlinterpretiert. Research-Zusammenfassungen filtern explizit nach der aktiven Strategieversion, damit `tsm-0.1.2`-Ergebnisse nicht mit `tsm-0.2.0` zusammengezählt werden.
 
 Die Strategieversion `tsm-0.2.0` beginnt eine neue Forschungsserie; vorherige `tsm-0.1.2`-Beobachtungen werden nicht als Ergebnisse der neuen Regel behandelt. Kein neuer Bericht kann automatisch Parameter promoten oder die interne Live-Sperre verändern.
 
