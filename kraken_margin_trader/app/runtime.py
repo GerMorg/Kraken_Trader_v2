@@ -904,6 +904,8 @@ class TraderRuntime:
                             "momentum_fast_bps": signal.momentum_fast_bps,
                             "momentum_slow_bps": signal.momentum_slow_bps,
                             "signal_score": signal.score,
+                            "trend_efficiency_24h": signal.trend_efficiency_24h,
+                            "trend_efficiency_72h": signal.trend_efficiency_72h,
                             "stop_distance_pct": signal.stop_distance_pct,
                             "entry_mid_price": entry_mid,
                             "entry_spread_bps": ticker.spread_bps,
