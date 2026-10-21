@@ -239,6 +239,8 @@ def test_research_summary_never_combines_different_strategy_versions():
     assert summary["total_observations"] == 5
     assert summary["costed_spot_proxy_observations"] == 5
     assert D(summary["spot_cost_proxy_all"]["mean_net_return_bps"]) == D("10")
+    assert D(summary["trend_quality_diagnostics"]["directional_efficiency_24h"]["mean"]) == D("0.8")
+    assert D(summary["trend_quality_diagnostics"]["directional_efficiency_72h"]["mean"]) == D("0.7")
 
     automatic = summarize_shadow_research(rows)
     assert automatic["strategy_version"] == "tsm-0.2.0"
@@ -273,8 +275,8 @@ def test_existing_schema_is_migrated_to_store_trend_efficiency(tmp_path):
     assert "trend_efficiency_72h" in columns
     stored = reopened.research_observations()
     assert len(stored) == 1
-    assert stored[0]["trend_efficiency_24h"] == "0"
-    assert stored[0]["trend_efficiency_72h"] == "0"
+    assert stored[0]["trend_efficiency_24h"] is None
+    assert stored[0]["trend_efficiency_72h"] is None
     version = reopened.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
