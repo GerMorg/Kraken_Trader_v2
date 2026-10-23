@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.42 — Ergänzende Forward-Messung am Zielkerzen-Open
+
+- Die bisherige Schlusskurs-basierte Forward-Serie bleibt erhalten. Zusätzlich werden Bruttoergebnisse am Open jener gespeicherten Stundenkerze gemessen, deren Intervall den geplanten Zielzeitpunkt strikt enthält; die Richtung wird für LONG und SHORT normalisiert.
+- Die neue Serie wird in SHADOW_RESEARCH_SUMMARY getrennt nach Richtung und chronologischen Zeitabschnitten ausgewiesen. target_open_timing_diagnostics dokumentiert die verbleibende Abweichung zum exakten Zielhorizont.
+- Bereits abgeschlossene Beobachtungen mit verfügbaren historischen Kerzen erhalten den zusätzlichen Vergleichswert durch einen idempotenten Backfill. Bestehende Brutto-/Netto-Ergebnisse und Kostenfelder werden dabei nicht überschrieben.
+- Die neue Kennzahl ist ein zusätzlicher Brutto-Kursproxy, keine ausführbare Zielkursquote, kein Fill, keine Nettorendite und kein Portfolio-PnL. Es werden keine Strategieparameter anhand derselben Stichprobe angepasst; Strategieversion bleibt tsm-0.2.0.
+- SQLite-Schema 8 ergänzt nur nullable Spalten für die Vergleichsreihe; bestehende Aufzeichnungen bleiben erhalten. Die interne Live-Sperre bleibt unverändert.
+
 ## 0.1.41 — Idempotente Einstiegsentscheidungen und belastbarere Forward-Diagnostik
 
 - Der Order-Entscheidungsschlüssel basiert nun deterministisch auf Strategieversion, Handelspaar, geschlossenem Stundenkerzen-Zeitstempel und Richtung. Wiederholte Zyklen derselben Kerze verwenden denselben Idempotenzschlüssel statt einer Cycle-ID.

@@ -150,6 +150,9 @@ class Persistence:
                     spot_net_return_bps TEXT,
                     margin_cost_break_even_bps TEXT,
                     cost_quality TEXT,
+                    target_open_reference_ts INTEGER,
+                    target_open_price TEXT,
+                    target_open_gross_return_bps TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE(pair,interval_minutes,bar_ts,strategy_version,fast_threshold_bps,slow_threshold_bps,horizon_seconds)
@@ -172,6 +175,18 @@ class Persistence:
                     "ALTER TABLE research_observations ADD COLUMN trend_efficiency_72h "
                     "TEXT"
                 )
+            if "target_open_reference_ts" not in research_columns:
+                self.connection.execute(
+                    "ALTER TABLE research_observations ADD COLUMN target_open_reference_ts INTEGER"
+                )
+            if "target_open_price" not in research_columns:
+                self.connection.execute(
+                    "ALTER TABLE research_observations ADD COLUMN target_open_price TEXT"
+                )
+            if "target_open_gross_return_bps" not in research_columns:
+                self.connection.execute(
+                    "ALTER TABLE research_observations ADD COLUMN target_open_gross_return_bps TEXT"
+                )
             history_columns = {
                 str(row["name"]) for row in self.connection.execute("PRAGMA table_info(history_sync_state)")
             }
@@ -182,7 +197,7 @@ class Persistence:
                     "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','7') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','8') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
@@ -333,6 +348,20 @@ class Persistence:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def research_bar_open_at_target_epoch(
+        self, pair: str, interval_minutes: int, target_epoch: int
+    ) -> dict[str, Any] | None:
+        """Return a stored candle whose open is at or before, and strictly covers, target_epoch."""
+        duration = int(interval_minutes) * 60
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT pair,interval_minutes,ts,open,high,low,close,volume FROM bars "
+                "WHERE pair=? AND interval_minutes=? AND ts<=? AND ts+? > ? "
+                "ORDER BY ts DESC LIMIT 1",
+                (pair, interval_minutes, int(target_epoch), duration, int(target_epoch)),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def latest_bar_timestamp(self, pair: str, interval_minutes: int = 60) -> int | None:
         with self.lock:
             row = self.connection.execute(
@@ -341,22 +370,80 @@ class Persistence:
             ).fetchone()
         return int(row["latest_ts"]) if row is not None and row["latest_ts"] is not None else None
 
+    def research_observations_missing_target_open(self, limit: int = 5000) -> list[dict[str, Any]]:
+        """Return settled directional labels whose separate target-open label is not yet recorded."""
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT * FROM research_observations "
+                "WHERE status IN ('SETTLED_COST_ESTIMATE','SETTLED_GROSS_ONLY') "
+                "AND direction IN ('LONG','SHORT') AND target_open_gross_return_bps IS NULL "
+                "ORDER BY target_epoch,decision_ts LIMIT ?",
+                (max(1, min(int(limit), 20000)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_research_target_open_outcome(
+        self,
+        observation_id: str,
+        *,
+        reference_ts: int,
+        reference_price: Decimal,
+        gross_return_bps: Decimal,
+    ) -> bool:
+        """Add an audit-only earlier-at-or-before-target price label without changing the primary outcome."""
+        if reference_ts < 0 or not reference_price.is_finite() or reference_price <= 0:
+            raise ValueError("RESEARCH_TARGET_OPEN_REFERENCE_INVALID")
+        if not gross_return_bps.is_finite():
+            raise ValueError("RESEARCH_TARGET_OPEN_RETURN_INVALID")
+        now = _now()
+        with self.lock:
+            cursor = self.connection.execute(
+                "UPDATE research_observations SET target_open_reference_ts=?,target_open_price=?,"
+                "target_open_gross_return_bps=?,updated_at=? "
+                "WHERE observation_id=? AND target_open_gross_return_bps IS NULL "
+                "AND status IN ('SETTLED_COST_ESTIMATE','SETTLED_GROSS_ONLY') "
+                "AND direction IN ('LONG','SHORT')",
+                (
+                    int(reference_ts), str(reference_price), str(gross_return_bps),
+                    now, str(observation_id),
+                ),
+            )
+            return cursor.rowcount == 1
+
     def settle_research_observation(self, observation_id: str, outcome: dict[str, Any]) -> bool:
         required = (
             "status", "outcome_bar_ts", "exit_close_price", "exit_spread_bps",
             "gross_return_bps", "spot_cost_estimate_bps", "spot_net_return_bps",
             "margin_cost_break_even_bps", "cost_quality",
+            "target_open_reference_ts", "target_open_price", "target_open_gross_return_bps",
         )
         if any(key not in outcome for key in required):
             raise ValueError("RESEARCH_OUTCOME_REQUIRED_FIELD_MISSING")
         if str(outcome["status"]) not in {"SETTLED_COST_ESTIMATE", "SETTLED_GROSS_ONLY", "INCOMPLETE_MISSING_TARGET_BAR"}:
             raise ValueError("RESEARCH_OUTCOME_STATUS_INVALID")
+        reference_ts = outcome["target_open_reference_ts"]
+        reference_price = outcome["target_open_price"]
+        target_open_return = outcome["target_open_gross_return_bps"]
+        if reference_ts is not None and int(reference_ts) < 0:
+            raise ValueError("RESEARCH_TARGET_OPEN_REFERENCE_INVALID")
+        for field, value in (
+            ("target_open_price", reference_price),
+            ("target_open_gross_return_bps", target_open_return),
+        ):
+            if value is not None:
+                try:
+                    number = Decimal(str(value))
+                except (ArithmeticError, TypeError, ValueError) as exc:
+                    raise ValueError("RESEARCH_TARGET_OPEN_NUMERIC_INVALID:" + field) from exc
+                if not number.is_finite() or (field == "target_open_price" and number <= 0):
+                    raise ValueError("RESEARCH_TARGET_OPEN_NUMERIC_INVALID:" + field)
         now = _now()
         with self.lock:
             cursor = self.connection.execute(
                 "UPDATE research_observations SET status=?,outcome_bar_ts=?,exit_close_price=?,"
                 "exit_spread_bps=?,gross_return_bps=?,spot_cost_estimate_bps=?,spot_net_return_bps=?,"
-                "margin_cost_break_even_bps=?,cost_quality=?,updated_at=? "
+                "margin_cost_break_even_bps=?,cost_quality=?,target_open_reference_ts=?,"
+                "target_open_price=?,target_open_gross_return_bps=?,updated_at=? "
                 "WHERE observation_id=? AND status='PENDING'",
                 (
                     str(outcome["status"]),
@@ -367,7 +454,11 @@ class Persistence:
                     str(outcome["spot_cost_estimate_bps"]) if outcome["spot_cost_estimate_bps"] is not None else None,
                     str(outcome["spot_net_return_bps"]) if outcome["spot_net_return_bps"] is not None else None,
                     str(outcome["margin_cost_break_even_bps"]) if outcome["margin_cost_break_even_bps"] is not None else None,
-                    str(outcome["cost_quality"]), now, str(observation_id),
+                    str(outcome["cost_quality"]),
+                    int(reference_ts) if reference_ts is not None else None,
+                    str(reference_price) if reference_price is not None else None,
+                    str(target_open_return) if target_open_return is not None else None,
+                    now, str(observation_id),
                 ),
             )
             return cursor.rowcount == 1

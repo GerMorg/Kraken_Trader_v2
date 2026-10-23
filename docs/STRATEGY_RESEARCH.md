@@ -1,5 +1,12 @@
 # Strategie- und Research-Hypothese
 
+## Validierungshinweis ab App-Version 0.1.42
+
+Die bestehende Forward-Auswertung am Schluss der Stundenkerze bleibt unverändert. Zusätzlich speichert Version 0.1.42 den Open-Kurs jener gespeicherten Stundenkerze, deren Intervall den geplanten Zielzeitpunkt strikt enthält, und berechnet daraus einen separaten Brutto-Forward-Proxy für LONG und SHORT. Das reduziert die systematische Verzögerung durch das Warten auf den nächsten Stundenkerzenschluss, ist aber kein exakter Kurs am Zielzeitpunkt und kein garantiert ausführbarer Preis. Der neue Proxy wird separat chronologisch ausgewiesen und darf nicht als Nettorendite, Fill oder Portfolio-PnL interpretiert werden.
+
+Bereits abgeschlossene Beobachtungen mit gespeicherten Zielkerzen erhalten den neuen Vergleichswert durch einen idempotenten Backfill. Dabei bleiben die bisherigen Brutto-/Netto- und Kostenfelder unverändert. SHADOW_RESEARCH_TARGET_OPEN_BACKFILL erscheint nur, wenn tatsächlich Datensätze ergänzt wurden. Bei fehlender Referenzkerze wird keine Preisreferenz erfunden. Die Strategieversion bleibt tsm-0.2.0, da sich die Signalregel nicht ändert.
+
+
 ## Validierungshinweis ab App-Version 0.1.41
 
 Die Forward-Forschung gibt Brutto-Kursbewegung und kostenbereinigten Spot-Proxy jetzt getrennt aus. So kann erkannt werden, ob negative Resultate bereits aus dem Richtungssignal oder zusätzlich aus Handelskosten entstehen. Außerdem werden der tatsächliche Zeitabstand zwischen Entscheidung und ausgewertetem Stundenkerzenschluss sowie dessen Abweichung vom geplanten Horizont gemessen.

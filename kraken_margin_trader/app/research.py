@@ -354,6 +354,47 @@ def _forward_timing_diagnostics(rows: Sequence[dict[str, Any]]) -> dict[str, Any
     }
 
 
+def _target_open_timing_diagnostics(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Measure gross labels at a stored hourly bar open at or before the target epoch."""
+    lead_seconds: list[int] = []
+    actual_horizons: list[int] = []
+    invalid_timestamps = 0
+    for row in rows:
+        if row.get("target_open_reference_ts") is None:
+            continue
+        try:
+            decision_ts = int(row["decision_ts"])
+            target_epoch = int(row["target_epoch"])
+            reference_ts = int(row["target_open_reference_ts"])
+            interval_seconds = int(row.get("interval_minutes", 60)) * 60
+        except (KeyError, TypeError, ValueError, OverflowError):
+            invalid_timestamps += 1
+            continue
+        lead = target_epoch - reference_ts
+        actual_horizon = reference_ts - decision_ts
+        if interval_seconds <= 0 or lead < 0 or lead >= interval_seconds or actual_horizon <= 0:
+            invalid_timestamps += 1
+            continue
+        lead_seconds.append(lead)
+        actual_horizons.append(actual_horizon)
+    return {
+        "sample_count": len(lead_seconds),
+        "invalid_timestamp_count": invalid_timestamps,
+        "target_reference_lead_seconds": {
+            "mean": str(D(sum(lead_seconds)) / D(len(lead_seconds))) if lead_seconds else None,
+            "median": str(D(str(median(lead_seconds)))) if lead_seconds else None,
+            "maximum": max(lead_seconds) if lead_seconds else None,
+        },
+        "actual_horizon_seconds": {
+            "mean": str(D(sum(actual_horizons)) / D(len(actual_horizons)))
+            if actual_horizons else None,
+            "minimum": min(actual_horizons) if actual_horizons else None,
+            "maximum": max(actual_horizons) if actual_horizons else None,
+        },
+        "status": "HOURLY_BAR_OPEN_AT_OR_BEFORE_TARGET_NOT_EXACT_HORIZON",
+    }
+
+
 def _feature_metrics(
     rows: Sequence[dict[str, Any]],
     field: str,
@@ -420,6 +461,31 @@ def summarize_shadow_research(
     gross_settled = [
         row for row in settled
         if row.get("gross_return_bps") is not None
+    ]
+    target_open_settled = [
+        row for row in settled if row.get("target_open_gross_return_bps") is not None
+    ]
+    target_open_times = sorted({
+        int(row.get("decision_ts", 0)) for row in target_open_settled
+    })
+    target_open_train_end = int(len(target_open_times) * 0.60)
+    target_open_validation_end = int(len(target_open_times) * 0.80)
+    target_open_train_times = set(target_open_times[:target_open_train_end])
+    target_open_validation_times = set(
+        target_open_times[target_open_train_end:target_open_validation_end]
+    )
+    target_open_test_times = set(target_open_times[target_open_validation_end:])
+    target_open_train = [
+        row for row in target_open_settled
+        if int(row.get("decision_ts", 0)) in target_open_train_times
+    ]
+    target_open_validation = [
+        row for row in target_open_settled
+        if int(row.get("decision_ts", 0)) in target_open_validation_times
+    ]
+    target_open_test = [
+        row for row in target_open_settled
+        if int(row.get("decision_ts", 0)) in target_open_test_times
     ]
     gross_times = sorted({int(row.get("decision_ts", 0)) for row in gross_settled})
     gross_train_end = int(len(gross_times) * 0.60)
@@ -488,7 +554,7 @@ def summarize_shadow_research(
         })
 
     return {
-        "research_schema": "shadow-forward-v1",
+        "research_schema": "shadow-forward-v2",
         "strategy_version": (
             active_version
             if active_version is not None
@@ -530,6 +596,31 @@ def summarize_shadow_research(
                 gross_test, "gross_return_bps", "gross"
             ),
         },
+        "target_open_gross_proxy_all": _metrics_for_field(
+            target_open_settled, "target_open_gross_return_bps", "gross"
+        ),
+        "target_open_gross_proxy_by_direction": {
+            direction: _metrics_for_field(
+                [row for row in target_open_settled if row.get("direction") == direction],
+                "target_open_gross_return_bps",
+                "gross",
+            )
+            for direction in ("LONG", "SHORT")
+        },
+        "target_open_gross_chronological_splits": {
+            "train_first_60_percent": _metrics_for_field(
+                target_open_train, "target_open_gross_return_bps", "gross"
+            ),
+            "validation_next_20_percent": _metrics_for_field(
+                target_open_validation, "target_open_gross_return_bps", "gross"
+            ),
+            "test_last_20_percent": _metrics_for_field(
+                target_open_test, "target_open_gross_return_bps", "gross"
+            ),
+        },
+        "target_open_timing_diagnostics": _target_open_timing_diagnostics(
+            target_open_settled
+        ),
         "forward_timing_diagnostics": _forward_timing_diagnostics(settled),
         "trend_quality_diagnostics": {
             "efficiency_filter_rejection_count": efficiency_filter_rejections,
@@ -567,12 +658,70 @@ def summarize_shadow_research(
         "limitations": [
             "Forward signal labels overlap across time and are not independent trades.",
             "These labels do not simulate the runtime stop-loss, take-profit, partial-reduction, or exit-order state machine.",
-            "Entry is ticker mid; outcomes use the close of a stored hourly bar covering the target epoch, with timing overshoot reported separately.",
-            "Exit spread is the current ticker spread when the target bar becomes available, not historical order-book evidence.",
+            "Primary forward outcome uses the close of the stored hourly bar covering the target epoch; target-close overshoot is reported separately.",
+            "A separate target-open gross series uses the open of the hourly bar strictly covering the target epoch. It is at or before target and avoids measuring an extra candle close beyond target; it is not an exact-horizon price.",
+            "The target-open series is gross-only and does not reuse current spread or fee assumptions as a historical net return.",
+            "Primary spot net proxy uses the current ticker spread when the target bar becomes available, not historical order-book evidence.",
             "Slippage is a fixed 5 bps per side research assumption.",
             "Margin opening and rollover fees are unknown; margin net returns are not computed.",
             "This report cannot calibrate edge or release live order execution automatically.",
         ],
+    }
+
+
+def backfill_target_open_outcomes(persistence: Any, *, limit: int = 5000) -> dict[str, Any]:
+    """Add a gross-only target-open label without changing the primary stored outcome."""
+    rows = persistence.research_observations_missing_target_open(limit=limit)
+    updated = 0
+    unavailable = 0
+    invalid = 0
+    offsets: list[int] = []
+    for row in rows:
+        try:
+            pair = str(row["pair"])
+            interval_minutes = int(row["interval_minutes"])
+            target_epoch = int(row["target_epoch"])
+            bar = persistence.research_bar_open_at_target_epoch(
+                pair, interval_minutes, target_epoch
+            )
+            if bar is None:
+                unavailable += 1
+                continue
+            direction = str(row["direction"]).upper()
+            if direction not in {"LONG", "SHORT"}:
+                invalid += 1
+                continue
+            entry = D(str(row["entry_mid_price"]))
+            reference = D(str(bar["open"]))
+            reference_ts = int(bar["ts"])
+            if not entry.is_finite() or entry <= 0 or not reference.is_finite() or reference <= 0:
+                invalid += 1
+                continue
+            sign = D(1) if direction == "LONG" else D(-1)
+            gross = sign * (reference / entry - D(1)) * D(10000)
+            if persistence.record_research_target_open_outcome(
+                str(row["observation_id"]),
+                reference_ts=reference_ts,
+                reference_price=reference,
+                gross_return_bps=gross,
+            ):
+                updated += 1
+                offsets.append(target_epoch - reference_ts)
+        except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError):
+            invalid += 1
+    return {
+        "observations_checked": len(rows),
+        "updated": updated,
+        "target_bar_unavailable": unavailable,
+        "invalid_observations": invalid,
+        "target_reference_lead_seconds": {
+            "mean": str(D(sum(offsets)) / D(len(offsets))) if offsets else None,
+            "minimum": min(offsets) if offsets else None,
+            "maximum": max(offsets) if offsets else None,
+        },
+        "outcome_model": "TARGET_HOURLY_BAR_OPEN_AT_OR_BEFORE_TARGET_GROSS_ONLY",
+        "primary_outcomes_overwritten": False,
+        "status": "BACKFILL_UPDATED" if updated else "NO_ELIGIBLE_BACKFILL_ROWS",
     }
 
 
@@ -607,6 +756,9 @@ def settle_due_observations(
                 "spot_net_return_bps": None,
                 "margin_cost_break_even_bps": None,
                 "cost_quality": "TARGET_HOURLY_BAR_MISSING;NO_OUTCOME_INFERRED",
+                "target_open_reference_ts": None,
+                "target_open_price": None,
+                "target_open_gross_return_bps": None,
             }
             if persistence.settle_research_observation(row["observation_id"], outcome):
                 results.append({
@@ -631,6 +783,22 @@ def settle_due_observations(
             exit_spread_bps=current_exit_spread_bps,
             taker_fee_bps=fee,
         )
+        target_open_bar = persistence.research_bar_open_at_target_epoch(
+            pair, interval_minutes, target_epoch
+        )
+        target_open_price = (
+            D(str(target_open_bar["open"])) if target_open_bar is not None else None
+        )
+        target_open_reference_ts = (
+            int(target_open_bar["ts"]) if target_open_bar is not None else None
+        )
+        target_open_gross = None
+        if target_open_price is not None:
+            sign = D(1) if str(row["direction"]).upper() == "LONG" else D(-1)
+            target_open_gross = (
+                sign * (target_open_price / D(str(row["entry_mid_price"])) - D(1))
+                * D(10000)
+            )
         status = "SETTLED_COST_ESTIMATE" if fee is not None else "SETTLED_GROSS_ONLY"
         outcome = {
             "status": status,
@@ -642,6 +810,11 @@ def settle_due_observations(
             "spot_net_return_bps": estimate["spot_net_return_bps"],
             "margin_cost_break_even_bps": estimate["margin_cost_break_even_bps"],
             "cost_quality": str(estimate["cost_quality"]),
+            "target_open_reference_ts": target_open_reference_ts,
+            "target_open_price": str(target_open_price) if target_open_price is not None else None,
+            "target_open_gross_return_bps": (
+                str(target_open_gross) if target_open_gross is not None else None
+            ),
         }
         if persistence.settle_research_observation(row["observation_id"], outcome):
             results.append({
@@ -654,6 +827,13 @@ def settle_due_observations(
                     "target_epoch": target_epoch,
                     "outcome_bar_ts": int(target_bar["ts"]),
                     "gross_return_bps": str(estimate["gross_return_bps"]),
+                    "target_open_reference_ts": target_open_reference_ts,
+                    "target_open_price": (
+                        str(target_open_price) if target_open_price is not None else None
+                    ),
+                    "target_open_gross_return_bps": (
+                        str(target_open_gross) if target_open_gross is not None else None
+                    ),
                     "spot_cost_estimate_bps": (
                         str(estimate["spot_cost_estimate_bps"])
                         if estimate["spot_cost_estimate_bps"] is not None else None
