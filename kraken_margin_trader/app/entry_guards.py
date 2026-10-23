@@ -51,7 +51,7 @@ def entry_pair_exposure(
         if not pair_key:
             unidentifiable_positions.append(position_id)
         elif pair_key in aliases:
-            unidentifiable_positions.append(position_id) if pair_key not in aliases else matching_positions.append(position_id)
+            matching_positions.append(position_id)
 
     for order_id, order in orders.items():
         description = order.get("descr")
