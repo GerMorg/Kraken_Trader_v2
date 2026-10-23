@@ -2,6 +2,7 @@ from decimal import Decimal as D
 
 from app.persistence import Persistence
 from app.research import (
+    backfill_target_open_outcomes,
     estimate_forward_outcome,
     observation_id,
     settle_due_observations,
@@ -143,6 +144,9 @@ def test_forward_observation_settles_only_when_target_hourly_bar_exists():
     assert D(rows[0]["gross_return_bps"]) == D("100")
     assert D(rows[0]["spot_net_return_bps"]) == D("83")
     assert D(rows[0]["margin_cost_break_even_bps"]) == D("83")
+    assert rows[0]["target_open_reference_ts"] == 28800
+    assert D(rows[0]["target_open_price"]) == D("101")
+    assert D(rows[0]["target_open_gross_return_bps"]) == D("100")
     db.close()
 
 
@@ -162,6 +166,9 @@ def test_missing_target_bar_is_marked_incomplete_not_given_a_guessed_outcome():
     assert row["status"] == "INCOMPLETE_MISSING_TARGET_BAR"
     assert row["gross_return_bps"] is None
     assert row["spot_net_return_bps"] is None
+    assert row["target_open_reference_ts"] is None
+    assert row["target_open_price"] is None
+    assert row["target_open_gross_return_bps"] is None
     db.close()
 
 
@@ -280,7 +287,7 @@ def test_existing_schema_is_migrated_to_store_trend_efficiency(tmp_path):
     version = reopened.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
-    assert version == "7"
+    assert version == "8"
     reopened.close()
 
 
@@ -413,3 +420,62 @@ def test_ohlcv_backtest_scenarios_refuse_hourly_gaps_and_missing_fee():
         synthetic_raw_bars(), **{**args, "taker_fee_bps": None}
     )
     assert fee_unknown_report["status"] == "SKIPPED_TAKER_FEE_UNKNOWN"
+
+
+
+def test_target_open_backfill_adds_comparator_without_overwriting_primary_outcome():
+    db = Persistence(":memory:")
+    observation = make_observation(fee="2")
+    assert db.record_research_observation(observation)
+    db.record_bar(
+        "XXBTZUSD", 60, 28800, "102", "106", "101", "105", "100000"
+    )
+
+    # Simulate an outcome settled by the older schema/version; primary close-based
+    # values must survive while the comparator is backfilled from the stored bar open.
+    assert db.settle_research_observation(observation["observation_id"], {
+        "status": "SETTLED_COST_ESTIMATE",
+        "outcome_bar_ts": 28800,
+        "exit_close_price": "105",
+        "exit_spread_bps": "4",
+        "gross_return_bps": "500",
+        "spot_cost_estimate_bps": "17",
+        "spot_net_return_bps": "483",
+        "margin_cost_break_even_bps": "483",
+        "cost_quality": "LEGACY_SETTLED_LABEL",
+        "target_open_reference_ts": None,
+        "target_open_price": None,
+        "target_open_gross_return_bps": None,
+    })
+    before = db.research_observations()[0]
+    summary = backfill_target_open_outcomes(db)
+    after = db.research_observations()[0]
+
+    assert summary["updated"] == 1
+    assert summary["primary_outcomes_overwritten"] is False
+    assert after["gross_return_bps"] == before["gross_return_bps"] == "500"
+    assert after["spot_net_return_bps"] == before["spot_net_return_bps"] == "483"
+    assert after["target_open_reference_ts"] == 28800
+    assert D(after["target_open_price"]) == D("102")
+    assert D(after["target_open_gross_return_bps"]) == D("200")
+    assert backfill_target_open_outcomes(db)["updated"] == 0
+
+    metrics = summarize_shadow_research(db.research_observations(), strategy_version="tsm-test")
+    assert metrics["gross_forward_proxy_all"]["mean_gross_return_bps"] == "500"
+    assert metrics["target_open_gross_proxy_all"]["mean_gross_return_bps"] == "200"
+    assert metrics["target_open_timing_diagnostics"]["sample_count"] == 1
+    assert metrics["target_open_timing_diagnostics"]["target_reference_lead_seconds"]["mean"] == "1000"
+    assert metrics["target_open_timing_diagnostics"]["actual_horizon_seconds"]["mean"] == "27800"
+    db.close()
+
+
+def test_target_open_bar_lookup_uses_new_candle_at_exact_hour_boundary():
+    db = Persistence(":memory:")
+    db.record_bar("XXBTZUSD", 60, 0, "100", "102", "99", "101", "10")
+    assert db.research_bar_open_at_target_epoch("XXBTZUSD", 60, 3600) is None
+    db.record_bar("XXBTZUSD", 60, 3600, "101", "103", "100", "102", "10")
+    bar = db.research_bar_open_at_target_epoch("XXBTZUSD", 60, 3600)
+    assert bar is not None
+    assert bar["ts"] == 3600
+    assert D(bar["open"]) == D("101")
+    db.close()
