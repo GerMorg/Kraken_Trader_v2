@@ -1,5 +1,10 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.42 — Ergänzende Zielhorizont-Messung
+
+SHADOW_RESEARCH_SUMMARY enthält zusätzlich target_open_gross_proxy_all, target_open_gross_proxy_by_direction, target_open_gross_chronological_splits und target_open_timing_diagnostics. Diese Reihe misst nur die Brutto-Preisbewegung zum Open der Stundenkerze, deren Intervall den Zielzeitpunkt strikt enthält. Sie steht separat neben der bisherigen Schlusskurs-/Spot-Kostenproxy-Reihe, überschreibt diese nicht und ist weder ein tatsächlicher Fill noch Portfolio-PnL. Ältere abgeschlossene Beobachtungen werden anhand lokal gespeicherter Kerzen ergänzt; ein SHADOW_RESEARCH_TARGET_OPEN_BACKFILL-Eintrag entsteht nur, wenn Ergänzungen vorgenommen wurden. Keine Research-Kennzahl kann Live-Ausführung freigeben.
+
+
 ## Version 0.1.41 — Entry-Idempotenz und Forward-Diagnostik
 
 Die Signalentscheidung für einen Einstieg hat nun einen deterministischen Schlüssel aus Strategieversion, Kraken-Paar-ID, Zeitstempel der letzten geschlossenen Stundenkerze und Richtung. Derselbe Kandidat wird damit nicht bei jedem 5-Minuten-Lauf als neue Handelsentscheidung behandelt. Bereits persistierte Entscheidungen werden im AppLog als `ENTRY_THESIS_ALREADY_ATTEMPTED` ausgegeben und nicht erneut versucht. Nach einem neuen Kerzenschluss entsteht eine neue Entscheidung; eine terminal abgelehnte oder unbekannt ausgegangene frühere Entscheidung wird innerhalb derselben Kerze nicht automatisch wiederholt.
