@@ -348,6 +348,20 @@ class Persistence:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def research_bar_open_at_target_epoch(
+        self, pair: str, interval_minutes: int, target_epoch: int
+    ) -> dict[str, Any] | None:
+        """Return a stored candle whose open is at or before, and strictly covers, target_epoch."""
+        duration = int(interval_minutes) * 60
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT pair,interval_minutes,ts,open,high,low,close,volume FROM bars "
+                "WHERE pair=? AND interval_minutes=? AND ts<=? AND ts+? > ? "
+                "ORDER BY ts DESC LIMIT 1",
+                (pair, interval_minutes, int(target_epoch), duration, int(target_epoch)),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def latest_bar_timestamp(self, pair: str, interval_minutes: int = 60) -> int | None:
         with self.lock:
             row = self.connection.execute(
