@@ -284,6 +284,64 @@ def test_existing_schema_is_migrated_to_store_trend_efficiency(tmp_path):
     reopened.close()
 
 
+def test_gross_forward_metrics_separate_market_movement_from_costs_and_report_timing():
+    rows = []
+    samples = [
+        ("obs-a", 1000, "100", "60"),
+        ("obs-b", 2000, "-200", "-240"),
+        ("obs-c", 3000, "50", "10"),
+    ]
+    for observation_id_value, decision_ts, gross, net in samples:
+        target_epoch = decision_ts + 28800
+        rows.append({
+            "observation_id": observation_id_value,
+            "decision_ts": decision_ts,
+            "target_epoch": target_epoch,
+            "outcome_bar_ts": 28800,
+            "interval_minutes": 60,
+            "horizon_seconds": 28800,
+            "strategy_version": "tsm-0.2.0",
+            "direction": "LONG",
+            "status": "SETTLED_COST_ESTIMATE",
+            "gross_return_bps": gross,
+            "spot_net_return_bps": net,
+            "margin_cost_break_even_bps": net,
+        })
+
+    summary = summarize_shadow_research(rows, strategy_version="tsm-0.2.0")
+    assert summary["gross_forward_proxy_all"]["sample_count"] == 3
+    assert D(summary["gross_forward_proxy_all"]["mean_gross_return_bps"]) == D("-16.66666666666666666666666667")
+    assert D(summary["spot_cost_proxy_all"]["mean_net_return_bps"]) == D("-56.66666666666666666666666667")
+    assert summary["gross_forward_chronological_splits"]["train_first_60_percent"]["sample_count"] == 1
+    assert summary["gross_forward_chronological_splits"]["validation_next_20_percent"]["sample_count"] == 1
+    assert summary["gross_forward_chronological_splits"]["test_last_20_percent"]["sample_count"] == 1
+
+    timing = summary["forward_timing_diagnostics"]
+    assert timing["sample_count"] == 3
+    assert timing["invalid_timestamp_count"] == 0
+    assert timing["target_horizon_overshoot_seconds"]["maximum"] == 2600
+    assert timing["target_horizon_overshoot_seconds"]["median"] == "1600"
+    assert timing["status"] == "HOURLY_CLOSE_LABEL_NOT_EXACT_HORIZON"
+
+
+def test_forward_timing_diagnostics_marks_invalid_timestamp_rows():
+    summary = summarize_shadow_research([{
+        "observation_id": "bad-time",
+        "decision_ts": 1000,
+        "target_epoch": 29800,
+        "outcome_bar_ts": 0,
+        "interval_minutes": 60,
+        "strategy_version": "tsm-0.2.0",
+        "direction": "LONG",
+        "status": "SETTLED_COST_ESTIMATE",
+        "gross_return_bps": "1",
+        "spot_net_return_bps": "1",
+        "margin_cost_break_even_bps": "1",
+    }], strategy_version="tsm-0.2.0")
+    assert summary["forward_timing_diagnostics"]["sample_count"] == 0
+    assert summary["forward_timing_diagnostics"]["invalid_timestamp_count"] == 1
+
+
 def synthetic_raw_bars(count=600, *, hourly_gap_at=None):
     result = []
     for index in range(count):
