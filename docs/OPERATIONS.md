@@ -1,5 +1,15 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.41 — Entry-Idempotenz und Forward-Diagnostik
+
+Die Signalentscheidung für einen Einstieg hat nun einen deterministischen Schlüssel aus Strategieversion, Kraken-Paar-ID, Zeitstempel der letzten geschlossenen Stundenkerze und Richtung. Derselbe Kandidat wird damit nicht bei jedem 5-Minuten-Lauf als neue Handelsentscheidung behandelt. Bereits persistierte Entscheidungen werden im AppLog als `ENTRY_THESIS_ALREADY_ATTEMPTED` ausgegeben und nicht erneut versucht. Nach einem neuen Kerzenschluss entsteht eine neue Entscheidung; eine terminal abgelehnte oder unbekannt ausgegangene frühere Entscheidung wird innerhalb derselben Kerze nicht automatisch wiederholt.
+
+Bevor eine neue Risikoerhöhung zugelassen wird, prüft `ENTRY_BLOCKED_EXISTING_PAIR_EXPOSURE`, ob für dasselbe Paar bereits eine offene Position oder Order existiert. Falls die Paar-ID in einer offenen Position/Order nicht zuverlässig identifiziert werden kann, blockiert der Guard ebenfalls. Die Version unterstützt dadurch kein implizites Aufstocken und kein automatisches Umkehren einer bestehenden Position. Diese Aktionen benötigen einen eigenen, positionsbewussten Ablauf.
+
+`LATEST_CLOSED_BAR_STALE_OR_INVALID` blockiert Richtungssignale, deren Kerzenschluss älter als der konfigurierte Maximalabstand ist oder einen ungültigen/future Zeitstempel hat. Vorher wurde der Bar-Zeitpunkt nur für die Research-Beobachtung geprüft, nicht verbindlich als neues Entry-Gate.
+
+Die Research-Zusammenfassung trennt nun Brutto-Forward-Bewegungen von geschätzten kostenbereinigten Spot-Ergebnissen und zeigt die Abweichung des tatsächlichen bewerteten Stundenkerzenschlusses vom Zielhorizont. Die Labels berücksichtigen keine tatsächlichen Fills, Intrabar-Stops, Take-Profits oder Teilverkäufe und bleiben daher reine Marktbewegungs-Labels.
+
 ## Version 0.1.40 — Trendqualität und Kosten-Diagnostik
 
 `MARKET_SIGNAL_EVALUATED` enthält jetzt `trend_efficiency_24h`, `trend_efficiency_72h` und `trend_strength_score`. Ein Signal muss weiterhin das übereinstimmende 24-/72-Stunden-Momentum und die Mittelwertbestätigung erfüllen. Zusätzlich verwirft der neue Filter Trendkandidaten, deren Netto-Bewegung im Verhältnis zum gesamten absoluten Preisweg zu gering ist. Die Startwerte 0,20 (24 Stunden) und 0,12 (72 Stunden) sind vorab gesetzte Forschungsfilter, nicht angepasste oder ergebnisgarantierende Parameter.
