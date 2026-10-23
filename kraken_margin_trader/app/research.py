@@ -756,6 +756,9 @@ def settle_due_observations(
                 "spot_net_return_bps": None,
                 "margin_cost_break_even_bps": None,
                 "cost_quality": "TARGET_HOURLY_BAR_MISSING;NO_OUTCOME_INFERRED",
+                "target_open_reference_ts": None,
+                "target_open_price": None,
+                "target_open_gross_return_bps": None,
             }
             if persistence.settle_research_observation(row["observation_id"], outcome):
                 results.append({
@@ -780,6 +783,22 @@ def settle_due_observations(
             exit_spread_bps=current_exit_spread_bps,
             taker_fee_bps=fee,
         )
+        target_open_bar = persistence.research_bar_open_at_target_epoch(
+            pair, interval_minutes, target_epoch
+        )
+        target_open_price = (
+            D(str(target_open_bar["open"])) if target_open_bar is not None else None
+        )
+        target_open_reference_ts = (
+            int(target_open_bar["ts"]) if target_open_bar is not None else None
+        )
+        target_open_gross = None
+        if target_open_price is not None:
+            sign = D(1) if str(row["direction"]).upper() == "LONG" else D(-1)
+            target_open_gross = (
+                sign * (target_open_price / D(str(row["entry_mid_price"])) - D(1))
+                * D(10000)
+            )
         status = "SETTLED_COST_ESTIMATE" if fee is not None else "SETTLED_GROSS_ONLY"
         outcome = {
             "status": status,
@@ -791,6 +810,11 @@ def settle_due_observations(
             "spot_net_return_bps": estimate["spot_net_return_bps"],
             "margin_cost_break_even_bps": estimate["margin_cost_break_even_bps"],
             "cost_quality": str(estimate["cost_quality"]),
+            "target_open_reference_ts": target_open_reference_ts,
+            "target_open_price": str(target_open_price) if target_open_price is not None else None,
+            "target_open_gross_return_bps": (
+                str(target_open_gross) if target_open_gross is not None else None
+            ),
         }
         if persistence.settle_research_observation(row["observation_id"], outcome):
             results.append({
@@ -803,6 +827,13 @@ def settle_due_observations(
                     "target_epoch": target_epoch,
                     "outcome_bar_ts": int(target_bar["ts"]),
                     "gross_return_bps": str(estimate["gross_return_bps"]),
+                    "target_open_reference_ts": target_open_reference_ts,
+                    "target_open_price": (
+                        str(target_open_price) if target_open_price is not None else None
+                    ),
+                    "target_open_gross_return_bps": (
+                        str(target_open_gross) if target_open_gross is not None else None
+                    ),
                     "spot_cost_estimate_bps": (
                         str(estimate["spot_cost_estimate_bps"])
                         if estimate["spot_cost_estimate_bps"] is not None else None
