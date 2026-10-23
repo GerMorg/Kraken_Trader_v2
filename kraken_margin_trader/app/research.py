@@ -354,6 +354,47 @@ def _forward_timing_diagnostics(rows: Sequence[dict[str, Any]]) -> dict[str, Any
     }
 
 
+def _target_open_timing_diagnostics(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Measure gross labels at a stored hourly bar open at or before the target epoch."""
+    lead_seconds: list[int] = []
+    actual_horizons: list[int] = []
+    invalid_timestamps = 0
+    for row in rows:
+        if row.get("target_open_reference_ts") is None:
+            continue
+        try:
+            decision_ts = int(row["decision_ts"])
+            target_epoch = int(row["target_epoch"])
+            reference_ts = int(row["target_open_reference_ts"])
+            interval_seconds = int(row.get("interval_minutes", 60)) * 60
+        except (KeyError, TypeError, ValueError, OverflowError):
+            invalid_timestamps += 1
+            continue
+        lead = target_epoch - reference_ts
+        actual_horizon = reference_ts - decision_ts
+        if interval_seconds <= 0 or lead < 0 or lead >= interval_seconds or actual_horizon <= 0:
+            invalid_timestamps += 1
+            continue
+        lead_seconds.append(lead)
+        actual_horizons.append(actual_horizon)
+    return {
+        "sample_count": len(lead_seconds),
+        "invalid_timestamp_count": invalid_timestamps,
+        "target_reference_lead_seconds": {
+            "mean": str(D(sum(lead_seconds)) / D(len(lead_seconds))) if lead_seconds else None,
+            "median": str(D(str(median(lead_seconds)))) if lead_seconds else None,
+            "maximum": max(lead_seconds) if lead_seconds else None,
+        },
+        "actual_horizon_seconds": {
+            "mean": str(D(sum(actual_horizons)) / D(len(actual_horizons)))
+            if actual_horizons else None,
+            "minimum": min(actual_horizons) if actual_horizons else None,
+            "maximum": max(actual_horizons) if actual_horizons else None,
+        },
+        "status": "HOURLY_BAR_OPEN_AT_OR_BEFORE_TARGET_NOT_EXACT_HORIZON",
+    }
+
+
 def _feature_metrics(
     rows: Sequence[dict[str, Any]],
     field: str,
