@@ -260,21 +260,30 @@ def run_ohlcv_backtest_scenarios(
     }
 
 
-def _metrics(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    returns = [
-        D(str(row["spot_net_return_bps"]))
-        for row in rows
-        if row.get("spot_net_return_bps") is not None
-        and D(str(row["spot_net_return_bps"])).is_finite()
-    ]
+def _metrics_for_field(
+    rows: Sequence[dict[str, Any]],
+    field: str,
+    return_kind: str,
+) -> dict[str, Any]:
+    returns: list[Decimal] = []
+    for row in rows:
+        raw = row.get(field)
+        if raw is None:
+            continue
+        try:
+            value = D(str(raw))
+        except (ArithmeticError, TypeError, ValueError):
+            continue
+        if value.is_finite():
+            returns.append(value)
     if not returns:
         return {
             "sample_count": 0,
-            "mean_net_return_bps": None,
-            "median_net_return_bps": None,
+            f"mean_{return_kind}_return_bps": None,
+            f"median_{return_kind}_return_bps": None,
             "win_rate_pct": None,
             "profit_factor": None,
-            "worst_net_return_bps": None,
+            f"worst_{return_kind}_return_bps": None,
         }
 
     wins = sum((value for value in returns if value > 0), D(0))
@@ -287,11 +296,61 @@ def _metrics(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
         factor = "ZERO_GROSS_WIN_AND_LOSS"
     return {
         "sample_count": len(returns),
-        "mean_net_return_bps": str(sum(returns, D(0)) / D(len(returns))),
-        "median_net_return_bps": str(D(str(median(returns)))),
+        f"mean_{return_kind}_return_bps": str(sum(returns, D(0)) / D(len(returns))),
+        f"median_{return_kind}_return_bps": str(D(str(median(returns)))),
         "win_rate_pct": str(D(sum(1 for value in returns if value > 0)) / D(len(returns)) * D(100)),
         "profit_factor": factor,
-        "worst_net_return_bps": str(min(returns)),
+        f"worst_{return_kind}_return_bps": str(min(returns)),
+    }
+
+
+def _metrics(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Backward-compatible metric keys for the costed spot proxy series."""
+    return _metrics_for_field(rows, "spot_net_return_bps", "net")
+
+
+def _forward_timing_diagnostics(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Quantify the unavoidable timing error when labels use hourly candle closes."""
+    overshoots: list[int] = []
+    realized_horizons: list[int] = []
+    invalid_timestamps = 0
+    for row in rows:
+        if row.get("outcome_bar_ts") is None:
+            continue
+        try:
+            decision_ts = int(row["decision_ts"])
+            target_epoch = int(row["target_epoch"])
+            outcome_bar_ts = int(row["outcome_bar_ts"])
+            interval_seconds = int(row.get("interval_minutes", 60)) * 60
+        except (KeyError, TypeError, ValueError, OverflowError):
+            invalid_timestamps += 1
+            continue
+        if interval_seconds <= 0:
+            invalid_timestamps += 1
+            continue
+        bar_close_epoch = outcome_bar_ts + interval_seconds
+        overshoot = bar_close_epoch - target_epoch
+        actual_horizon = bar_close_epoch - decision_ts
+        if overshoot < 0 or overshoot > interval_seconds or actual_horizon <= 0:
+            invalid_timestamps += 1
+            continue
+        overshoots.append(overshoot)
+        realized_horizons.append(actual_horizon)
+    return {
+        "sample_count": len(overshoots),
+        "invalid_timestamp_count": invalid_timestamps,
+        "target_horizon_overshoot_seconds": {
+            "mean": str(D(sum(overshoots)) / D(len(overshoots))) if overshoots else None,
+            "median": str(D(str(median(overshoots)))) if overshoots else None,
+            "maximum": max(overshoots) if overshoots else None,
+        },
+        "actual_horizon_seconds": {
+            "mean": str(D(sum(realized_horizons)) / D(len(realized_horizons)))
+            if realized_horizons else None,
+            "minimum": min(realized_horizons) if realized_horizons else None,
+            "maximum": max(realized_horizons) if realized_horizons else None,
+        },
+        "status": "HOURLY_CLOSE_LABEL_NOT_EXACT_HORIZON",
     }
 
 
@@ -358,6 +417,26 @@ def summarize_shadow_research(
         and D(str(row["margin_cost_break_even_bps"])).is_finite()
     ]
     n = len(costed)
+    gross_settled = [
+        row for row in settled
+        if row.get("gross_return_bps") is not None
+    ]
+    gross_times = sorted({int(row.get("decision_ts", 0)) for row in gross_settled})
+    gross_train_end = int(len(gross_times) * 0.60)
+    gross_validation_end = int(len(gross_times) * 0.80)
+    gross_train_times = set(gross_times[:gross_train_end])
+    gross_validation_times = set(gross_times[gross_train_end:gross_validation_end])
+    gross_test_times = set(gross_times[gross_validation_end:])
+    gross_train = [
+        row for row in gross_settled if int(row.get("decision_ts", 0)) in gross_train_times
+    ]
+    gross_validation = [
+        row for row in gross_settled
+        if int(row.get("decision_ts", 0)) in gross_validation_times
+    ]
+    gross_test = [
+        row for row in gross_settled if int(row.get("decision_ts", 0)) in gross_test_times
+    ]
     # Split by unique decision timestamps so observations from the same market
     # cycle cannot leak across train, validation and test partitions.
     unique_decision_times = sorted({int(row.get("decision_ts", 0)) for row in costed})
@@ -429,6 +508,29 @@ def summarize_shadow_research(
             direction: _metrics([row for row in costed if row.get("direction") == direction])
             for direction in ("LONG", "SHORT")
         },
+        "gross_forward_proxy_all": _metrics_for_field(
+            gross_settled, "gross_return_bps", "gross"
+        ),
+        "gross_forward_proxy_by_direction": {
+            direction: _metrics_for_field(
+                [row for row in gross_settled if row.get("direction") == direction],
+                "gross_return_bps",
+                "gross",
+            )
+            for direction in ("LONG", "SHORT")
+        },
+        "gross_forward_chronological_splits": {
+            "train_first_60_percent": _metrics_for_field(
+                gross_train, "gross_return_bps", "gross"
+            ),
+            "validation_next_20_percent": _metrics_for_field(
+                gross_validation, "gross_return_bps", "gross"
+            ),
+            "test_last_20_percent": _metrics_for_field(
+                gross_test, "gross_return_bps", "gross"
+            ),
+        },
+        "forward_timing_diagnostics": _forward_timing_diagnostics(settled),
         "trend_quality_diagnostics": {
             "efficiency_filter_rejection_count": efficiency_filter_rejections,
             "directional_efficiency_24h": _feature_metrics(directional, "trend_efficiency_24h"),
@@ -464,7 +566,8 @@ def summarize_shadow_research(
         "overlapping_signal_horizons": True,
         "limitations": [
             "Forward signal labels overlap across time and are not independent trades.",
-            "Entry is ticker mid; outcomes use the nearest closed hourly bar at the target horizon.",
+            "These labels do not simulate the runtime stop-loss, take-profit, partial-reduction, or exit-order state machine.",
+            "Entry is ticker mid; outcomes use the close of a stored hourly bar covering the target epoch, with timing overshoot reported separately.",
             "Exit spread is the current ticker spread when the target bar becomes available, not historical order-book evidence.",
             "Slippage is a fixed 5 bps per side research assumption.",
             "Margin opening and rollover fees are unknown; margin net returns are not computed.",
