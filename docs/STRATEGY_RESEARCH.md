@@ -1,5 +1,11 @@
 # Strategie- und Research-Hypothese
 
+## Validierungshinweis ab App-Version 0.1.41
+
+Die Forward-Forschung gibt Brutto-Kursbewegung und kostenbereinigten Spot-Proxy jetzt getrennt aus. So kann erkannt werden, ob negative Resultate bereits aus dem Richtungssignal oder zusätzlich aus Handelskosten entstehen. Außerdem werden der tatsächliche Zeitabstand zwischen Entscheidung und ausgewertetem Stundenkerzenschluss sowie dessen Abweichung vom geplanten Horizont gemessen.
+
+Die Forward-Kennzahlen bleiben **keine Strategie-PnL-Messung**: Sie simulieren nicht den Intrabar-Stop-Loss, das Take-Profit bei 3,5 %, Teilreduktionen, die reale Orderausführung oder Gebühren aus tatsächlichen Fills. Ein negatives Forward-Ergebnis ist daher ein starkes Warnsignal zur weiteren Untersuchung, aber nicht exakt gleichbedeutend mit dem hypothetischen Ergebnis des vollständigen Exit-Zustandsautomaten. Umgekehrt ist es kein Grund, die Regel mit denselben Daten so lange zu verändern, bis die Stichprobe besser aussieht.
+
 ## Kandidat v2 — H1-Time-Series-Momentum mit Trendeffizienz (`tsm-0.2.0`)
 
 Die Laufzeitregel bleibt ein einfacher, reproduzierbarer Preis-Trendkandidat. Sie berechnet 24- und 72-Stunden-Momentum in Basispunkten und verlangt für LONG/SHORT eine übereinstimmende Richtung sowie passende 24-/72-Kerzen-Mittelwerte. Version `tsm-0.2.0` ergänzt ein Efficiency-Ratio-Filter: absolute Netto-Bewegung geteilt durch die Summe der absoluten Ein-Kerzen-Bewegungen. Ein hoher Wert bedeutet einen direkteren Preisweg; ein niedriger Wert zeigt, dass das Momentum durch häufige Richtungswechsel zustande kommt.
