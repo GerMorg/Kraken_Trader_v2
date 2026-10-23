@@ -417,6 +417,16 @@ class Persistence:
             row = self.connection.execute("SELECT state FROM intents WHERE intent_id=?", (intent_id,)).fetchone()
         return str(row["state"]) if row else None
 
+    def intent_for_decision(self, decision_id: str) -> dict[str, Any] | None:
+        """Return the durable state for a deterministic decision/idempotency key."""
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT intent_id,decision_id,client_order_id,pair,action,side,volume,"
+                "leverage,state,created_at,updated_at FROM intents WHERE decision_id=?",
+                (str(decision_id),),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def unresolved_intents(self) -> list[dict[str, Any]]:
         states = ("INTENT_CREATED","PRECHECK_PASSED","VALIDATING","SUBMITTING","ACKNOWLEDGED","OPEN","PARTIALLY_FILLED","UNKNOWN_RECONCILING")
         with self.lock:
