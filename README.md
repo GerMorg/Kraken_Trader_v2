@@ -2,7 +2,9 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.41
+## Aktueller Status — 0.1.42
+
+**Version 0.1.42 ergänzt zur bisherigen Schlusskurs-Auswertung eine getrennte Brutto-Gegenmessung am Open der Stundenkerze, die den geplanten Zielzeitpunkt abdeckt. Bereits ausgewertete Beobachtungen werden anhand gespeicherter Kerzen nachträglich ergänzt, ohne die bisherige Brutto-/Netto-Serie zu überschreiben. Der neue Messwert ist ebenfalls weder tatsächlicher Fill noch Portfolio-PnL und enthält keine belastbare historische Netto-Kostenrechnung. Strategieparameter bleiben unverändert. Die interne Live-Sperre bleibt aktiv.**
 
 **Version 0.1.41 ergänzt deterministische, kerzenbasierte Entry-Idempotenz, blockiert neue Einstiege bei bestehenden Positionen/Orders desselben Paars und zwingt die Frische der letzten geschlossenen Stundenkerze als Entry-Gate durch. Shadow-Research weist Brutto-Kursbewegung, geschätzte Spot-Nettobewegung und die zeitliche Abweichung der Stundenkerzen-Zielbewertung getrennt aus. Keine dieser Diagnosen hebt den internen Live-Gate auf.**
 
