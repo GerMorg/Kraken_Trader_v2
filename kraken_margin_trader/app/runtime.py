@@ -16,9 +16,10 @@ from app.kraken import (
     KrakenAPIError, KrakenAmbiguousError, KrakenClient,
     api_key_permission_gate_reasons,
 )
-from app.execution import LiveExecutionBlocked, OrderAuthority, OrderIntent
+from app.execution import LiveExecutionBlocked, OrderAuthority, OrderIntent, signal_decision_id
+from app.entry_guards import entry_pair_exposure
 from app.history_sync import history_sources_ready, reconcile_trade_ledger_coverage, sync_history_source
-from app.market import executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
+from app.market import closed_bar_is_fresh, executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.position_management import evaluate_position_exits
@@ -1005,8 +1006,76 @@ class TraderRuntime:
                             signal_bar_ts=latest_bar_ts,
                             bar_age_seconds=bar_age_seconds,
                         )
-                if not signal.has_direction: continue
-                counts["signals"]+=1
+                if not signal.has_direction:
+                    continue
+                counts["signals"] += 1
+                signal_bar_ts = int(bars[-1]["ts"]) if bars else -1
+                signal_time_epoch = time.time()
+                signal_bar_age_seconds = (
+                    signal_time_epoch - (signal_bar_ts + 3600)
+                    if signal_bar_ts >= 0 else None
+                )
+                if not closed_bar_is_fresh(
+                    signal_bar_ts,
+                    signal_time_epoch,
+                    interval_minutes=60,
+                    max_age_seconds=3900,
+                    future_tolerance_seconds=60,
+                ):
+                    counts["blocked"] += 1
+                    self.audit.emit(
+                        "NO_TRADE",
+                        cycle_id=cycle_id,
+                        pair=instrument.wsname,
+                        direction=signal.direction,
+                        reason="LATEST_CLOSED_BAR_STALE_OR_INVALID",
+                        signal_bar_ts=signal_bar_ts if signal_bar_ts >= 0 else None,
+                        bar_age_seconds=signal_bar_age_seconds,
+                        max_age_seconds=3900,
+                        no_new_position_risk=True,
+                    )
+                    continue
+                entry_decision_id = signal_decision_id(
+                    strategy_version=STRATEGY_VERSION,
+                    pair_id=instrument.pair_id,
+                    signal_bar_ts=signal_bar_ts,
+                    direction=signal.direction,
+                )
+                prior_intent = self.persistence.intent_for_decision(entry_decision_id)
+                if prior_intent is not None:
+                    counts["blocked"] += 1
+                    self.audit.emit(
+                        "ENTRY_THESIS_ALREADY_ATTEMPTED",
+                        cycle_id=cycle_id,
+                        pair=instrument.wsname,
+                        direction=signal.direction,
+                        strategy_version=STRATEGY_VERSION,
+                        signal_bar_ts=signal_bar_ts,
+                        decision_id=entry_decision_id,
+                        existing_intent_id=prior_intent.get("intent_id"),
+                        existing_intent_state=prior_intent.get("state"),
+                        first_attempt_at=prior_intent.get("created_at"),
+                        retry_blocked=True,
+                    )
+                    continue
+                if account is not None:
+                    pair_exposure = entry_pair_exposure(
+                        instrument,
+                        open_positions=account.get("open_positions"),
+                        open_orders=account.get("open_orders"),
+                    )
+                    if pair_exposure["blocked"]:
+                        counts["blocked"] += 1
+                        self.audit.emit(
+                            "ENTRY_BLOCKED_EXISTING_PAIR_EXPOSURE",
+                            cycle_id=cycle_id,
+                            pair=instrument.wsname,
+                            direction=signal.direction,
+                            strategy_version=STRATEGY_VERSION,
+                            signal_bar_ts=signal_bar_ts,
+                            **pair_exposure,
+                        )
+                        continue
                 if account is not None and not api_permissions_ready:
                     counts["blocked"] += 1
                     self.audit.emit(
@@ -1158,12 +1227,14 @@ class TraderRuntime:
                     continue
                 action=(Action.OPEN_SPOT_LONG if signal.direction=="LONG" and not is_margin else
                         Action.OPEN_MARGIN_LONG if signal.direction=="LONG" else Action.OPEN_MARGIN_SHORT)
-                intent={"intent_id":str(uuid.uuid4()),"decision_id":cycle_id+":"+instrument.pair_id+":"+signal.direction,
+                intent={"intent_id":str(uuid.uuid4()),"decision_id":entry_decision_id,
                     "client_order_id":uuid.uuid4().hex,"pair":instrument.pair_id,"action":action.value,
                     "side":signal.direction,"volume":str(volume),"leverage":int(leverage or 1) if is_margin else None,
                     "product_type":"SPOT_MARGIN" if is_margin else "CASH_SPOT",
-                    "decision_evidence":{"cycle_id":cycle_id,"net_edge_is_uncalibrated_proxy":True,
-                    "estimated_cost_bps":str(cost.total_round_trip_bps),"margin_fee_source":"UNCONFIRMED" if is_margin else "NOT_APPLICABLE"}}
+                    "decision_evidence":{"cycle_id":cycle_id,"strategy_version":STRATEGY_VERSION,
+                    "signal_bar_ts":signal_bar_ts,"idempotency_scope":"ONE_ENTRY_THESIS_PER_PAIR_DIRECTION_CLOSED_HOURLY_BAR",
+                    "net_edge_is_uncalibrated_proxy":True,"estimated_cost_bps":str(cost.total_round_trip_bps),
+                    "margin_fee_source":"UNCONFIRMED" if is_margin else "NOT_APPLICABLE"}}
                 if self.settings.live_requested:
                     authority = OrderAuthority(
                         self.client, self.persistence, self.settings, self.audit

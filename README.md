@@ -2,7 +2,9 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.40
+## Aktueller Status — 0.1.41
+
+**Version 0.1.41 ergänzt deterministische, kerzenbasierte Entry-Idempotenz, blockiert neue Einstiege bei bestehenden Positionen/Orders desselben Paars und zwingt die Frische der letzten geschlossenen Stundenkerze als Entry-Gate durch. Shadow-Research weist Brutto-Kursbewegung, geschätzte Spot-Nettobewegung und die zeitliche Abweichung der Stundenkerzen-Zielbewertung getrennt aus. Keine dieser Diagnosen hebt den internen Live-Gate auf.**
 
 **Version 0.1.40 ergänzt einen 24-/72-Stunden-Trendeffizienzfilter, protokolliert die Trendstärke ausdrücklich nicht als Renditeprognose und zerlegt bekannte Handelskosten von weiterhin unbekannten Margin-Gebühren. Die Wallet-Reconciliation unterscheidet jetzt stabile Salden ohne Ledger-Aktivität von tatsächlich ledgerbestätigten Salden. Neue Beobachtungen verwenden `tsm-0.2.0`; das ist eine Strategieänderung, kein Profitabilitätsnachweis. Portfolio-/PnL-/Drawdown-Freigaben bleiben geschlossen und `INTERNAL_LIVE_EXECUTION_RELEASED = False` bleibt erzwungen.**
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.41 — Idempotente Einstiegsentscheidungen und belastbarere Forward-Diagnostik
+
+- Der Order-Entscheidungsschlüssel basiert nun deterministisch auf Strategieversion, Handelspaar, geschlossenem Stundenkerzen-Zeitstempel und Richtung. Wiederholte Zyklen derselben Kerze verwenden denselben Idempotenzschlüssel statt einer Cycle-ID.
+- Vor einem neuen Entry prüft die Runtime, ob derselbe Signalentscheid bereits persistent erfasst wurde. Ein neuer Einstieg in einem Paar wird zusätzlich blockiert, wenn dort schon eine offene Position oder Order existiert. Implizites Pyramiding und same-pair-Reversals bleiben aus, bis deren eigener Zustandsautomat umgesetzt und getestet ist.
+- Ein Richtungssignal aus einer zu alten oder zeitlich ungültigen geschlossenen Stundenkerze wird explizit blockiert. Vorher wurde die Barfrische zwar für Research-Labels geprüft, aber nicht als eigener zwingender Entry-Gate erzwungen.
+- Shadow-Research trennt Brutto-Forward-Bewegung von der Spot-Kostenschätzung, einschließlich Long-/Short- und chronologischer Brutto-Kennzahlen. Die Zusammenfassung zeigt die zeitliche Abweichung, die beim Bewerten zum Schluss einer Stundenkerze gegenüber dem gewünschten Zielhorizont entsteht.
+- Die Research-Dokumentation stellt explizit klar, dass diese Forward-Labels Stop-Loss, Take-Profit, Teilverkäufe und tatsächliche Ausführung nicht simulieren. Sie sind deshalb kein Portfolio-PnL und kein Nachweis der erwarteten Strategieprofitabilität.
+- Ergänzt Regressionstests für deterministische Signal-IDs, Duplikat-Intents, gleiche-Paar-Positionen/Orders, veraltete Kerzen, Brutto-vs.-Netto-Forward-Metriken und Horizont-Abweichungen.
+- Keine Änderung der internen Live-Sperre; echte Orderübermittlung bleibt nicht freigegeben.
+
 ## 0.1.40 — Trendqualität und ehrliche Kosten-/Reconciliation-Diagnostik
 
 - Die H1-Time-Series-Momentum-Regel prüft zusätzlich eine vorab festgelegte 24-/72-Stunden-Trendeffizienz (Netto-Bewegung geteilt durch den absoluten Bewegungspfad). Ein rohes Trend-Momentum ohne ausreichend gerichteten Verlauf wird als `TREND_EFFICIENCY_TOO_LOW` abgelehnt.

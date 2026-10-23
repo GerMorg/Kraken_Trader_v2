@@ -11,6 +11,29 @@ from app.models import Action, Instrument
 from app.persistence import Persistence
 
 D = Decimal
+
+
+def signal_decision_id(
+    *,
+    strategy_version: str,
+    pair_id: str,
+    signal_bar_ts: int,
+    direction: str,
+) -> str:
+    """Build a stable idempotency key for one pair/direction/closed-bar thesis."""
+    normalized_direction = direction.strip().upper()
+    if not strategy_version.strip() or not pair_id.strip():
+        raise ValueError("SIGNAL_DECISION_IDENTITY_REQUIRED")
+    if signal_bar_ts < 0:
+        raise ValueError("SIGNAL_DECISION_BAR_TIMESTAMP_INVALID")
+    if normalized_direction not in {"LONG", "SHORT"}:
+        raise ValueError("SIGNAL_DECISION_DIRECTION_INVALID")
+    return (
+        f"signal:{strategy_version.strip()}:{pair_id.strip()}:"
+        f"{signal_bar_ts}:{normalized_direction}"
+    )
+
+
 class LiveExecutionBlocked(RuntimeError):
     pass
 
