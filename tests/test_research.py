@@ -462,7 +462,7 @@ def test_target_open_backfill_adds_comparator_without_overwriting_primary_outcom
 
     metrics = summarize_shadow_research(db.research_observations(), strategy_version="tsm-test")
     assert metrics["gross_forward_proxy_all"]["mean_gross_return_bps"] == "500"
-    assert metrics["target_open_gross_proxy_all"]["mean_gross_return_bps"] == "200"
+    assert D(metrics["target_open_gross_proxy_all"]["mean_gross_return_bps"]) == D("200")
     assert metrics["target_open_timing_diagnostics"]["sample_count"] == 1
     assert metrics["target_open_timing_diagnostics"]["target_reference_lead_seconds"]["mean"] == "1000"
     assert metrics["target_open_timing_diagnostics"]["actual_horizon_seconds"]["mean"] == "27800"
