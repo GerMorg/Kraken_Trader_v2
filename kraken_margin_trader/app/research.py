@@ -554,7 +554,7 @@ def summarize_shadow_research(
         })
 
     return {
-        "research_schema": "shadow-forward-v1",
+        "research_schema": "shadow-forward-v2",
         "strategy_version": (
             active_version
             if active_version is not None
@@ -596,6 +596,31 @@ def summarize_shadow_research(
                 gross_test, "gross_return_bps", "gross"
             ),
         },
+        "target_open_gross_proxy_all": _metrics_for_field(
+            target_open_settled, "target_open_gross_return_bps", "gross"
+        ),
+        "target_open_gross_proxy_by_direction": {
+            direction: _metrics_for_field(
+                [row for row in target_open_settled if row.get("direction") == direction],
+                "target_open_gross_return_bps",
+                "gross",
+            )
+            for direction in ("LONG", "SHORT")
+        },
+        "target_open_gross_chronological_splits": {
+            "train_first_60_percent": _metrics_for_field(
+                target_open_train, "target_open_gross_return_bps", "gross"
+            ),
+            "validation_next_20_percent": _metrics_for_field(
+                target_open_validation, "target_open_gross_return_bps", "gross"
+            ),
+            "test_last_20_percent": _metrics_for_field(
+                target_open_test, "target_open_gross_return_bps", "gross"
+            ),
+        },
+        "target_open_timing_diagnostics": _target_open_timing_diagnostics(
+            target_open_settled
+        ),
         "forward_timing_diagnostics": _forward_timing_diagnostics(settled),
         "trend_quality_diagnostics": {
             "efficiency_filter_rejection_count": efficiency_filter_rejections,
@@ -633,8 +658,10 @@ def summarize_shadow_research(
         "limitations": [
             "Forward signal labels overlap across time and are not independent trades.",
             "These labels do not simulate the runtime stop-loss, take-profit, partial-reduction, or exit-order state machine.",
-            "Entry is ticker mid; outcomes use the close of a stored hourly bar covering the target epoch, with timing overshoot reported separately.",
-            "Exit spread is the current ticker spread when the target bar becomes available, not historical order-book evidence.",
+            "Primary forward outcome uses the close of the stored hourly bar covering the target epoch; target-close overshoot is reported separately.",
+            "A separate target-open gross series uses the open of the hourly bar strictly covering the target epoch. It is at or before target and avoids measuring an extra candle close beyond target; it is not an exact-horizon price.",
+            "The target-open series is gross-only and does not reuse current spread or fee assumptions as a historical net return.",
+            "Primary spot net proxy uses the current ticker spread when the target bar becomes available, not historical order-book evidence.",
             "Slippage is a fixed 5 bps per side research assumption.",
             "Margin opening and rollover fees are unknown; margin net returns are not computed.",
             "This report cannot calibrate edge or release live order execution automatically.",
