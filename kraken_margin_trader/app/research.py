@@ -462,6 +462,31 @@ def summarize_shadow_research(
         row for row in settled
         if row.get("gross_return_bps") is not None
     ]
+    target_open_settled = [
+        row for row in settled if row.get("target_open_gross_return_bps") is not None
+    ]
+    target_open_times = sorted({
+        int(row.get("decision_ts", 0)) for row in target_open_settled
+    })
+    target_open_train_end = int(len(target_open_times) * 0.60)
+    target_open_validation_end = int(len(target_open_times) * 0.80)
+    target_open_train_times = set(target_open_times[:target_open_train_end])
+    target_open_validation_times = set(
+        target_open_times[target_open_train_end:target_open_validation_end]
+    )
+    target_open_test_times = set(target_open_times[target_open_validation_end:])
+    target_open_train = [
+        row for row in target_open_settled
+        if int(row.get("decision_ts", 0)) in target_open_train_times
+    ]
+    target_open_validation = [
+        row for row in target_open_settled
+        if int(row.get("decision_ts", 0)) in target_open_validation_times
+    ]
+    target_open_test = [
+        row for row in target_open_settled
+        if int(row.get("decision_ts", 0)) in target_open_test_times
+    ]
     gross_times = sorted({int(row.get("decision_ts", 0)) for row in gross_settled})
     gross_train_end = int(len(gross_times) * 0.60)
     gross_validation_end = int(len(gross_times) * 0.80)
