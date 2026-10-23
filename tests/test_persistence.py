@@ -6,6 +6,25 @@ def intent():
     return {"intent_id":"i1","decision_id":"d1","client_order_id":"c1","pair":"XBTUSD",
             "action":"OPEN_SPOT_LONG","side":"LONG","volume":"0.01","leverage":None}
 
+def test_decision_id_unique_blocks_new_intent_id_for_same_entry_thesis():
+    db = Persistence(":memory:")
+    first = intent()
+    first["decision_id"] = "signal:tsm-0.2.0:XXBTZUSD:1792768800:LONG"
+    assert db.create_intent(first)
+
+    second = {
+        **first,
+        "intent_id": "new-intent-id",
+        "client_order_id": "new-client-order",
+    }
+    assert db.create_intent(second) is False
+    stored = db.intent_for_decision(first["decision_id"])
+    assert stored is not None
+    assert stored["intent_id"] == first["intent_id"]
+    assert stored["state"] == "INTENT_CREATED"
+    db.close()
+
+
 def test_nonce_is_monotonic():
     db=Persistence(":memory:")
     assert db.next_nonce()<db.next_nonce()
