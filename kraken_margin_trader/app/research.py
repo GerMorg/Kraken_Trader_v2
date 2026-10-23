@@ -669,6 +669,62 @@ def summarize_shadow_research(
     }
 
 
+def backfill_target_open_outcomes(persistence: Any, *, limit: int = 5000) -> dict[str, Any]:
+    """Add a gross-only target-open label without changing the primary stored outcome."""
+    rows = persistence.research_observations_missing_target_open(limit=limit)
+    updated = 0
+    unavailable = 0
+    invalid = 0
+    offsets: list[int] = []
+    for row in rows:
+        try:
+            pair = str(row["pair"])
+            interval_minutes = int(row["interval_minutes"])
+            target_epoch = int(row["target_epoch"])
+            bar = persistence.research_bar_open_at_target_epoch(
+                pair, interval_minutes, target_epoch
+            )
+            if bar is None:
+                unavailable += 1
+                continue
+            direction = str(row["direction"]).upper()
+            if direction not in {"LONG", "SHORT"}:
+                invalid += 1
+                continue
+            entry = D(str(row["entry_mid_price"]))
+            reference = D(str(bar["open"]))
+            reference_ts = int(bar["ts"])
+            if not entry.is_finite() or entry <= 0 or not reference.is_finite() or reference <= 0:
+                invalid += 1
+                continue
+            sign = D(1) if direction == "LONG" else D(-1)
+            gross = sign * (reference / entry - D(1)) * D(10000)
+            if persistence.record_research_target_open_outcome(
+                str(row["observation_id"]),
+                reference_ts=reference_ts,
+                reference_price=reference,
+                gross_return_bps=gross,
+            ):
+                updated += 1
+                offsets.append(target_epoch - reference_ts)
+        except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError):
+            invalid += 1
+    return {
+        "observations_checked": len(rows),
+        "updated": updated,
+        "target_bar_unavailable": unavailable,
+        "invalid_observations": invalid,
+        "target_reference_lead_seconds": {
+            "mean": str(D(sum(offsets)) / D(len(offsets))) if offsets else None,
+            "minimum": min(offsets) if offsets else None,
+            "maximum": max(offsets) if offsets else None,
+        },
+        "outcome_model": "TARGET_HOURLY_BAR_OPEN_AT_OR_BEFORE_TARGET_GROSS_ONLY",
+        "primary_outcomes_overwritten": False,
+        "status": "BACKFILL_UPDATED" if updated else "NO_ELIGIBLE_BACKFILL_ROWS",
+    }
+
+
 def settle_due_observations(
     persistence: Any,
     *,
