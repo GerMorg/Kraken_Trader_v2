@@ -24,6 +24,7 @@ from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.position_management import evaluate_position_exits
 from app.research import (
+    backfill_target_open_outcomes,
     observation_id,
     run_ohlcv_backtest_scenarios,
     settle_due_observations,
@@ -1313,6 +1314,24 @@ class TraderRuntime:
                         state="SHADOW_ONLY",
                         **intent,
                     )
+            try:
+                target_open_backfill = backfill_target_open_outcomes(self.persistence)
+                if target_open_backfill["updated"] > 0:
+                    backfill_payload = {"cycle_id": cycle_id, **target_open_backfill}
+                    self.persistence.record_event(
+                        "SHADOW_RESEARCH_TARGET_OPEN_BACKFILL", backfill_payload
+                    )
+                    self.audit.emit(
+                        "SHADOW_RESEARCH_TARGET_OPEN_BACKFILL", **backfill_payload
+                    )
+            except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError) as exc:
+                self.audit.emit(
+                    "SHADOW_RESEARCH_TARGET_OPEN_BACKFILL_ERROR",
+                    cycle_id=cycle_id,
+                    exception_type=type(exc).__name__,
+                    reason=str(exc)[:120],
+                    primary_outcomes_unchanged=True,
+                )
             research_summary = summarize_shadow_research(
                 self.persistence.research_observations(limit=5000),
                 strategy_version=STRATEGY_VERSION,
