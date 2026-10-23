@@ -155,6 +155,37 @@ def quote_is_fresh(observed_at: float | Decimal | None, now: float | Decimal,
     return age.is_finite() and D(0) <= age <= maximum_age
 
 
+def closed_bar_is_fresh(
+    bar_open_epoch: int | float | Decimal | None,
+    now_epoch: int | float | Decimal,
+    *,
+    interval_minutes: int = 60,
+    max_age_seconds: int = 3900,
+    future_tolerance_seconds: int = 60,
+) -> bool:
+    """Reject missing, stale or implausibly future closed-candle timestamps."""
+    try:
+        opened = D(str(bar_open_epoch))
+        current = D(str(now_epoch))
+        duration = D(interval_minutes) * D(60)
+        maximum_age = D(max_age_seconds)
+        future_tolerance = D(future_tolerance_seconds)
+    except (ArithmeticError, TypeError, ValueError):
+        return False
+    if (
+        not all(value.is_finite() for value in (
+            opened, current, duration, maximum_age, future_tolerance
+        ))
+        or opened < 0
+        or duration <= 0
+        or maximum_age < 0
+        or future_tolerance < 0
+    ):
+        return False
+    age = current - (opened + duration)
+    return age.is_finite() and -future_tolerance <= age <= maximum_age
+
+
 def executable_reference_price(ticker: Ticker, direction: str) -> Decimal:
     """Return the executable quote side used for conservative entry sizing.
 
