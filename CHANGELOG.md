@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.43 — OHLCV-Exit-Timing korrigiert und Teilgewinn modelliert
+
+- Behebt Look-ahead im OHLCV-Simulator: Die High-/Low-Werte des geplanten Time-Exit-Balkens werden nicht mehr geprüft, weil der Exit bereits am Balken-Open stattfindet.
+- Ergänzt die einmalige Teilgewinnmitnahme entsprechend der konfigurierten Laufzeit-Hypothese (Standard 3,5 % Brutto-Kursbewegung und 50 % der verbleibenden Menge); die Restposition wird separat bis Stop oder Time-Exit modelliert.
+- Wenn Stop und Take-Profit innerhalb derselben Stundenkerze liegen, wird Stop-zuerst als konservative Intrabar-Annahme verwendet. Die Ausgabe dokumentiert diese Annahme und die neue Exit-Modellversion.
+- Wendet die Zeit-Exit-Korrektur auch im Orderbuch-Szenario-Replay an, damit dessen Stop-Suche nicht nach dem geplanten Exit fortgesetzt wird.
+- Ergänzt Regressionstests für terminale Exit-Balken, Teilgewinn, Stop-/Take-Profit-Ambiguität und PnL-/Kostenkonsistenz. Kein Live-Orderpfad wird geändert; INTERNAL_LIVE_EXECUTION_RELEASED bleibt False.
+
 ## 0.1.42 — Ergänzende Forward-Messung am Zielkerzen-Open
 
 - Die bisherige Schlusskurs-basierte Forward-Serie bleibt erhalten. Zusätzlich werden Bruttoergebnisse am Open jener gespeicherten Stundenkerze gemessen, deren Intervall den geplanten Zielzeitpunkt strikt enthält; die Richtung wird für LONG und SHORT normalisiert.

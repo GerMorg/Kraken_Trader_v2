@@ -1,5 +1,10 @@
 # Betrieb auf Home Assistant OS
 
+## Version 0.1.43 — Zeitlich korrekter OHLCV-Exit und Teilgewinn-Szenario
+
+Die OHLCV_BACKTEST_SCENARIO_REPORT-Ausgaben verwenden jetzt den Exit-Zeitpunkt konsequent: Wird eine Haltedauer von acht Stunden ausgewertet, schließt die Simulation am Open des geplanten Exit-Balkens. Dessen spätere High-/Low-Werte können keinen früheren Stop mehr auslösen. Stop und Teilgewinnmitnahme werden in vorhergehenden Balken ausgewertet; wenn Stop und Ziel in derselben Stundenkerze liegen, gilt Stop-zuerst als konservative Annahme. Ein Take-Profit wird einmalig auf den konfigurierten Anteil angewandt; die Restposition bleibt bis Stop oder Time-Exit offen. Reports nennen exit_model_version, intrabar_ambiguity_policy, time_exit_policy, partial_take_profit_policy und Exit-Gründe. Diese Kennzahlen sind Forschungsszenarien, keine realen Fills und keine Freigabe echter Orders.
+
+
 ## Version 0.1.42 — Ergänzende Zielhorizont-Messung
 
 SHADOW_RESEARCH_SUMMARY enthält zusätzlich target_open_gross_proxy_all, target_open_gross_proxy_by_direction, target_open_gross_chronological_splits und target_open_timing_diagnostics. Diese Reihe misst nur die Brutto-Preisbewegung zum Open der Stundenkerze, deren Intervall den Zielzeitpunkt strikt enthält. Sie steht separat neben der bisherigen Schlusskurs-/Spot-Kostenproxy-Reihe, überschreibt diese nicht und ist weder ein tatsächlicher Fill noch Portfolio-PnL. Ältere abgeschlossene Beobachtungen werden anhand lokal gespeicherter Kerzen ergänzt; ein SHADOW_RESEARCH_TARGET_OPEN_BACKFILL-Eintrag entsteht nur, wenn Ergänzungen vorgenommen wurden. Keine Research-Kennzahl kann Live-Ausführung freigeben.

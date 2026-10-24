@@ -113,6 +113,8 @@ def run_ohlcv_backtest_scenarios(
     fast_threshold_bps: Decimal,
     slow_threshold_bps: Decimal,
     stop_pct: Decimal,
+    take_profit_pct: Decimal = D("3.5"),
+    take_profit_fraction: Decimal = D("0.5"),
     strategy_version: str = "tsm-0.1.2",
 ) -> dict[str, Any]:
     """Run the existing OHLCV simulator on chronological splits and margin-cost budgets.
@@ -146,12 +148,19 @@ def run_ohlcv_backtest_scenarios(
         "fast_threshold_bps": str(fast_threshold_bps),
         "slow_threshold_bps": str(slow_threshold_bps),
         "stop_pct": str(stop_pct),
+        "take_profit_pct": str(take_profit_pct),
+        "take_profit_fraction": str(take_profit_fraction),
+        "exit_model_version": "ohlcv-stop-first-partial-take-profit-time-exit-v2",
     }
     if taker_fee_bps is None:
         return {**base, "status": "SKIPPED_TAKER_FEE_UNKNOWN"}
     if (
         not taker_fee_bps.is_finite() or taker_fee_bps < 0
         or not current_spread_bps.is_finite() or current_spread_bps < 0
+        or not stop_pct.is_finite() or not D(0) < stop_pct < D(100)
+        or not take_profit_pct.is_finite() or not D(0) < take_profit_pct < D(100)
+        or not take_profit_fraction.is_finite()
+        or not D(0) < take_profit_fraction < D(1)
         or holding_hours < 1
     ):
         return {**base, "status": "SKIPPED_INVALID_COST_OR_HORIZON_INPUT"}
@@ -225,6 +234,8 @@ def run_ohlcv_backtest_scenarios(
                 slow_threshold_bps=slow_threshold_bps,
                 max_holding_bars=int(holding_hours),
                 stop_pct=stop_pct,
+                take_profit_pct=take_profit_pct,
+                take_profit_fraction=take_profit_fraction,
             )
             split_results[split_name] = {
                 **summary_metrics(trades),
@@ -249,11 +260,20 @@ def run_ohlcv_backtest_scenarios(
         "historical_spread_source": "CURRENT_TICKER_PROXY_NOT_HISTORICAL_SPREAD",
         "historical_taker_fee_source": "CURRENT_TRADE_VOLUME_TIER_NOT_HISTORICAL_TIER",
         "simulator_method": "OHLCV_NEXT_BAR_OPEN_VOLUME_PARTICIPATION_PROXY",
+        "intrabar_ambiguity_policy": "STOP_FIRST_WHEN_STOP_AND_TAKE_PROFIT_TOUCH_SAME_HOURLY_BAR",
+        "time_exit_policy": "EXIT_AT_SCHEDULED_BAR_OPEN; DO_NOT_INSPECT_ITS_LATER_HIGH_LOW",
+        "partial_take_profit_policy": {
+            "trigger_pct": str(take_profit_pct),
+            "fraction_of_remaining_position": str(take_profit_fraction),
+            "maximum_partial_take_profit_events_per_trade": 1,
+        },
         "scenario_results": scenario_results,
         "limitations": [
             "Uses current spread and current account fee tier as proxies for historical costs.",
             "Margin fee budgets are sensitivity assumptions and not dynamic Kraken rates.",
             "Uses 2x leverage and 10% position sizing rather than the live risk sizing calculation.",
+            "Stop and take-profit prices are inferred from hourly OHLC; precise intrabar paths and fill timestamps are unknown.",
+            "If stop and take-profit are both crossed in one hourly candle, the model assumes the stop happened first.",
             "Does not model historical order-book depth, queue position, actual fills, cancellations, latency or per-order margin eligibility.",
             "Results are research scenarios, not actual orders, fills, portfolio PnL or proof of profitability.",
         ],

@@ -386,6 +386,18 @@ def test_ohlcv_backtest_scenarios_run_chronologically_and_are_explicitly_non_liv
         "train": "60%", "validation": "20%", "test": "20%"
     }
     assert report["margin_cost_budgets_are_exchange_quotes"] is False
+    assert report["exit_model_version"] == "ohlcv-stop-first-partial-take-profit-time-exit-v2"
+    assert report["intrabar_ambiguity_policy"] == (
+        "STOP_FIRST_WHEN_STOP_AND_TAKE_PROFIT_TOUCH_SAME_HOURLY_BAR"
+    )
+    assert report["time_exit_policy"] == (
+        "EXIT_AT_SCHEDULED_BAR_OPEN; DO_NOT_INSPECT_ITS_LATER_HIGH_LOW"
+    )
+    assert report["partial_take_profit_policy"] == {
+        "trigger_pct": "3.5",
+        "fraction_of_remaining_position": "0.5",
+        "maximum_partial_take_profit_events_per_trade": 1,
+    }
     assert len(report["scenario_results"]) == 4
     assert [item["assumed_combined_margin_fee_budget_bps"] for item in report["scenario_results"]] == [
         "5", "10", "20", "40"
