@@ -216,6 +216,75 @@ def test_research_summary_uses_chronological_holdout_and_never_releases_live_gat
     assert summary["portfolio_pnl"] is False
 
 
+def test_non_overlapping_forward_diagnostic_excludes_same_pair_overlap_only():
+    rows = [
+        {
+            "observation_id": "btc-first",
+            "pair": "XXBTZUSD",
+            "decision_ts": 1000,
+            "target_epoch": 29800,
+            "horizon_seconds": 28800,
+            "strategy_version": "tsm-test",
+            "direction": "LONG",
+            "status": "SETTLED_COST_ESTIMATE",
+            "spot_net_return_bps": "100",
+            "margin_cost_break_even_bps": "100",
+        },
+        {
+            "observation_id": "btc-overlap",
+            "pair": "XXBTZUSD",
+            "decision_ts": 2000,
+            "target_epoch": 30800,
+            "horizon_seconds": 28800,
+            "strategy_version": "tsm-test",
+            "direction": "SHORT",
+            "status": "SETTLED_COST_ESTIMATE",
+            "spot_net_return_bps": "500",
+            "margin_cost_break_even_bps": "500",
+        },
+        {
+            "observation_id": "btc-after-horizon",
+            "pair": "XXBTZUSD",
+            "decision_ts": 29800,
+            "target_epoch": 58600,
+            "horizon_seconds": 28800,
+            "strategy_version": "tsm-test",
+            "direction": "SHORT",
+            "status": "SETTLED_COST_ESTIMATE",
+            "spot_net_return_bps": "-20",
+            "margin_cost_break_even_bps": "-20",
+        },
+        {
+            "observation_id": "eth-independent-stream",
+            "pair": "XETHZUSD",
+            "decision_ts": 2000,
+            "target_epoch": 30800,
+            "horizon_seconds": 28800,
+            "strategy_version": "tsm-test",
+            "direction": "LONG",
+            "status": "SETTLED_COST_ESTIMATE",
+            "spot_net_return_bps": "50",
+            "margin_cost_break_even_bps": "50",
+        },
+    ]
+
+    summary = summarize_shadow_research(rows, strategy_version="tsm-test")
+    diagnostic = summary["non_overlapping_costed_forward_diagnostics"]
+
+    assert diagnostic["candidate_costed_observations"] == 4
+    assert diagnostic["observation_count"] == 3
+    assert diagnostic["overlap_excluded_count"] == 1
+    assert diagnostic["invalid_timing_excluded_count"] == 0
+    assert diagnostic["spot_cost_proxy_all"]["sample_count"] == 3
+    assert diagnostic["spot_cost_proxy_by_direction"]["LONG"]["sample_count"] == 2
+    assert diagnostic["spot_cost_proxy_by_direction"]["SHORT"]["sample_count"] == 1
+    assert diagnostic["status"] == "AVAILABLE_DIAGNOSTIC_ONLY"
+    assert diagnostic["cross_pair_observations_independent"] is False
+    assert diagnostic["portfolio_pnl"] is False
+    assert diagnostic["release_gate_eligible"] is False
+    assert summary["release_gate_eligible"] is False
+
+
 def test_research_summary_never_combines_different_strategy_versions():
     rows = []
     for index in range(30):
