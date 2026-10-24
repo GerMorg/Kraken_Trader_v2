@@ -685,6 +685,12 @@ class TraderRuntime:
                     cycle_id=cycle_id,
                     **persisted_snapshot,
                 )
+                _resolve_clean_reconciliation_breaker(
+                    self.persistence, self.audit,
+                    name="ACCOUNT_SNAPSHOT", cycle_id=cycle_id,
+                    verified_by="CURRENT_ACCOUNT_SNAPSHOT",
+                    clean=persisted_snapshot.get("positions_shape_complete") is True,
+                )
                 previous_snapshot_time = _decimal(
                     previous_account_snapshot.get("captured_at")
                 ) if previous_account_snapshot is not None else None
@@ -893,8 +899,19 @@ class TraderRuntime:
                             trading_day=local_day,
                             external_flow_usd=flow_diagnostics["usd_delta"],
                             external_flow_valued=(
-                                flow_diagnostics["complete"]
-                                if previous_account_snapshot is not None else True
+                                True
+                                if previous_account_snapshot is None
+                                else (
+                                    previous_snapshot_time is not None
+                                    and flow_diagnostics["complete"]
+                                    and wallet_reconciliation is not None
+                                    and wallet_reconciliation.get("complete") is True
+                                    and wallet_reconciliation.get("mismatches", 0) == 0
+                                    and wallet_reconciliation.get("status") in {
+                                        "WALLET_BALANCES_MATCH_LEDGER_WINDOW",
+                                        "WALLET_BALANCES_STABLE_NO_LEDGER_ACTIVITY",
+                                    }
+                                )
                             ),
                         )
                     except (ArithmeticError, TypeError, ValueError, OverflowError) as exc:

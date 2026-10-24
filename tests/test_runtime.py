@@ -5,7 +5,13 @@ from decimal import Decimal
 from app.audit import AuditLogger
 from app.config import Settings
 from app.persistence import Persistence
-from app.runtime import (TraderRuntime, _circuit_breaker_diagnostics, _open_position_rows, _recover_transient_public_network_breaker)
+from app.runtime import (
+    TraderRuntime,
+    _circuit_breaker_diagnostics,
+    _open_position_rows,
+    _recover_transient_public_network_breaker,
+    _resolve_clean_reconciliation_breaker,
+)
 
 
 D = Decimal
@@ -723,5 +729,55 @@ def test_runtime_retries_failed_api_key_preflight_without_persistent_breaker(mon
     logs = audit.stream.getvalue()
     assert "API_KEY_PERMISSION_CHECK_FAILED" in logs
     assert "entries_blocked" in logs
+    audit.close()
+    db.close()
+
+
+def test_clean_account_snapshot_resolves_only_its_own_stale_reconciliation_breaker():
+    runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker(
+        "ACCOUNT_SNAPSHOT", "POSITION_SNAPSHOT_SHAPE_INVALID",
+        {"cycle_id": "old-cycle"},
+    )
+    db.trip_circuit_breaker(
+        "WALLET_BALANCE_RECONCILIATION", "WALLET_BALANCE_MISMATCH",
+        {"cycle_id": "other-old-cycle"},
+    )
+
+    recovered = _resolve_clean_reconciliation_breaker(
+        db, audit,
+        name="ACCOUNT_SNAPSHOT",
+        cycle_id="new-clean-cycle",
+        verified_by="CURRENT_ACCOUNT_SNAPSHOT",
+        clean=True,
+    )
+
+    assert recovered is True
+    assert [(row["name"], row["reason"]) for row in db.circuit_breakers()] == [
+        ("WALLET_BALANCE_RECONCILIATION", "WALLET_BALANCE_MISMATCH")
+    ]
+    audit.close()
+    db.close()
+
+
+def test_unclean_account_snapshot_does_not_resolve_stale_reconciliation_breaker():
+    runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker(
+        "ACCOUNT_SNAPSHOT", "POSITION_SNAPSHOT_SHAPE_INVALID",
+        {"cycle_id": "old-cycle"},
+    )
+
+    recovered = _resolve_clean_reconciliation_breaker(
+        db, audit,
+        name="ACCOUNT_SNAPSHOT",
+        cycle_id="still-bad-cycle",
+        verified_by="CURRENT_ACCOUNT_SNAPSHOT",
+        clean=False,
+    )
+
+    assert recovered is False
+    assert [(row["name"], row["reason"]) for row in db.circuit_breakers()] == [
+        ("ACCOUNT_SNAPSHOT", "POSITION_SNAPSHOT_SHAPE_INVALID")
+    ]
     audit.close()
     db.close()
