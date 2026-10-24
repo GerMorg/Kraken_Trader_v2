@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.44 — Kompakte HA-Logansicht ohne Verlust der vollständigen Auditspur
+
+- Trennt die sichtbare stdout-Ausgabe von der vollständigen, redigierten JSONL-Auditdatei. Das Ereignisschema und der an Runtime-Aufrufer zurückgegebene Datensatz bleiben unverändert.
+- Komprimiert wiederkehrende Markt-Signal-, NO_TRADE-, Historien-, API-Berechtigungs- und Trade/Ledger-Statusmeldungen in der Konsole; kritische Fehler, Sperren, Änderungen, Positions-/Orderereignisse und der Zyklusabschluss bleiben vollständig sichtbar.
+- Gibt Shadow-Research-, Wallet-Reconciliation- und OHLCV-Szenarioberichte vollständig aus, wenn ihr Inhalt erstmals erscheint oder sich ändert. Identische Folgeausgaben enthalten weiterhin den Validierungsstatus, die wesentlichen Kennzahlen, Kontrollflags und einen Bericht-Fingerabdruck.
+- Bewahrt exakte Zahlen, sämtliche Felder, Asset-Details, Einschränkungen und Wiederholungen in `/data/logs/events.jsonl`; nur die Console-Darstellung rundet einige Werte und markiert dies explizit.
+- Ergänzt Regressionstests für Geheimnisredaktion, vollständige Audit-Aufbewahrung, kompakte Signale/NO_TRADE-Meldungen, unveränderte und geänderte Berichte sowie das unverzügliche Sichtbarbleiben von Wallet-Abweichungen.
+- Keine Änderung an Runtime-Entscheidungen, Risiko-Gates, Strategieparametern, Datenbankformat oder Orderausführung. Interne Live-Freigabe bleibt unverändert.
+
 ## 0.1.43 — OHLCV-Exit-Timing korrigiert und Teilgewinn modelliert
 
 - Behebt Look-ahead im OHLCV-Simulator: Die High-/Low-Werte des geplanten Time-Exit-Balkens werden nicht mehr geprüft, weil der Exit bereits am Balken-Open stattfindet.
