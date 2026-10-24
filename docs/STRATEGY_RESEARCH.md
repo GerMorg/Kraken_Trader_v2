@@ -43,6 +43,16 @@ Die vorherige Version nutzte dieselben Momentum- und Mittelwertbedingungen, jedo
 
 Han, Kang & Ryu, *Momentum in the Cryptocurrency Market: A Comprehensive Analysis under Realistic Assumptions*, Review of Asset Pricing Studies, online veröffentlicht am 13. Oktober 2026, DOI 10.1093/rapstu/raag011. Die veröffentlichte Zusammenfassung berichtet starke Evidenz für Time-Series-Momentum, nahezu keine für Cross-Sectional-Momentum und zeigt, dass unter täglicher Mark-to-Market-Bewertung viele Cross-Sectional-Portfolios liquidiert werden; statistisch signifikante Mittelwertrenditen führten dort teilweise zu negativen Gewinnen. Die Autoren betonen fette Verteilungsschwänze und dass der Mittelwert für Profitabilitätstests nicht genügt. Quelle: https://academic.oup.com/raps/advance-article-abstract/doi/10.1093/rapstu/raag011/8914819
 
+### Ergänzende Intraday-Evidenz (Online geprüft am 24. Oktober 2026)
+
+Zwei zusätzliche Arbeiten sind für unsere H1-Regel besonders relevant, weil sie zeigen, weshalb ein einziger Momentum-Schwellenwert nicht als universell gültig angenommen werden darf:
+
+- *Intraday return predictability in the cryptocurrency markets: Momentum, reversal, or both* (2022): Die Studie untersucht hochfrequente Bitcoin-Daten von 2013 bis 2020 und berichtet sowohl Intraday-Momentum als auch Reversal. Die Ergebnisse hängen laut Abstract unter anderem von großen Kurssprüngen, Liquidität und bestimmten Markt-/Ereignisphasen ab; ähnliche Muster werden für ETH, LTC und XRP berichtet. Quelle: https://www.sciencedirect.com/science/article/pii/S1062940822000833
+- *On the Performance of Lagged Momentum and Reversal Strategies Across Daytime and Overnight Sessions in Bitcoin and Ethereum Cryptocurrencies* (2026): Diese Studie verwendet stündliche Kraken-Kurse von 2016 bis 2025 und vergleicht geordnete Momentum-/Reversal-Regeln über verschiedene 12-Stunden-Grenzen. Die berichteten bevorzugten Regeln unterscheiden sich zwischen BTC und ETH; die Autoren ergänzen Transaktionskostenbetrachtung, Mehrfachtestprüfung und einen chronologischen Holdout. Quelle: https://www.mdpi.com/1911-8074/19/9/692
+- Bailey und López de Prado beschreiben, warum das Durchprobieren vieler historischer Varianten eine scheinbar gute, tatsächlich aber überangepasste Regel auswählen kann. Das ist für unsere kleine, zeitlich überlappende Shadow-Stichprobe besonders relevant. Quelle: https://academic.oup.com/jrssig/article/18/6/22/7038278
+
+Diese Arbeiten belegen **nicht**, dass eine H1-Reversal- oder Session-Strategie für unser Konto profitabel wäre. Sie rechtfertigen nur neue, vorab definierte Forschungsfragen: Long und Short getrennt auswerten; eine kleine Zahl von Session-/Regime-Baselines gegen die aktuelle Regel vergleichen; alle Varianten dokumentieren; und abschließende chronologische Testdaten nicht zur Optimierung verwenden. Bis diese Analysen und realistische Netto-Kostenrechnungen bestanden sind, wird die H1-Strategie nicht geändert und nicht freigegeben.
+
 Konsequenzen für diese Implementierung:
 
 - Die vorhandene 24-/72-Stunden-Regel bleibt eine zu prüfende Time-Series-Momentum-Hypothese; sie wird nicht als Renditeprognose mit bekannter Trefferwahrscheinlichkeit interpretiert.
