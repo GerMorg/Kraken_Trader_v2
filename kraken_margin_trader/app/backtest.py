@@ -250,6 +250,7 @@ def simulate_trend_trades(
 
         if remaining_quantity > 0:
             exit_legs.append((remaining_quantity, ordered[time_exit_index].open, time_exit_index))
+            remaining_quantity = D(0)
             exit_index = time_exit_index
             exit_reason = (
                 "TIME_EXIT_AFTER_PARTIAL_TAKE_PROFIT"
