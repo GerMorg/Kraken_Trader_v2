@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
 from math import sqrt
@@ -58,6 +59,9 @@ class SimTrade:
     slippage_impact_usd: Decimal = D(0)
     margin_cost_usd: Decimal = D(0)
     all_in_cost_pct: Decimal | None = None
+    partial_exit_quantity: Decimal = D(0)
+    partial_exit_price: Decimal | None = None
+    take_profit_triggered: bool = False
 
 def chronological_split(values: Sequence[Bar], train_fraction: float=0.6,
                         validation_fraction: float=0.2) -> tuple[list[Bar],list[Bar],list[Bar]]:
@@ -71,24 +75,45 @@ def chronological_split(values: Sequence[Bar], train_fraction: float=0.6,
         raise ValueError("INSUFFICIENT_BARS_FOR_CHRONOLOGICAL_SPLIT")
     return ordered[:a],ordered[a:b],ordered[b:]
 
-def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
-                           equity_usd: Decimal=D("10000"), position_pct: Decimal=D("10"),
-                           fast_threshold_bps: Decimal=D("120"), slow_threshold_bps: Decimal=D("180"),
-                           max_holding_bars: int=8, stop_pct: Decimal=D("3")) -> list[SimTrade]:
+def simulate_trend_trades(
+    bars: Sequence[Bar],
+    costs: BacktestCosts,
+    *,
+    equity_usd: Decimal = D("10000"),
+    position_pct: Decimal = D("10"),
+    fast_threshold_bps: Decimal = D("120"),
+    slow_threshold_bps: Decimal = D("180"),
+    max_holding_bars: int = 8,
+    stop_pct: Decimal = D("3"),
+    take_profit_pct: Decimal = D("3.5"),
+    take_profit_fraction: Decimal = D("0.5"),
+) -> list[SimTrade]:
+    """Simulate OHLCV entries/exits without using prices after a scheduled time exit.
+
+    If a candle's high and low both cross stop and take-profit levels, intrabar
+    order is unknowable from OHLCV; the full remaining position is stopped first.
+    Take profit is simulated once as a partial reduction; the remainder is managed
+    until a stop or the scheduled time exit. This is a research scenario, not live
+    execution or a claim of exchange-native protection.
+    """
     if costs.leverage < 1 or costs.leverage > 3:
         raise ValueError("LEVERAGE_OUTSIDE_HARD_CAP")
     policy_values = (
         equity_usd, position_pct, fast_threshold_bps, slow_threshold_bps, stop_pct,
-        costs.taker_fee_bps_per_side, costs.spread_bps_round_trip,
-        costs.slippage_bps_per_side, costs.margin_open_bps_on_extended_amount,
-        costs.margin_rollover_bps_on_extended_amount, costs.max_volume_participation,
-        costs.minimum_order_usd,
+        take_profit_pct, take_profit_fraction, costs.taker_fee_bps_per_side,
+        costs.spread_bps_round_trip, costs.slippage_bps_per_side,
+        costs.margin_open_bps_on_extended_amount, costs.margin_rollover_bps_on_extended_amount,
+        costs.max_volume_participation, costs.minimum_order_usd,
     )
     if any(not value.is_finite() for value in policy_values):
         raise ValueError("NON_FINITE_SIMULATOR_INPUT")
     if equity_usd <= 0 or position_pct <= 0 or position_pct > D("20"):
         raise ValueError("INVALID_SIMULATOR_EQUITY_OR_POSITION_PCT")
-    if max_holding_bars < 1 or stop_pct <= 0:
+    if (
+        max_holding_bars < 1 or stop_pct <= 0 or stop_pct >= D("100")
+        or take_profit_pct <= 0 or take_profit_pct >= D("100")
+        or not D(0) < take_profit_fraction < D(1)
+    ):
         raise ValueError("INVALID_SIMULATOR_EXIT_POLICY")
     if (
         costs.minimum_order_usd <= 0
@@ -102,8 +127,12 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
         costs.margin_rollover_bps_on_extended_amount,
     ) < 0:
         raise ValueError("NEGATIVE_SIMULATOR_COST")
+
     ordered = list(bars)
-    if any(ordered[i].timestamp >= ordered[i+1].timestamp for i in range(len(ordered)-1)):
+    if any(
+        ordered[index].timestamp >= ordered[index + 1].timestamp
+        for index in range(len(ordered) - 1)
+    ):
         raise ValueError("BARS_MUST_BE_STRICTLY_CHRONOLOGICAL")
     for bar in ordered:
         prices = (bar.open, bar.high, bar.low, bar.close, bar.base_volume)
@@ -116,93 +145,210 @@ def simulate_trend_trades(bars: Sequence[Bar], costs: BacktestCosts, *,
             or bar.low > min(bar.open, bar.close, bar.high)
         ):
             raise ValueError("INVALID_OHLCV_BAR")
-    trades = []
+
+    trades: list[SimTrade] = []
     index = 72
     current_equity = equity_usd
-    # Keep the complete planned holding horizon available in the dataset.
-    # Otherwise an end-of-file cutoff would create a fictitious early time exit.
-    while index + 1 + max(1, max_holding_bars) < len(ordered) and current_equity > 0:
-        signal=generate_trend_signal("SIM",[x.close for x in ordered[:index+1]],
-                                     fast_threshold_bps=fast_threshold_bps,slow_threshold_bps=slow_threshold_bps)
+    # Require the full planned horizon. The scheduled exit is at the open of
+    # the bar after the last held candle, not after examining that bar's high/low.
+    while index + 1 + max_holding_bars < len(ordered) and current_equity > 0:
+        signal = generate_trend_signal(
+            "SIM",
+            [item.close for item in ordered[: index + 1]],
+            fast_threshold_bps=fast_threshold_bps,
+            slow_threshold_bps=slow_threshold_bps,
+        )
         if not signal.has_direction:
-            index+=1; continue
-        entry_bar=ordered[index+1]
-        if entry_bar.open<=0 or entry_bar.base_volume<=0:
-            index+=1; continue
+            index += 1
+            continue
+
+        entry_index = index + 1
+        time_exit_index = entry_index + max_holding_bars
+        entry_bar = ordered[entry_index]
+        if entry_bar.open <= 0 or entry_bar.base_volume <= 0:
+            index += 1
+            continue
+
         equity_before_trade = current_equity
         desired = equity_before_trade * position_pct / D(100)
-        # Bar volume is only a proxy for reachable depth; this model is explicitly not an order-book simulator.
-        notional=min(desired,entry_bar.open*entry_bar.base_volume*costs.max_volume_participation)
-        if notional<costs.minimum_order_usd:
-            index+=1; continue
-        quantity=notional/entry_bar.open
-        sign=D(1) if signal.direction=="LONG" else D(-1)
+        # Bar volume is only a proxy for reachable depth; this is not an order-book simulator.
+        notional = min(
+            desired,
+            entry_bar.open * entry_bar.base_volume * costs.max_volume_participation,
+        )
+        if notional < costs.minimum_order_usd:
+            index += 1
+            continue
+
+        quantity = notional / entry_bar.open
+        remaining_quantity = quantity
+        sign = D(1) if signal.direction == "LONG" else D(-1)
         entry_reference_price = entry_bar.open
-        entry=entry_reference_price+sign*entry_reference_price*costs.slippage_bps_per_side/D(10000)
-        end=min(len(ordered)-1,index+1+max(1,max_holding_bars))
-        exit_price=ordered[end].open; exit_reason="TIME_EXIT"; exit_index=end
-        for probe_index,probe in enumerate(ordered[index+1:end+1],start=index+1):
-            adverse=((probe.low / entry - D(1)) * D(100) if signal.direction == "LONG"
-                     else (entry - probe.high) / entry * D(100))
-            if adverse<=-stop_pct:
-                trigger=entry*(D(1)-stop_pct/D(100) if signal.direction=="LONG" else D(1)+stop_pct/D(100))
-                exit_price=min(trigger,probe.open) if signal.direction=="LONG" else max(trigger,probe.open)
-                exit_index=probe_index; exit_reason="STOP_GAP_CONSERVATIVE"; break
-        exit_bar=ordered[exit_index]
-        exit_reference_price = exit_price
-        exit_price-=sign*exit_reference_price*costs.slippage_bps_per_side/D(10000)
+        entry = entry_reference_price + (
+            sign * entry_reference_price * costs.slippage_bps_per_side / D(10000)
+        )
+        stop_price = entry * (
+            D(1) - stop_pct / D(100)
+            if signal.direction == "LONG"
+            else D(1) + stop_pct / D(100)
+        )
+        take_profit_price = entry * (
+            D(1) + take_profit_pct / D(100)
+            if signal.direction == "LONG"
+            else D(1) - take_profit_pct / D(100)
+        )
+
+        # Each leg stores remaining quantity, reference trigger/open price and
+        # the bar index at which the leg is considered executed.
+        exit_legs: list[tuple[Decimal, Decimal, int]] = []
+        partial_exit_quantity = D(0)
+        partial_exit_price: Decimal | None = None
+        take_profit_triggered = False
+        exit_index = time_exit_index
+        exit_reason = "TIME_EXIT"
+
+        # Exclude time_exit_index: the position is already scheduled to close at
+        # that candle's open, so its subsequent high/low is future information.
+        for probe_index in range(entry_index, time_exit_index):
+            probe = ordered[probe_index]
+            if signal.direction == "LONG":
+                stop_hit = probe.low <= stop_price
+                take_profit_hit = probe.high >= take_profit_price
+            else:
+                stop_hit = probe.high >= stop_price
+                take_profit_hit = probe.low <= take_profit_price
+
+            if stop_hit:
+                # Stop wins ambiguous same-candle stop/target cases. If the candle
+                # opened through the stop, use the worse opening price (gap proxy).
+                stop_fill_reference = (
+                    min(stop_price, probe.open)
+                    if signal.direction == "LONG"
+                    else max(stop_price, probe.open)
+                )
+                exit_legs.append((remaining_quantity, stop_fill_reference, probe_index))
+                exit_index = probe_index
+                if take_profit_hit and not take_profit_triggered:
+                    exit_reason = "STOP_TP_SAME_BAR_STOP_FIRST"
+                elif take_profit_triggered:
+                    exit_reason = "STOP_AFTER_PARTIAL_TAKE_PROFIT"
+                else:
+                    exit_reason = "STOP_GAP_CONSERVATIVE"
+                remaining_quantity = D(0)
+                break
+
+            if take_profit_hit and not take_profit_triggered:
+                # The OHLCV series cannot prove the precise fill. Use the target
+                # trigger price rather than assuming a favorable gap improvement.
+                partial_exit_quantity = remaining_quantity * take_profit_fraction
+                if partial_exit_quantity <= 0 or partial_exit_quantity >= remaining_quantity:
+                    raise ValueError("PARTIAL_TAKE_PROFIT_QUANTITY_INVALID")
+                exit_legs.append((partial_exit_quantity, take_profit_price, probe_index))
+                remaining_quantity -= partial_exit_quantity
+                partial_exit_price = take_profit_price
+                take_profit_triggered = True
+
+        if remaining_quantity > 0:
+            exit_legs.append((remaining_quantity, ordered[time_exit_index].open, time_exit_index))
+            exit_index = time_exit_index
+            exit_reason = (
+                "TIME_EXIT_AFTER_PARTIAL_TAKE_PROFIT"
+                if take_profit_triggered
+                else "TIME_EXIT"
+            )
+
+        exit_bar = ordered[exit_index]
         simulated_holding_seconds = max(0, exit_bar.timestamp - entry_bar.timestamp)
         rollovers = simulated_holding_seconds // (4 * 60 * 60)
         margin_cost_bps = D(0)
         if costs.leverage > 1:
-            # Conservative backtest projection uses full extended notional until
-            # a historical position-specific Kraken credit amount is available.
+            # Until position-specific loan amount evidence is available, charge
+            # the conservative full entry notional for opening and rollover costs.
             margin_cost_bps = (
                 costs.margin_open_bps_on_extended_amount
                 + D(rollovers) * costs.margin_rollover_bps_on_extended_amount
             )
-        # Slippage is already embedded in the simulated executable entry/exit prices
-        # above. Charge it there exactly once; the separate cost ledger adds fees,
-        # quoted round-trip spread and margin financing only.
-        total_cost = (
-            D(2) * costs.taker_fee_bps_per_side
-            + costs.spread_bps_round_trip
-            + margin_cost_bps
-        ) / D(100)
-        gross_pnl = quantity * (exit_price - entry) * sign
+
+        weighted_exit_price = D(0)
+        gross_pnl = D(0)
+        exit_fee_notional = D(0)
+        exit_spread_notional = D(0)
+        exit_slippage_usd = D(0)
+        for leg_quantity, exit_reference_price, _ in exit_legs:
+            executed_exit_price = exit_reference_price - (
+                sign * exit_reference_price * costs.slippage_bps_per_side / D(10000)
+            )
+            weighted_exit_price += leg_quantity * executed_exit_price
+            gross_pnl += leg_quantity * (executed_exit_price - entry) * sign
+            exit_fee_notional += leg_quantity * executed_exit_price
+            exit_spread_notional += leg_quantity * exit_reference_price
+            exit_slippage_usd += abs(executed_exit_price - exit_reference_price) * leg_quantity
+
+        if remaining_quantity != 0 or not exit_legs or sum(
+            (leg[0] for leg in exit_legs), D(0)
+        ) != quantity:
+            raise ValueError("SIMULATED_EXIT_QUANTITY_NOT_RECONCILED")
+
+        exit_price = weighted_exit_price / quantity
         gross = gross_pnl / notional * D(100)
-        total_cost_usd = notional * total_cost / D(100)
-        trading_fees_usd = notional * D(2) * costs.taker_fee_bps_per_side / D(10000)
-        spread_cost_usd = notional * costs.spread_bps_round_trip / D(10000)
+        entry_fee_notional = entry * quantity
+        trading_fees_usd = (
+            entry_fee_notional + exit_fee_notional
+        ) * costs.taker_fee_bps_per_side / D(10000)
+        # Split the configured round-trip spread proxy across the entry and each
+        # partial/final exit according to their executed notionals.
+        spread_cost_usd = (
+            entry_reference_price * quantity + exit_spread_notional
+        ) * costs.spread_bps_round_trip / D(2) / D(10000)
         margin_cost_usd = notional * margin_cost_bps / D(10000)
         entry_slippage_usd = abs(entry - entry_reference_price) * quantity
-        exit_slippage_usd = abs(exit_price - exit_reference_price) * quantity
         slippage_impact_usd = entry_slippage_usd + exit_slippage_usd
-        gross_mid_market_pnl_usd = gross_pnl + slippage_impact_usd
-        all_in_costs_usd = trading_fees_usd + spread_cost_usd + slippage_impact_usd + margin_cost_usd
-        all_in_cost_pct = all_in_costs_usd / notional * D(100)
+        total_cost_usd = trading_fees_usd + spread_cost_usd + margin_cost_usd
+        total_cost_pct = total_cost_usd / notional * D(100)
         net_pnl = gross_pnl - total_cost_usd
         net = net_pnl / notional * D(100)
         equity_return = net_pnl / equity_before_trade * D(100)
+        all_in_costs_usd = (
+            trading_fees_usd + spread_cost_usd + slippage_impact_usd + margin_cost_usd
+        )
+        all_in_cost_pct = all_in_costs_usd / notional * D(100)
+        gross_mid_market_pnl_usd = gross_pnl + slippage_impact_usd
+
         trades.append(SimTrade(
-            signal.direction, entry_bar.timestamp, exit_bar.timestamp, entry, exit_price,
-            quantity, gross, total_cost, net, exit_reason, notional, gross_pnl,
-            total_cost_usd, net_pnl, equity_return,
+            direction=signal.direction,
+            entry_time=entry_bar.timestamp,
+            exit_time=exit_bar.timestamp,
+            entry=entry,
+            exit=exit_price,
+            quantity=quantity,
+            gross_return_pct=gross,
+            total_cost_pct=total_cost_pct,
+            net_return_pct=net,
+            exit_reason=exit_reason,
+            notional_usd=notional,
+            gross_pnl_usd=gross_pnl,
+            total_cost_usd=total_cost_usd,
+            net_pnl_usd=net_pnl,
+            equity_return_pct=equity_return,
             gross_mid_market_pnl_usd=gross_mid_market_pnl_usd,
             trading_fees_usd=trading_fees_usd,
             spread_cost_usd=spread_cost_usd,
             slippage_impact_usd=slippage_impact_usd,
             margin_cost_usd=margin_cost_usd,
             all_in_cost_pct=all_in_cost_pct,
+            partial_exit_quantity=partial_exit_quantity,
+            partial_exit_price=partial_exit_price,
+            take_profit_triggered=take_profit_triggered,
         ))
         current_equity += net_pnl
         index = max(index + 1, exit_index)
     return trades
 
-def summary_metrics(trades: Sequence[SimTrade]) -> dict[str,Decimal|int|str]:
+def summary_metrics(trades: Sequence[SimTrade]) -> dict[str, Decimal | int | str | dict[str, int]]:
     if not trades:
         return {"trade_count":0,"net_expectancy_pct":D(0),"profit_factor":D(0),"max_drawdown_pct":D(0),
-                "sharpe_trade_proxy":D(0),"long_count":0,"short_count":0,"status":"NO_TRADES"}
+                "sharpe_trade_proxy":D(0),"long_count":0,"short_count":0,
+                "partial_take_profit_count":0,"exit_reason_counts":{},"status":"NO_TRADES"}
     # Equity returns are based on actual simulated USD PnL divided by seed equity,
     # not raw position return; this prevents a 10%-equity position being treated as
     # though it represented 100% of the portfolio.
@@ -303,6 +449,8 @@ def summary_metrics(trades: Sequence[SimTrade]) -> dict[str,Decimal|int|str]:
         "sharpe_trade_proxy": D(str(sharpe)),
         "long_count": sum(t.direction == "LONG" for t in trades),
         "short_count": sum(t.direction == "SHORT" for t in trades),
+        "partial_take_profit_count": sum(t.take_profit_triggered for t in trades),
+        "exit_reason_counts": dict(Counter(t.exit_reason for t in trades)),
         "status": "SCENARIO_ONLY_NOT_LIVE_VALIDATION",
     }
 
