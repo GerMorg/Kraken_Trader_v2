@@ -437,6 +437,62 @@ def _feature_metrics(
     }
 
 
+def _non_overlapping_costed_rows(
+    rows: Sequence[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Greedily remove same-pair forward labels whose intended holding windows overlap.
+
+    This is a diagnostic subsample, not a portfolio simulation. Observations across
+    different pairs may still be correlated.
+    """
+    candidates: list[tuple[str, int, str, int, dict[str, Any]]] = []
+    invalid_timing = 0
+    for row in rows:
+        try:
+            pair = str(row.get("pair", "")).strip()
+            decision_ts = int(row.get("decision_ts", 0))
+            target_epoch_value = row.get("target_epoch")
+            if target_epoch_value is None:
+                horizon_seconds = int(row.get("horizon_seconds", 0))
+                target_epoch = decision_ts + horizon_seconds
+            else:
+                target_epoch = int(target_epoch_value)
+        except (ArithmeticError, TypeError, ValueError):
+            invalid_timing += 1
+            continue
+        if not pair or decision_ts <= 0 or target_epoch <= decision_ts:
+            invalid_timing += 1
+            continue
+        candidates.append(
+            (
+                pair,
+                decision_ts,
+                str(row.get("observation_id", "")),
+                target_epoch,
+                row,
+            )
+        )
+
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+    selected: list[dict[str, Any]] = []
+    next_eligible_by_pair: dict[str, int] = {}
+    overlap_excluded = 0
+    for pair, decision_ts, _observation_id, target_epoch, row in candidates:
+        if decision_ts < next_eligible_by_pair.get(pair, 0):
+            overlap_excluded += 1
+            continue
+        selected.append(row)
+        next_eligible_by_pair[pair] = target_epoch
+
+    selected.sort(
+        key=lambda row: (
+            int(row.get("decision_ts", 0)),
+            str(row.get("observation_id", "")),
+        )
+    )
+    return selected, overlap_excluded, invalid_timing
+
+
 def summarize_shadow_research(
     observations: Sequence[dict[str, Any]],
     *,
@@ -478,6 +534,9 @@ def summarize_shadow_research(
         and D(str(row["margin_cost_break_even_bps"])).is_finite()
     ]
     n = len(costed)
+    non_overlapping_costed, non_overlapping_overlap_excluded, non_overlapping_invalid_timing = (
+        _non_overlapping_costed_rows(costed)
+    )
     gross_settled = [
         row for row in settled
         if row.get("gross_return_bps") is not None
@@ -534,6 +593,31 @@ def summarize_shadow_research(
     train = [row for row in costed if int(row.get("decision_ts", 0)) in train_times]
     validation = [row for row in costed if int(row.get("decision_ts", 0)) in validation_times]
     test = [row for row in costed if int(row.get("decision_ts", 0)) in test_times]
+
+    non_overlapping_times = sorted({
+        int(row.get("decision_ts", 0)) for row in non_overlapping_costed
+    })
+    non_overlapping_train_end = int(len(non_overlapping_times) * 0.60)
+    non_overlapping_validation_end = int(len(non_overlapping_times) * 0.80)
+    non_overlapping_train_times = set(non_overlapping_times[:non_overlapping_train_end])
+    non_overlapping_validation_times = set(
+        non_overlapping_times[non_overlapping_train_end:non_overlapping_validation_end]
+    )
+    non_overlapping_test_times = set(
+        non_overlapping_times[non_overlapping_validation_end:]
+    )
+    non_overlapping_train = [
+        row for row in non_overlapping_costed
+        if int(row.get("decision_ts", 0)) in non_overlapping_train_times
+    ]
+    non_overlapping_validation = [
+        row for row in non_overlapping_costed
+        if int(row.get("decision_ts", 0)) in non_overlapping_validation_times
+    ]
+    non_overlapping_test = [
+        row for row in non_overlapping_costed
+        if int(row.get("decision_ts", 0)) in non_overlapping_test_times
+    ]
     holdout_ready = (
         n >= MINIMUM_COSTED_FORWARD_OBSERVATIONS
         and len(test) >= MINIMUM_HOLDOUT_OBSERVATIONS_FOR_REVIEW
@@ -666,6 +750,33 @@ def summarize_shadow_research(
             "fee_budget_sensitivity": margin_fee_sensitivity,
             "status": "BREAK_EVEN_ONLY_MARGIN_OPEN_AND_ROLLOVER_FEES_UNKNOWN",
         },
+        "non_overlapping_costed_forward_diagnostics": {
+            "method": "GREEDY_PER_PAIR_TARGET_EPOCH",
+            "candidate_costed_observations": n,
+            "observation_count": len(non_overlapping_costed),
+            "overlap_excluded_count": non_overlapping_overlap_excluded,
+            "invalid_timing_excluded_count": non_overlapping_invalid_timing,
+            "spot_cost_proxy_all": _metrics(non_overlapping_costed),
+            "spot_cost_proxy_by_direction": {
+                direction: _metrics(
+                    [row for row in non_overlapping_costed if row.get("direction") == direction]
+                )
+                for direction in ("LONG", "SHORT")
+            },
+            "chronological_splits": {
+                "train_first_60_percent": _metrics(non_overlapping_train),
+                "validation_next_20_percent": _metrics(non_overlapping_validation),
+                "test_last_20_percent": _metrics(non_overlapping_test),
+            },
+            "status": (
+                "AVAILABLE_DIAGNOSTIC_ONLY"
+                if non_overlapping_costed
+                else "INSUFFICIENT_NON_OVERLAPPING_SAMPLE"
+            ),
+            "cross_pair_observations_independent": False,
+            "portfolio_pnl": False,
+            "release_gate_eligible": False,
+        },
         "holdout_sample_available_for_review": holdout_ready,
         "validation_status": (
             "HOLDOUT_AVAILABLE_REVIEW_REQUIRED"
@@ -677,6 +788,7 @@ def summarize_shadow_research(
         "overlapping_signal_horizons": True,
         "limitations": [
             "Forward signal labels overlap across time and are not independent trades.",
+            "The non-overlapping diagnostic greedily removes same-pair labels with overlapping intended horizons; different pairs can still be correlated, and it is not portfolio PnL.",
             "These labels do not simulate the runtime stop-loss, take-profit, partial-reduction, or exit-order state machine.",
             "Primary forward outcome uses the close of the stored hourly bar covering the target epoch; target-close overshoot is reported separately.",
             "A separate target-open gross series uses the open of the hourly bar strictly covering the target epoch. It is at or before target and avoids measuring an extra candle close beyond target; it is not an exact-horizon price.",
