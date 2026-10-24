@@ -214,14 +214,15 @@ def _unchanged_report_payload(event: str, payload: dict[str, Any], signature: st
             "release_gate_eligible", "overlapping_signal_horizons", "portfolio_pnl",
         )
         summary = {key: payload[key] for key in fields if key in payload}
-        for group, metric_keys in (
+        report_groups: tuple[tuple[str, tuple[str, ...]], ...] = (
             ("spot_cost_proxy_all", ("mean_net_return_bps", "median_net_return_bps",
                                      "profit_factor", "win_rate_pct", "worst_net_return_bps",
                                      "sample_count")),
             ("margin_cost_diagnostics", ("status", "actual_margin_fee_evidence_available",
                                          "margin_net_return_calculated")),
             ("forward_timing_diagnostics", ("status", "sample_count", "invalid_timestamp_count")),
-        ):
+        )
+        for group, metric_keys in report_groups:
             value = payload.get(group)
             if isinstance(value, dict):
                 summary[group] = {key: value[key] for key in metric_keys if key in value}
