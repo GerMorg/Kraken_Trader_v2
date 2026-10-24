@@ -1,5 +1,12 @@
 # Strategie- und Research-Hypothese
 
+## Validierungshinweis ab App-Version 0.1.43
+
+Der OHLCV-Szenario-Backtest prüft Stops ausschließlich in Kerzen, die vor dem geplanten Time-Exit-Balken liegen. Der Time-Exit findet am Open des geplanten Exit-Balkens statt; dessen späteres High/Low wird nicht ausgewertet. Ein Take-Profit reduziert einmalig den konfigurierten Anteil der verbleibenden Position (Standard 50 % bei +3,5 % Brutto-Kursbewegung), während die Restposition bis Stop oder Time-Exit verwaltet wird. Werden Stop und Take-Profit innerhalb derselben Stundenkerze berührt, nimmt der Simulator konservativ an, dass der Stop zuerst ausgelöst wurde. OHLC enthält keine genaue Intrabar-Reihenfolge; auch diese Regeln bleiben daher Annahmen und kein Fill-Nachweis.
+
+Diese Korrektur verhindert Look-ahead am geplanten Exit-Balken und macht die Simulation nicht vollständig realitätsgetreu: Es fehlen weiterhin echte historische Orderbuchdaten über den ganzen Zeitraum, Queue-Position, Latenz, Abbruch-/Ersetzungsrennen, Kraken-spezifische Ausführungsantworten und positionsbezogene echte Margin-Gebühren. Bereits bestehende Forward-Labels bleiben unverändert. Strategieparameter bleiben tsm-0.2.0; eine positive Strategievalidierung ist damit nicht erreicht.
+
+
 ## Validierungshinweis ab App-Version 0.1.42
 
 Die bestehende Forward-Auswertung am Schluss der Stundenkerze bleibt unverändert. Zusätzlich speichert Version 0.1.42 den Open-Kurs jener gespeicherten Stundenkerze, deren Intervall den geplanten Zielzeitpunkt strikt enthält, und berechnet daraus einen separaten Brutto-Forward-Proxy für LONG und SHORT. Das reduziert die systematische Verzögerung durch das Warten auf den nächsten Stundenkerzenschluss, ist aber kein exakter Kurs am Zielzeitpunkt und kein garantiert ausführbarer Preis. Der neue Proxy wird separat chronologisch ausgewiesen und darf nicht als Nettorendite, Fill oder Portfolio-PnL interpretiert werden.
