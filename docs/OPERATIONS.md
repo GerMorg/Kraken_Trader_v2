@@ -1,3 +1,9 @@
+## Version 0.1.46 — Überlappungsbereinigte Forward-Diagnostik
+
+Die `SHADOW_RESEARCH_SUMMARY`-Ausgabe enthält zusätzlich `non_overlapping_costed_forward_diagnostics`. Die Diagnostik beginnt nur mit abgeschlossenen, kostenbewerteten Forward-Beobachtungen, gruppiert nach Handelspaar und Entscheidungszeit und übernimmt deterministisch die früheste Beobachtung, deren Entscheidungszeit nicht vor dem Zielzeitpunkt der zuletzt übernommenen Beobachtung liegt. Überlappende Beobachtungen desselben Paars werden gezählt und ausgelassen; Zeitangaben ohne plausiblen Zielhorizont werden separat gezählt.
+
+Der Bericht enthält die resultierende Stichprobengröße, Ausschlusszahlen, Netto-Kosten-Proxys insgesamt und getrennt nach LONG/SHORT sowie chronologische 60/20/20-Teilgruppen. Diese Kennzahlen ergänzen die bestehende, weiterhin überlappende Hauptreihe; sie überschreiben keine gespeicherten Ergebnisse. Zeitlich entkoppelte Labels verschiedener Paare können weiterhin korreliert sein. Die Kennzahl ist daher weder ein Satz unabhängiger Trades noch Portfolio-PnL, keine belastbare Margin-Netto-Rendite und kein Live-Freigabegate. `release_gate_eligible` bleibt `false`.
+
 ## Version 0.1.44 — Kompakte Konsole und vollständiges Audit
 
 Home Assistant `stdout` enthält weiterhin eine JSON-Zeile pro sichtbarem Ereignis. Wiederkehrende Markt-Signale und `NO_TRADE`-Entscheidungen zeigen die entscheidenden Felder, wobei die Console-Rundung explizit markiert ist. Historien- und Berechtigungsstatus werden auf den operativen Status reduziert, solange keine Lücken, Fehler oder fehlenden Rechte vorliegen. Fehler, unvollständige Daten, Sperren, Positions-/Orderereignisse, Abweichungen und Zyklusabschlüsse bleiben vollständig sichtbar.

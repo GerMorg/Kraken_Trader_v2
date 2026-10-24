@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.46 — Überlappungsbereinigte Forward-Diagnostik
+
+- Ergänzt eine separate Greedy-Stichprobe kostenbewerteter Forward-Ergebnisse, die überlappende beabsichtigte Haltehorizonte desselben Handelspaars ausschließt.
+- Meldet Kandidatenzahl, ausgeschlossene Überlappungen, ungültige Zeitangaben, Spot-Netto-Proxys insgesamt und je Richtung sowie chronologische 60/20/20-Teilgruppen.
+- Belässt die ursprünglichen Forward-Kennzahlen unverändert; das neue Ergebnis ist eine zusätzliche Sensitivitätsdiagnostik, keine unabhängige Portfolio-Simulation. Verschiedene Paare können weiterhin korreliert sein.
+- Das Diagnostikfeld setzt weder eine Live-Freigabe noch einen Edge-Kalibrierungsstatus. Die bestehende interne Live-Order-Sperre bleibt unverändert.
+
+
 ## 0.1.45 — Laufende Reconciliation und persistente Equity-Risikobaselines
 
 - Entfernt den versehentlich dauerhaften Entry-Blocker reconciliation_ok=False: der Risikoprüfer verwendet jetzt eine explizite, auditierbare Reconciliation-Entscheidung aus aktueller Kontostruktur, vollständig synchronisierter Historie, Wallet-Delta-Abgleich, Orderzustand, Positions-/Fill-Abgleich und aktiven Reconciliation-Breakern.

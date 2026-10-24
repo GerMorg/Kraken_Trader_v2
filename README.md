@@ -2,9 +2,11 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.45
+## Aktueller Status — 0.1.46
 
 **Version 0.1.45 ersetzt den dauerhaft gesetzten Reconciliation-Blocker durch einen dokumentierten, datengetriebenen Entry-Abgleich.** Eine vollständige Wallet-Delta-Prüfung ohne neue Ledger-Buchungen gilt bei unveränderten Kontoständen als gültig; aktuelle Kontostruktur, Historienstatus, Order-/Fill-Zustand und Reconciliation-Breaker werden separat bewertet. Tages-PnL und Drawdown werden aus einer persistenten Kraken-Equity-Baseline berechnet, die Container-Neustarts übersteht und bekannte USD-/USDC-Kapitalbewegungen berücksichtigt. Bei nicht USD-bewertbaren externen Transfers wird ein transparenter neuer Messzeitraum protokolliert, statt Kapitalbewegung als Trading-PnL zu behandeln. Ein sauberer Folgeabgleich kann nur die dazugehörigen Reconciliation-Breaker auflösen.
+
+**Version 0.1.46 ergänzt eine separate, reproduzierbare Forward-Diagnostik ohne überlappende Bewertungshorizonte pro Handelspaar.** Sie entfernt nach einer klar dokumentierten Greedy-Regel doppelt überlappende, bereits kostenbewertete Beobachtungen und meldet Anzahl, Long-/Short-Ergebnisse sowie chronologische Teilmengen. Die bestehende, überlappende Zeitreihe bleibt erhalten. Unterschiedliche Handelspaare können weiterhin korreliert sein; auch diese Diagnostik ist weder Portfolio-PnL noch ein Handels- oder Live-Freigabenachweis.
 
 **Der Entry-Status ist ausdrücklich keine vollständige historische Portfolio-Reconciliation.** Die Edge bleibt nicht kalibriert und Margin-Eröffnungs-/Rollover-Kosten sind nicht bestätigt; diese echten Evidenzlücken bleiben sichtbar. Die interne Live-Order-Freigabe bleibt code-seitig gesperrt.
 
