@@ -6,7 +6,7 @@ Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repos
 
 **Version 0.1.43 korrigiert einen zeitlichen Look-ahead-Fehler im OHLCV-Backtest: Der geplante Time-Exit erfolgt am Open des Zielbalkens; dessen späteres High/Low darf den bereits vorgesehenen Exit nicht rückwirkend ändern. Stop und Teilgewinnmitnahme werden jetzt auch im OHLCV-Szenario explizit modelliert. Bei Stop und Take-Profit innerhalb derselben Stundenkerze wird konservativ der Stop zuerst angenommen. Das ist weiterhin nur eine Simulation mit unvollständiger Intrabar-Information, keine Live-Exit-Implementierung und kein Profitabilitätsnachweis.**
 
-## Aktueller Status — 0.1.42
+### Vorherige Änderungen — Version 0.1.42
 
 **Version 0.1.42 ergänzt zur bisherigen Schlusskurs-Auswertung eine getrennte Brutto-Gegenmessung am Open der Stundenkerze, die den geplanten Zielzeitpunkt abdeckt. Bereits ausgewertete Beobachtungen werden anhand gespeicherter Kerzen nachträglich ergänzt, ohne die bisherige Brutto-/Netto-Serie zu überschreiben. Der neue Messwert ist ebenfalls weder tatsächlicher Fill noch Portfolio-PnL und enthält keine belastbare historische Netto-Kostenrechnung. Strategieparameter bleiben unverändert. Die interne Live-Sperre bleibt aktiv.**
 
