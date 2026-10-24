@@ -1,6 +1,14 @@
-# Betrieb auf Home Assistant OS
+## Version 0.1.44 — Kompakte Konsole und vollständiges Audit
+
+Home Assistant `stdout` enthält weiterhin eine JSON-Zeile pro sichtbarem Ereignis. Wiederkehrende Markt-Signale und `NO_TRADE`-Entscheidungen zeigen die entscheidenden Felder, wobei die Console-Rundung explizit markiert ist. Historien- und Berechtigungsstatus werden auf den operativen Status reduziert, solange keine Lücken, Fehler oder fehlenden Rechte vorliegen. Fehler, unvollständige Daten, Sperren, Positions-/Orderereignisse, Abweichungen und Zyklusabschlüsse bleiben vollständig sichtbar.
+
+`SHADOW_RESEARCH_SUMMARY`, `WALLET_BALANCE_RECONCILIATION_SUMMARY` und `OHLCV_BACKTEST_SCENARIO_REPORT` werden bei erstmaligem Auftreten oder Inhaltsänderung vollständig ausgegeben. Identische Wiederholungen erhalten eine kompakte Meldung mit den wichtigsten Kennzahlen und `report_fingerprint`. Ein Wallet-Mismatch oder relevante Evidence-Gaps werden nie unterdrückt. Fingerprints ignorieren nur zyklus-/beobachtungsbezogene IDs, nicht die Ergebnisdaten.
+
+**Die Datei `/data/logs/events.jsonl` bleibt die vollständige Auditquelle.** Jeder redigierte Event-Datensatz wird dort einschließlich genauer Zahlen, Detailfelder, Array-Einträge und wiederholter Ereignisse gespeichert. Das Console-Format ist eine reine Darstellungsschicht; Rückgabewerte von `AuditLogger.emit`, Strategie, Risiko- und Orderlogik sowie Datenbankverhalten ändern sich nicht. Zahlen in der Console sind ausdrücklich gerundete Anzeigeformate; für exakte Werte ist der Auditdatensatz maßgeblich.
 
 ## Version 0.1.43 — Zeitlich korrekter OHLCV-Exit und Teilgewinn-Szenario
+
+CV-Exit und Teilgewinn-Szenario
 
 Die OHLCV_BACKTEST_SCENARIO_REPORT-Ausgaben verwenden jetzt den Exit-Zeitpunkt konsequent: Wird eine Haltedauer von acht Stunden ausgewertet, schließt die Simulation am Open des geplanten Exit-Balkens. Dessen spätere High-/Low-Werte können keinen früheren Stop mehr auslösen. Stop und Teilgewinnmitnahme werden in vorhergehenden Balken ausgewertet; wenn Stop und Ziel in derselben Stundenkerze liegen, gilt Stop-zuerst als konservative Annahme. Ein Take-Profit wird einmalig auf den konfigurierten Anteil angewandt; die Restposition bleibt bis Stop oder Time-Exit offen. Reports nennen exit_model_version, intrabar_ambiguity_policy, time_exit_policy, partial_take_profit_policy und Exit-Gründe. Diese Kennzahlen sind Forschungsszenarien, keine realen Fills und keine Freigabe echter Orders.
 
