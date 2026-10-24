@@ -490,8 +490,9 @@ def replay_trend_strategy_on_order_books(
 
     Bars generate decisions and choose stop/time exit events; a book snapshot
     is selected only if it was captured at or before the event time. Stop
-    events discovered from OHLC bars execute at the next bar's opening snapshot
-    to avoid using a snapshot captured before the stop was observable.
+    events discovered before the scheduled time-exit bar execute at the next
+    bar's opening snapshot. The terminal time-exit bar's later OHLC range is
+    not examined, avoiding a look-ahead stop at/after the already scheduled exit.
 
     The replay halts on an unresolved exit or unknown margin financing so
     remaining risk is not silently treated as a closed, fully costed trade.
@@ -621,8 +622,10 @@ def replay_trend_strategy_on_order_books(
         exit_reason = "TIME_EXIT"
         entry_reference = (entry_book.bids[0].price + entry_book.asks[0].price) / D(2)
         stop_without_following_bar = False
+        # The scheduled exit is at last_exit_index's open. Its later high/low
+        # cannot trigger a stop before that open, so exclude the terminal bar.
         for probe_index, probe in enumerate(
-            ordered[index + 1 : last_exit_index + 1],
+            ordered[index + 1 : last_exit_index],
             start=index + 1,
         ):
             adverse_pct = (
