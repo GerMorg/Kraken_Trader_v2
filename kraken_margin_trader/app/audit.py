@@ -133,6 +133,19 @@ def _compact_cost_diagnostic(value: Any) -> Any:
 
 
 def _compact_payload(event: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if event == "NO_TRADE":
+        # Keep every top-level rejection/control field. Only the verbose nested cost
+        # detail is reduced; callers can still see all reasons, gates and sizing facts.
+        result = dict(payload)
+        if "gross_edge_proxy_bps" in result:
+            result["gross_edge_proxy_bps"] = _rounded(result["gross_edge_proxy_bps"], 2)
+        for key in ("margin_cost_diagnostic", "spot_cost_diagnostic"):
+            if key in result:
+                result[key] = _compact_cost_diagnostic(result[key])
+        result["precision_note"] = "rounded_for_console; exact_values_in_audit_file"
+        result["console_view"] = "compact"
+        return result
+
     fields = _COMPACT_FIELDS.get(event)
     if fields is None:
         return payload
@@ -195,6 +208,7 @@ def _report_signature(payload: dict[str, Any]) -> str:
 
 def _unchanged_report_payload(event: str, payload: dict[str, Any], signature: str) -> dict[str, Any]:
     """Retain key controls/metrics while avoiding repeating a full unchanged report."""
+    fields: tuple[str, ...]
     if event == "WALLET_BALANCE_RECONCILIATION_SUMMARY":
         fields = (
             "status", "reconciliation_scope", "assets_checked",
