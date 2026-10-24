@@ -2,11 +2,13 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.44
+## Aktueller Status — 0.1.45
 
-**Version 0.1.44 trennt die kompakte Home-Assistant-Konsole von der vollständigen Auditspur.** Wiederkehrende Markt-/Ablehnungsereignisse werden feldselektiv und für Menschen kompakt ausgegeben; unveränderte Forschungs-, Wallet- und Szenarioberichte erscheinen nach ihrer ersten vollständigen Ausgabe nur noch als kompakte Statusmeldung. Geänderte Berichte sowie Fehler, Sperren, Risiko-/Orderereignisse und Zyklusabschlüsse bleiben sichtbar. Die redigierten vollständigen JSONL-Datensätze bleiben unter `/data/logs/events.jsonl` mit exakten Werten, allen Feldern und allen Wiederholungen erhalten. Der Umbau ändert weder Handelsentscheidungen noch Risiko-Gates oder die Live-Sperre.
+**Version 0.1.45 ersetzt den dauerhaft gesetzten Reconciliation-Blocker durch einen dokumentierten, datengetriebenen Entry-Abgleich.** Eine vollständige Wallet-Delta-Prüfung ohne neue Ledger-Buchungen gilt bei unveränderten Kontoständen als gültig; aktuelle Kontostruktur, Historienstatus, Order-/Fill-Zustand und Reconciliation-Breaker werden separat bewertet. Tages-PnL und Drawdown werden aus einer persistenten Kraken-Equity-Baseline berechnet, die Container-Neustarts übersteht und bekannte USD-/USDC-Kapitalbewegungen berücksichtigt. Bei nicht USD-bewertbaren externen Transfers wird ein transparenter neuer Messzeitraum protokolliert, statt Kapitalbewegung als Trading-PnL zu behandeln. Ein sauberer Folgeabgleich kann nur die dazugehörigen Reconciliation-Breaker auflösen.
 
-### Vorherige Version — 0.1.43
+**Der Entry-Status ist ausdrücklich keine vollständige historische Portfolio-Reconciliation.** Die Edge bleibt nicht kalibriert und Margin-Eröffnungs-/Rollover-Kosten sind nicht bestätigt; diese echten Evidenzlücken bleiben sichtbar. Die interne Live-Order-Freigabe bleibt code-seitig gesperrt.
+
+### Vorherige Version — 0.1.44
 
 **Version 0.1.43 korrigiert einen zeitlichen Look-ahead-Fehler im OHLCV-Backtest: Der geplante Time-Exit erfolgt am Open des Zielbalkens; dessen späteres High/Low darf den bereits vorgesehenen Exit nicht rückwirkend ändern. Stop und Teilgewinnmitnahme werden jetzt auch im OHLCV-Szenario explizit modelliert. Bei Stop und Take-Profit innerhalb derselben Stundenkerze wird konservativ der Stop zuerst angenommen. Das ist weiterhin nur eine Simulation mit unvollständiger Intrabar-Information, keine Live-Exit-Implementierung und kein Profitabilitätsnachweis.**
 

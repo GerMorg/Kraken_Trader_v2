@@ -358,3 +358,67 @@ def test_wallet_status_does_not_claim_ledger_match_when_all_assets_are_only_stab
     assert result["ledger_verified_asset_count"] == 0
     assert result["stable_without_ledger_activity_count"] == 2
     assert result["full_portfolio_reconciliation"] is False
+
+
+def test_entry_reconciliation_accepts_consistent_stable_wallet_without_new_ledgers():
+    from app.portfolio_reconciliation import assess_entry_reconciliation
+
+    account = {
+        "captured_at": "1792867200",
+        "balance": {"ZUSD": "100"},
+        "trade_balance": {"e": "100", "mf": "100", "m": "0", "ml": "0"},
+        "open_orders": {"open": {}},
+        "closed_orders": {"closed": {}},
+        "open_positions": {},
+    }
+    result = assess_entry_reconciliation(
+        account,
+        persisted_snapshot={"positions_shape_complete": True},
+        wallet_reconciliation={
+            "complete": True,
+            "mismatches": 0,
+            "status": "WALLET_BALANCES_STABLE_NO_LEDGER_ACTIVITY",
+        },
+        history_ready=True,
+        order_reconciliation={
+            "ambiguous_matches": 0, "invalid_exchange_states": 0,
+            "unmatched_open_orders": 0, "unmatched_submitted_intents": 0,
+        },
+        position_reconciliation={"position_fill_reconciliation_complete": True},
+        active_reconciliation_breakers=[],
+        equity_baseline_ready=True,
+        closed_history_included=True,
+    )
+    assert result["entry_reconciliation_ok"] is True
+    assert result["status"] == "ENTRY_STATE_RECONCILED"
+    assert result["full_portfolio_reconciliation"] is False
+
+
+def test_entry_reconciliation_reports_actual_blockers_instead_of_hardcoded_false():
+    from app.portfolio_reconciliation import assess_entry_reconciliation
+
+    account = {
+        "balance": {"ZUSD": "100"},
+        "trade_balance": {"e": "100", "mf": "100", "m": "0"},
+        "open_orders": {"open": {}},
+        "closed_orders": {"closed": {}},
+        "open_positions": {},
+    }
+    result = assess_entry_reconciliation(
+        account,
+        persisted_snapshot={"positions_shape_complete": True},
+        wallet_reconciliation={"complete": False, "mismatches": 0, "status": "LEDGER_WINDOW_INCOMPLETE"},
+        history_ready=False,
+        order_reconciliation={"unmatched_submitted_intents": 1},
+        position_reconciliation={"position_fill_reconciliation_complete": False},
+        active_reconciliation_breakers=["WALLET_BALANCE_RECONCILIATION"],
+        equity_baseline_ready=False,
+        closed_history_included=True,
+    )
+    assert result["entry_reconciliation_ok"] is False
+    assert "ACCOUNT_HISTORY_NOT_READY" in result["reasons"]
+    assert "WALLET_DELTA_NOT_RECONCILED" in result["reasons"]
+    assert "POSITIONS_NOT_RECONCILED_TO_FILLS" in result["reasons"]
+    assert "ORDER_STATE_RECONCILIATION_INCOMPLETE" in result["reasons"]
+    assert "EQUITY_RISK_BASELINE_UNAVAILABLE" in result["reasons"]
+    assert "ACTIVE_RECONCILIATION_BREAKER:WALLET_BALANCE_RECONCILIATION" in result["reasons"]

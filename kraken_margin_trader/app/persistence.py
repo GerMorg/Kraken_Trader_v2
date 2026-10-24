@@ -119,6 +119,17 @@ class Persistence:
                     updated_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS circuit_breakers(name TEXT PRIMARY KEY,active INTEGER NOT NULL,reason TEXT NOT NULL,ts TEXT NOT NULL,detail_json TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS risk_equity_state(
+                    state_key TEXT PRIMARY KEY,
+                    trading_day TEXT NOT NULL,
+                    day_start_equity TEXT NOT NULL,
+                    day_start_epoch REAL NOT NULL,
+                    high_water_equity TEXT NOT NULL,
+                    last_equity TEXT NOT NULL,
+                    last_snapshot_epoch REAL NOT NULL,
+                    baseline_source TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS research_observations(
                     observation_id TEXT PRIMARY KEY,
                     pair TEXT NOT NULL,
@@ -197,9 +208,121 @@ class Persistence:
                     "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','8') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','9') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
+
+
+    def update_risk_equity_state(
+        self,
+        *,
+        equity: Decimal,
+        captured_epoch: Decimal,
+        trading_day: str,
+        external_flow_usd: Decimal = Decimal(0),
+        external_flow_valued: bool = True,
+    ) -> dict[str, Any]:
+        """Persist a flow-adjusted daily baseline and a durable equity high-water mark.
+
+        The first trustworthy snapshot starts measurement. It does not fabricate
+        pre-installation daily PnL or historical drawdown. Unvalued external transfers
+        explicitly rebase the measurement window instead of creating false PnL.
+        """
+        values = (equity, captured_epoch, external_flow_usd)
+        if any(not isinstance(value, Decimal) or not value.is_finite() for value in values):
+            raise ValueError("RISK_EQUITY_STATE_NON_FINITE")
+        if equity <= 0 or captured_epoch < 0 or not trading_day.strip():
+            raise ValueError("RISK_EQUITY_STATE_OUT_OF_RANGE")
+
+        now = _now()
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT trading_day,day_start_equity,day_start_epoch,high_water_equity,"
+                "last_snapshot_epoch,baseline_source "
+                "FROM risk_equity_state WHERE state_key='ACCOUNT_EQUITY'"
+            ).fetchone()
+            if row is None:
+                day_start = equity
+                day_start_epoch = captured_epoch
+                high_water = equity
+                baseline_source = "INITIAL_VERIFIED_ACCOUNT_EQUITY"
+            else:
+                previous_day = str(row["trading_day"])
+                day_start = Decimal(str(row["day_start_equity"]))
+                day_start_epoch = Decimal(str(row["day_start_epoch"]))
+                high_water = Decimal(str(row["high_water_equity"]))
+                previous_epoch = Decimal(str(row["last_snapshot_epoch"]))
+                if captured_epoch <= previous_epoch:
+                    raise ValueError("RISK_EQUITY_STATE_TIMESTAMP_NOT_MONOTONIC")
+
+                if not external_flow_valued:
+                    # A non-USD deposit/withdrawal cannot be assigned a trustworthy
+                    # USD value from a wallet ledger alone. Begin a transparent new
+                    # measurement window rather than calling the flow trading PnL.
+                    day_start = equity
+                    day_start_epoch = captured_epoch
+                    high_water = equity
+                    baseline_source = "REBASED_AFTER_UNVALUED_EXTERNAL_FLOW"
+                else:
+                    if external_flow_usd != 0:
+                        day_start += external_flow_usd
+                        high_water += external_flow_usd
+                        if day_start <= 0 or high_water <= 0:
+                            day_start = equity
+                            day_start_epoch = captured_epoch
+                            high_water = equity
+                            baseline_source = "REBASED_AFTER_NON_POSITIVE_FLOW_ADJUSTMENT"
+                        else:
+                            baseline_source = "FLOW_ADJUSTED_PERSISTED_BASELINE"
+                    else:
+                        baseline_source = "PERSISTED_EQUITY_BASELINE"
+
+                    if previous_day != trading_day:
+                        # At day rollover use the first available equity snapshot of
+                        # the new local day; don't reuse yesterday's PnL as today's.
+                        day_start = equity
+                        day_start_epoch = captured_epoch
+                        baseline_source = "FIRST_VERIFIED_SNAPSHOT_OF_LOCAL_DAY"
+
+                high_water = max(high_water, equity)
+
+            daily_pnl = (
+                (equity - day_start) / day_start * Decimal(100)
+                if day_start > 0 else None
+            )
+            drawdown = (
+                (high_water - equity) / high_water * Decimal(100)
+                if high_water > 0 else None
+            )
+            self.connection.execute(
+                "INSERT INTO risk_equity_state("
+                "state_key,trading_day,day_start_equity,day_start_epoch,high_water_equity,"
+                "last_equity,last_snapshot_epoch,baseline_source,updated_at"
+                ") VALUES('ACCOUNT_EQUITY',?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(state_key) DO UPDATE SET "
+                "trading_day=excluded.trading_day,day_start_equity=excluded.day_start_equity,"
+                "day_start_epoch=excluded.day_start_epoch,high_water_equity=excluded.high_water_equity,"
+                "last_equity=excluded.last_equity,last_snapshot_epoch=excluded.last_snapshot_epoch,"
+                "baseline_source=excluded.baseline_source,updated_at=excluded.updated_at",
+                (
+                    trading_day, str(day_start), float(day_start_epoch), str(high_water),
+                    str(equity), float(captured_epoch), baseline_source, now,
+                ),
+            )
+
+        return {
+            "status": "BASELINE_UPDATED",
+            "trading_day": trading_day,
+            "baseline_source": baseline_source,
+            "day_start_equity": str(day_start),
+            "high_water_equity": str(high_water),
+            "current_equity": str(equity),
+            "daily_pnl_pct": daily_pnl,
+            "drawdown_pct": drawdown,
+            "measurement_window_start_epoch": str(day_start_epoch),
+            "historical_pnl_before_baseline_known": False,
+            "external_flow_adjusted": bool(external_flow_valued),
+        }
 
     def record_event(self, name: str, payload: dict[str, Any] | None = None) -> None:
         with self.lock:

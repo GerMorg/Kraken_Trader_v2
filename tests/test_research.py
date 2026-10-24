@@ -287,7 +287,7 @@ def test_existing_schema_is_migrated_to_store_trend_efficiency(tmp_path):
     version = reopened.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
-    assert version == "8"
+    assert version == "9"
     reopened.close()
 
 

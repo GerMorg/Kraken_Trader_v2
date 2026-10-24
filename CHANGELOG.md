@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.45 — Laufende Reconciliation und persistente Equity-Risikobaselines
+
+- Entfernt den versehentlich dauerhaften Entry-Blocker reconciliation_ok=False: der Risikoprüfer verwendet jetzt eine explizite, auditierbare Reconciliation-Entscheidung aus aktueller Kontostruktur, vollständig synchronisierter Historie, Wallet-Delta-Abgleich, Orderzustand, Positions-/Fill-Abgleich und aktiven Reconciliation-Breakern.
+- Eine vollständige, fehlerfreie Ledger-Abfrage mit unveränderten Wallet-Salden gilt als erfolgreicher Delta-Abgleich, auch wenn im abgefragten Zeitraum keine neue Ledger-Buchung anfiel. Der Bericht unterscheidet ausdrücklich weiterhin zwischen aktuellem Entry-Status und vollständiger historischer Portfolio-Reconciliation.
+- Persistiert Equity-Startwert des Tages und den Equity-Höchststand über Container-Neustarts. Tages-PnL und Drawdown werden aus Kraken-Equity berechnet, nicht länger pauschal als None ausgegeben. Der Tageswert beginnt beim ersten verifizierten Snapshot des lokalen Tages; historische PnL vor diesem Baseline-Zeitpunkt wird nicht erfunden.
+- USD-/USDC-Ein- und Auszahlungen werden als externe Kapitalbewegungen in die Baseline einbezogen. Ein nicht zuverlässig in USD bewertbarer externer Transfer löst eine protokollierte neue Messbasis aus, statt als Handels-PnL verbucht zu werden.
+- Reconciliation-Circuit-Breaker der Wallet-, Order- und Positionsprüfung werden nur nach einem passenden erfolgreichen erneuten Abgleich aufgelöst. Andere Fehlerarten bleiben unberührt.
+- Prüfung fest verdrahteter Gates: die Reconciliation-/PnL-Flags sind nun datengetrieben. INTERNAL_LIVE_EXECUTION_RELEASED=False bleibt bewusst code-gesteuert; die unkalibrierte Edge und nicht bestätigte Margin-Eröffnungs-/Rollover-Gebühren bleiben echte, derzeit nicht nachgewiesen erfüllte Voraussetzungen. Shadow-Beobachtungen werden weiterhin nicht als echte Fills oder Portfolio-PnL ausgegeben.
+- Ergänzt Regressionstests für stabile Salden ohne neue Ledger-Einträge, tatsächliche Reconciliation-Blocker, persistente Tages-PnL-/Drawdown-Werte, Tageswechsel, Kapitalflusskorrekturen und explizite Baseline-Neubewertung. Keine automatische Live-Freigabe.
+
 ## 0.1.44 — Kompakte HA-Logansicht ohne Verlust der vollständigen Auditspur
 
 - Trennt die sichtbare stdout-Ausgabe von der vollständigen, redigierten JSONL-Auditdatei. Das Ereignisschema und der an Runtime-Aufrufer zurückgegebene Datensatz bleiben unverändert.
