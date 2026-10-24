@@ -15,7 +15,7 @@
 - `app/execution.py`: Order-Intent, strikte Parametervalidierung, persistente Order-State-Machine und zentrale Order Authority. Es gibt keinen separaten Compile-Time-Release-Schalter; unabhängige Laufzeit-Gates blockieren aktuell reguläre Entries.
 - `app/portfolio.py`: richtungsgetrennte Brutto-/Nettoexposure-Aggregation, streng geprüfte Margin-Lots, paarbezogene Mengensicherheit und Kennzeichnung erwarteter (nicht kontobestätigter) EWR-Finanzierungswährung.
 - `app/persistence.py`: SQLite/WAL unter `/data/state/kraken_trader.sqlite3`, Bar-/Ereignis-/Intent-/Fill-/Ledger-/Steuerhistorie und persistente Circuit Breaker. Das Container-Entrypoint migriert den älteren Datenbankpfad samt SQLite-Seitendateien vor dem UID-Wechsel, erhält Root-Eigentum des Mount-Parents und bricht bei widersprüchlichen Datenbankzuständen ab.
-- `app/audit.py`: JSONL in stdout und rotierender Datei `/data/logs/events.jsonl` mit Secret-Redaktion.
+- `app/audit.py`: vollständige redigierte Ereignisdatensätze in der rotierenden JSONL-Datei `/data/logs/events.jsonl`; eigenständige kompakte JSON-Console-Ansicht in stdout. Kompakte Felder und Report-Deduplizierung betreffen ausschließlich stdout. Die Datei behält alle exakten Werte und Wiederholungen.
 - `app/backtest.py`: eingeschränkter OHLCV-Szenario-Simulator.
 - `app/tax.py`: Jahres-Export JSON/CSV/Markdown mit Datenlücken- und manuellen Prüfhinweisen.
 - `app/runtime.py`, `app/main.py`: Zyklussteuerung, Startdiagnose und kontrolliertes Stoppen.
