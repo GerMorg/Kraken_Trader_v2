@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 import json
 import time
@@ -31,7 +31,11 @@ from app.research import (
     summarize_shadow_research,
 )
 from app.portfolio import aggregate_position_exposure
-from app.portfolio_reconciliation import reconcile_positions_to_fills, reconcile_wallet_balance_deltas
+from app.portfolio_reconciliation import (
+    assess_entry_reconciliation,
+    reconcile_positions_to_fills,
+    reconcile_wallet_balance_deltas,
+)
 from app.reconciliation import reconcile_order_intents
 from app.risk import choose_trade_leverage, evaluate_entry, size_position_usd
 from app.strategy import generate_trend_signal
@@ -45,6 +49,109 @@ def _decimal(value: Any) -> Decimal | None:
         return result if result.is_finite() else None
     except (ArithmeticError,TypeError,ValueError):
         return None
+
+def _external_flow_adjustment(
+    ledger_events: list[dict[str, Any]],
+    start_epoch: Decimal | None,
+    end_epoch: Decimal,
+) -> dict[str, Any]:
+    """Value external wallet flows only when the ledger denomination is USD-like.
+
+    Unknown non-USD transfers trigger a transparent baseline rebase instead of
+    pretending their value is zero or blocking entries forever.
+    """
+    result: dict[str, Any] = {
+        "usd_delta": D(0),
+        "complete": True,
+        "ledger_count": 0,
+        "unvalued_count": 0,
+        "unvalued_assets": [],
+    }
+    if start_epoch is None:
+        return result
+
+    for entry in ledger_events:
+        if not isinstance(entry, dict):
+            continue
+        envelope = entry.get("raw")
+        raw = envelope.get("raw") if isinstance(envelope, dict) else None
+        if not isinstance(raw, dict):
+            raw = {}
+        timestamp = _decimal(raw.get("time"))
+        if timestamp is None:
+            raw_ts = str(entry.get("ts", "")).strip()
+            try:
+                parsed = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                timestamp = D(str(parsed.timestamp()))
+            except (TypeError, ValueError, OverflowError):
+                continue
+        if timestamp <= start_epoch or timestamp > end_epoch:
+            continue
+        event_type = str(entry.get("event_type") or raw.get("type") or "").strip().lower()
+        if event_type not in {"deposit", "withdrawal"}:
+            continue
+        result["ledger_count"] += 1
+        asset = str(entry.get("asset") or raw.get("asset") or "").strip().upper()
+        amount = _decimal(entry.get("amount", raw.get("amount")))
+        fee = _decimal(entry.get("fee", raw.get("fee", "0")))
+        if amount is None or fee is None or fee < 0:
+            result["complete"] = False
+            result["unvalued_count"] += 1
+            if asset and asset not in result["unvalued_assets"]:
+                result["unvalued_assets"].append(asset)
+            continue
+        if asset not in {"ZUSD", "USD", "USDC"}:
+            result["complete"] = False
+            result["unvalued_count"] += 1
+            if asset and asset not in result["unvalued_assets"]:
+                result["unvalued_assets"].append(asset)
+            continue
+        # Kraken ledger amount is signed; fee is an additional debit.
+        result["usd_delta"] += amount - fee
+
+    result["usd_delta"] = D(str(result["usd_delta"]))
+    return result
+
+
+def _resolve_clean_reconciliation_breaker(
+    persistence: Persistence,
+    audit: AuditLogger,
+    *,
+    name: str,
+    cycle_id: str,
+    verified_by: str,
+    clean: bool,
+) -> bool:
+    """Resolve only the current breaker from this reconciliation subsystem after a clean pass."""
+    if not clean:
+        return False
+    recovered = False
+    for breaker in persistence.circuit_breakers():
+        if breaker.get("name") != name:
+            continue
+        reason = str(breaker.get("reason", "")).strip()
+        if not reason:
+            continue
+        detail = {
+            "cycle_id": cycle_id,
+            "recovery_method": "SUCCESSFUL_CURRENT_RECONCILIATION",
+            "verified_by": verified_by,
+            "recovered_reason": reason,
+        }
+        if persistence.resolve_circuit_breaker(name, reason, detail):
+            audit.emit(
+                "CIRCUIT_BREAKER_RECOVERED",
+                cycle_id=cycle_id,
+                name=name,
+                previous_reason=reason,
+                recovery_method="SUCCESSFUL_CURRENT_RECONCILIATION",
+                verified_by=verified_by,
+            )
+            recovered = True
+    return recovered
+
 
 def _recover_transient_public_network_breaker(
     persistence: Persistence,
@@ -207,7 +314,13 @@ class TraderRuntime:
         response = self.client.public("Ticker", {"pair": instrument.altname})
         return parse_tickers(response, [instrument]).get(instrument.pair_id)
 
-    def _account_risk_snapshot(self,snapshot: dict[str,Any]) -> RiskSnapshot:
+    def _account_risk_snapshot(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        reconciliation_ok: bool = False,
+        equity_risk_state: dict[str, Any] | None = None,
+    ) -> RiskSnapshot:
         trade=snapshot["trade_balance"]; rows=_open_position_rows(snapshot["open_positions"])
         orders=snapshot["open_orders"].get("open",{}); balance=snapshot["balance"]
         equity_value=_decimal(trade.get("e"))
@@ -233,11 +346,17 @@ class TraderRuntime:
             and isinstance(trade, dict) and exposure.complete
             and all("vol" in row and "pair" in row and "posstatus" in row for row in rows.values())
         )
-        # Daily PnL and peak-equity drawdown need reconciled fills, fees and external transfers.
-        # Until that ledger baseline is proven, represent both as unknown rather than zero.
+        daily_pnl = (
+            _decimal(equity_risk_state.get("daily_pnl_pct"))
+            if equity_risk_state is not None else None
+        )
+        drawdown = (
+            _decimal(equity_risk_state.get("drawdown_pct"))
+            if equity_risk_state is not None else None
+        )
         return RiskSnapshot(
-            equity, free, used, gross, net, len(rows), None, None,
-            margin_level, snapshot_age, complete, False,
+            equity, free, used, gross, net, len(rows), daily_pnl, drawdown,
+            margin_level, snapshot_age, complete, bool(reconciliation_ok),
         )
 
     def _refresh_tax_report(self) -> None:
@@ -299,6 +418,9 @@ class TraderRuntime:
         history_metadata_untrusted = False
         history_window_unknown = False
         closed_history_snapshot_allowed = False
+        wallet_reconciliation: dict[str, Any] | None = None
+        order_reconciliation: dict[str, Any] | None = None
+        position_reconciliation: dict[str, Any] | None = None
         self.audit.emit("CYCLE_START",cycle_id=cycle_id,mode=self.settings.mode)
         try:
             self._refresh_tax_report()
@@ -622,15 +744,6 @@ class TraderRuntime:
                         self.persistence.ledger_events(),
                         ledger_history_complete=ledger_history_complete,
                     )
-                self.audit.emit(
-                    "WALLET_BALANCE_RECONCILIATION_SUMMARY",
-                    cycle_id=cycle_id,
-                    **{
-                        **wallet_reconciliation,
-                        "full_portfolio_reconciliation": False,
-                        "complete_for_entries": False,
-                    },
-                )
                 if wallet_reconciliation.get("mismatches", 0) > 0:
                     self.persistence.trip_circuit_breaker(
                         "WALLET_BALANCE_RECONCILIATION",
@@ -709,17 +822,32 @@ class TraderRuntime:
                     if closed_history_included and closed_orders is not None:
                         for order_id, order in closed_orders.items():
                             self.persistence.record_exchange_order(order_id, order, source="CLOSED")
-                        reconciliation = reconcile_order_intents(self.persistence)
+                        order_reconciliation = reconcile_order_intents(self.persistence)
                         self.audit.emit(
                             "ORDER_RECONCILIATION_SUMMARY",
                             cycle_id=cycle_id,
-                            **reconciliation,
+                            **order_reconciliation,
+                        )
+                        _resolve_clean_reconciliation_breaker(
+                            self.persistence, self.audit,
+                            name="ORDER_RECONCILIATION", cycle_id=cycle_id,
+                            verified_by="ORDER_RECONCILIATION_SUMMARY",
+                            clean=all(order_reconciliation.get(key, 0) == 0 for key in (
+                                "ambiguous_matches", "invalid_exchange_states",
+                                "unmatched_open_orders", "unmatched_submitted_intents",
+                            )),
                         )
                         position_reconciliation = reconcile_positions_to_fills(self.persistence)
                         self.audit.emit(
                             "POSITION_FILL_RECONCILIATION_SUMMARY",
                             cycle_id=cycle_id,
                             **position_reconciliation,
+                        )
+                        _resolve_clean_reconciliation_breaker(
+                            self.persistence, self.audit,
+                            name="POSITION_FILL_RECONCILIATION", cycle_id=cycle_id,
+                            verified_by="POSITION_FILL_RECONCILIATION_SUMMARY",
+                            clean=position_reconciliation.get("position_fill_reconciliation_complete") is True,
                         )
                     else:
                         self.audit.emit(
@@ -739,7 +867,113 @@ class TraderRuntime:
                     "reconciliation_complete": False,
                     "complete_for_entries": False,
                 })
-                snapshot = self._account_risk_snapshot(account)
+                captured_epoch = _decimal(account.get("captured_at"))
+                equity_value = _decimal(
+                    account.get("trade_balance", {}).get("e")
+                    if isinstance(account.get("trade_balance"), dict) else None
+                )
+                equity_risk_state: dict[str, Any] | None = None
+                flow_diagnostics: dict[str, Any] = {
+                    "usd_delta": D(0), "complete": True, "ledger_count": 0,
+                    "unvalued_count": 0, "unvalued_assets": [],
+                }
+                if captured_epoch is not None and equity_value is not None and equity_value > 0:
+                    flow_diagnostics = _external_flow_adjustment(
+                        self.persistence.ledger_events(),
+                        previous_snapshot_time,
+                        captured_epoch,
+                    )
+                    try:
+                        local_day = datetime.fromtimestamp(
+                            float(captured_epoch), tz=ZoneInfo("Europe/Vienna")
+                        ).date().isoformat()
+                        equity_risk_state = self.persistence.update_risk_equity_state(
+                            equity=equity_value,
+                            captured_epoch=captured_epoch,
+                            trading_day=local_day,
+                            external_flow_usd=flow_diagnostics["usd_delta"],
+                            external_flow_valued=(
+                                flow_diagnostics["complete"]
+                                if previous_account_snapshot is not None else True
+                            ),
+                        )
+                    except (ArithmeticError, TypeError, ValueError, OverflowError) as exc:
+                        self.audit.emit(
+                            "EQUITY_RISK_BASELINE_FAILED",
+                            cycle_id=cycle_id,
+                            exception_type=type(exc).__name__,
+                            baseline_available=False,
+                        )
+                    if equity_risk_state is not None:
+                        self.audit.emit(
+                            "EQUITY_RISK_BASELINE_UPDATED",
+                            cycle_id=cycle_id,
+                            **equity_risk_state,
+                            external_flow_ledger_count=flow_diagnostics["ledger_count"],
+                            external_flow_unvalued_count=flow_diagnostics["unvalued_count"],
+                            external_flow_unvalued_assets=flow_diagnostics["unvalued_assets"],
+                        )
+                _resolve_clean_reconciliation_breaker(
+                    self.persistence, self.audit,
+                    name="WALLET_BALANCE_RECONCILIATION", cycle_id=cycle_id,
+                    verified_by="WALLET_BALANCE_RECONCILIATION_SUMMARY",
+                    clean=(
+                        wallet_reconciliation is not None
+                        and wallet_reconciliation.get("complete") is True
+                        and wallet_reconciliation.get("mismatches", 0) == 0
+                        and wallet_reconciliation.get("status") in {
+                            "WALLET_BALANCES_MATCH_LEDGER_WINDOW",
+                            "WALLET_BALANCES_STABLE_NO_LEDGER_ACTIVITY",
+                        }
+                    ),
+                )
+                active_reconciliation_breakers = [
+                    str(row.get("name", ""))
+                    for row in self.persistence.circuit_breakers()
+                    if row.get("name") in {
+                        "WALLET_BALANCE_RECONCILIATION",
+                        "ORDER_RECONCILIATION",
+                        "POSITION_FILL_RECONCILIATION",
+                        "ACCOUNT_SNAPSHOT",
+                    }
+                ]
+                entry_reconciliation = assess_entry_reconciliation(
+                    account,
+                    persisted_snapshot=persisted_snapshot,
+                    wallet_reconciliation=wallet_reconciliation or {},
+                    history_ready=history_ready_for_entries,
+                    order_reconciliation=order_reconciliation or {},
+                    position_reconciliation=position_reconciliation or {},
+                    active_reconciliation_breakers=active_reconciliation_breakers,
+                    equity_baseline_ready=(
+                        equity_risk_state is not None
+                        and equity_risk_state.get("daily_pnl_pct") is not None
+                        and equity_risk_state.get("drawdown_pct") is not None
+                    ),
+                    closed_history_included=closed_history_included,
+                )
+                self.audit.emit(
+                    "PORTFOLIO_ENTRY_RECONCILIATION",
+                    cycle_id=cycle_id,
+                    **entry_reconciliation,
+                )
+                if wallet_reconciliation is not None:
+                    wallet_report = {
+                        **wallet_reconciliation,
+                        "full_portfolio_reconciliation": False,
+                        "complete_for_entries": entry_reconciliation["entry_reconciliation_ok"],
+                        "entry_reconciliation_status": entry_reconciliation["status"],
+                    }
+                    self.audit.emit(
+                        "WALLET_BALANCE_RECONCILIATION_SUMMARY",
+                        cycle_id=cycle_id,
+                        **wallet_report,
+                    )
+                snapshot = self._account_risk_snapshot(
+                    account,
+                    reconciliation_ok=bool(entry_reconciliation["entry_reconciliation_ok"]),
+                    equity_risk_state=equity_risk_state,
+                )
                 exit_decisions = evaluate_position_exits(
                     account["open_positions"],
                     tickers,

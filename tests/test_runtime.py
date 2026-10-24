@@ -159,6 +159,24 @@ def account_snapshot(positions):
     }
 
 
+def test_risk_snapshot_reflects_supplied_reconciliation_and_equity_baselines():
+    runtime, db, audit = make_runtime()
+    risk_state = {
+        "daily_pnl_pct": D("-1.25"),
+        "drawdown_pct": D("2.5"),
+    }
+    snapshot = runtime._account_risk_snapshot(
+        account_snapshot({}),
+        reconciliation_ok=True,
+        equity_risk_state=risk_state,
+    )
+    assert snapshot.reconciliation_ok is True
+    assert snapshot.daily_pnl_pct == D("-1.25")
+    assert snapshot.drawdown_pct == D("2.5")
+    audit.close()
+    db.close()
+
+
 def test_risk_snapshot_uses_absolute_gross_and_directional_net_exposure():
     runtime, db, audit = make_runtime()
     snapshot = runtime._account_risk_snapshot(account_snapshot({

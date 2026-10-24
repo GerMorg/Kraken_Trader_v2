@@ -219,6 +219,110 @@ def reconcile_wallet_balance_deltas(
     return result
 
 
+
+def assess_entry_reconciliation(
+    current_snapshot: dict[str, Any],
+    *,
+    persisted_snapshot: dict[str, Any],
+    wallet_reconciliation: dict[str, Any],
+    history_ready: bool,
+    order_reconciliation: dict[str, Any],
+    position_reconciliation: dict[str, Any],
+    active_reconciliation_breakers: list[str],
+    equity_baseline_ready: bool,
+    closed_history_included: bool,
+) -> dict[str, Any]:
+    """Assess whether the *current state* is trustworthy enough for entry-risk checks.
+
+    This is deliberately narrower than full historical portfolio/tax reconciliation.
+    A clean zero-activity ledger window is valid when both account snapshots agree and
+    the bounded ledger query completed; no ledger event is required merely to show that
+    balances have remained stable.
+    """
+    reasons: list[str] = []
+    balance = current_snapshot.get("balance")
+    trade_balance = current_snapshot.get("trade_balance")
+    open_orders = current_snapshot.get("open_orders")
+    closed_orders = current_snapshot.get("closed_orders")
+    raw_positions = current_snapshot.get("open_positions")
+
+    if not isinstance(balance, dict) or _balance_map(current_snapshot) is None:
+        reasons.append("ACCOUNT_BALANCE_SHAPE_INVALID")
+    if not isinstance(trade_balance, dict):
+        reasons.append("TRADE_BALANCE_SHAPE_INVALID")
+    else:
+        for field in ("e", "mf", "m"):
+            if _decimal(trade_balance.get(field)) is None:
+                reasons.append("TRADE_BALANCE_FIELD_INVALID:" + field)
+    if not isinstance(open_orders, dict) or not isinstance(open_orders.get("open"), dict):
+        reasons.append("OPEN_ORDERS_SHAPE_INVALID")
+    if not closed_history_included or not isinstance(closed_orders, dict) or not isinstance(
+        closed_orders.get("closed"), dict
+    ):
+        reasons.append("CLOSED_ORDER_HISTORY_UNAVAILABLE")
+    positions = (
+        raw_positions.get("open")
+        if isinstance(raw_positions, dict) and isinstance(raw_positions.get("open"), dict)
+        else raw_positions
+    )
+    if not isinstance(positions, dict) or any(not isinstance(row, dict) for row in positions.values()):
+        reasons.append("OPEN_POSITIONS_SHAPE_INVALID")
+    if persisted_snapshot.get("positions_shape_complete") is not True:
+        reasons.append("PERSISTED_POSITION_SNAPSHOT_INCOMPLETE")
+
+    if not history_ready:
+        reasons.append("ACCOUNT_HISTORY_NOT_READY")
+    if (
+        wallet_reconciliation.get("complete") is not True
+        or wallet_reconciliation.get("mismatches", 0) != 0
+        or wallet_reconciliation.get("status") not in {
+            "WALLET_BALANCES_MATCH_LEDGER_WINDOW",
+            "WALLET_BALANCES_STABLE_NO_LEDGER_ACTIVITY",
+        }
+    ):
+        reasons.append("WALLET_DELTA_NOT_RECONCILED")
+    if position_reconciliation.get("position_fill_reconciliation_complete") is not True:
+        reasons.append("POSITIONS_NOT_RECONCILED_TO_FILLS")
+    if any(
+        order_reconciliation.get(field, 0) != 0
+        for field in (
+            "ambiguous_matches", "invalid_exchange_states",
+            "unmatched_open_orders", "unmatched_submitted_intents",
+        )
+    ):
+        reasons.append("ORDER_STATE_RECONCILIATION_INCOMPLETE")
+    if not equity_baseline_ready:
+        reasons.append("EQUITY_RISK_BASELINE_UNAVAILABLE")
+    reasons.extend(
+        "ACTIVE_RECONCILIATION_BREAKER:" + name
+        for name in sorted(set(active_reconciliation_breakers))
+    )
+
+    unique_reasons = list(dict.fromkeys(reasons))
+    return {
+        "status": "ENTRY_STATE_RECONCILED" if not unique_reasons else "ENTRY_RECONCILIATION_PENDING",
+        "entry_reconciliation_ok": not unique_reasons,
+        "reasons": unique_reasons,
+        "history_ready": bool(history_ready),
+        "wallet_delta_status": wallet_reconciliation.get("status"),
+        "wallet_delta_complete": wallet_reconciliation.get("complete") is True,
+        "positions_reconciled": (
+            position_reconciliation.get("position_fill_reconciliation_complete") is True
+        ),
+        "orders_reconciled": not any(
+            order_reconciliation.get(field, 0) != 0
+            for field in (
+                "ambiguous_matches", "invalid_exchange_states",
+                "unmatched_open_orders", "unmatched_submitted_intents",
+            )
+        ),
+        "equity_risk_baseline_ready": bool(equity_baseline_ready),
+        "active_reconciliation_breakers": sorted(set(active_reconciliation_breakers)),
+        "full_portfolio_reconciliation": False,
+        "scope": "CURRENT_ACCOUNT_AND_FORWARD_DELTA;NOT_FULL_HISTORICAL_PORTFOLIO",
+    }
+
+
 def reconcile_positions_to_fills(persistence: Any) -> dict[str, Any]:
     """Compare every current margin position to its original Kraken trade/order.
 

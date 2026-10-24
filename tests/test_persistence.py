@@ -1,4 +1,5 @@
 import pytest
+from decimal import Decimal
 
 from app.persistence import Persistence
 
@@ -378,4 +379,76 @@ def test_exchange_tax_reimport_preserves_valid_enrichment_but_invalidates_change
     assert invalidated["verified"] == 0
     assert invalidated["manual_review"] == 1
     assert invalidated["payload"]["price"] == "91000"
+    db.close()
+
+
+def test_equity_risk_baseline_persists_daily_pnl_and_drawdown_across_restart(tmp_path):
+    path = str(tmp_path / "equity-state.sqlite3")
+    db = Persistence(path)
+    first = db.update_risk_equity_state(
+        equity=Decimal("1000"), captured_epoch=Decimal("1792867200"),
+        trading_day="2026-10-24",
+    )
+    assert first["daily_pnl_pct"] == Decimal("0")
+    assert first["drawdown_pct"] == Decimal("0")
+    second = db.update_risk_equity_state(
+        equity=Decimal("970"), captured_epoch=Decimal("1792867500"),
+        trading_day="2026-10-24",
+    )
+    assert second["daily_pnl_pct"] == Decimal("-3")
+    assert second["drawdown_pct"] == Decimal("3")
+    db.close()
+
+    reopened = Persistence(path)
+    third = reopened.update_risk_equity_state(
+        equity=Decimal("930"), captured_epoch=Decimal("1792867800"),
+        trading_day="2026-10-24",
+    )
+    assert third["daily_pnl_pct"] == Decimal("-7")
+    assert third["drawdown_pct"] == Decimal("7")
+    reopened.close()
+
+
+def test_equity_risk_baseline_adjusts_usd_external_flows_and_resets_on_unvalued_flow():
+    db = Persistence(":memory:")
+    db.update_risk_equity_state(
+        equity=Decimal("1000"), captured_epoch=Decimal("1792867200"),
+        trading_day="2026-10-24",
+    )
+    deposit = db.update_risk_equity_state(
+        equity=Decimal("1100"), captured_epoch=Decimal("1792867500"),
+        trading_day="2026-10-24", external_flow_usd=Decimal("100"),
+    )
+    assert deposit["daily_pnl_pct"] == Decimal("0")
+    assert deposit["drawdown_pct"] == Decimal("0")
+    assert deposit["baseline_source"] == "FLOW_ADJUSTED_PERSISTED_BASELINE"
+
+    rebased = db.update_risk_equity_state(
+        equity=Decimal("900"), captured_epoch=Decimal("1792867800"),
+        trading_day="2026-10-24", external_flow_valued=False,
+    )
+    assert rebased["daily_pnl_pct"] == Decimal("0")
+    assert rebased["drawdown_pct"] == Decimal("0")
+    assert rebased["baseline_source"] == "REBASED_AFTER_UNVALUED_EXTERNAL_FLOW"
+    db.close()
+
+
+def test_equity_risk_baseline_rolls_daily_pnl_at_local_day_boundary_but_keeps_peak():
+    db = Persistence(":memory:")
+    db.update_risk_equity_state(
+        equity=Decimal("1000"), captured_epoch=Decimal("1792867200"),
+        trading_day="2026-10-24",
+    )
+    previous_day = db.update_risk_equity_state(
+        equity=Decimal("950"), captured_epoch=Decimal("1792867500"),
+        trading_day="2026-10-24",
+    )
+    assert previous_day["daily_pnl_pct"] == Decimal("-5")
+    next_day = db.update_risk_equity_state(
+        equity=Decimal("950"), captured_epoch=Decimal("1792953600"),
+        trading_day="2026-10-25",
+    )
+    assert next_day["daily_pnl_pct"] == Decimal("0")
+    assert next_day["drawdown_pct"] == Decimal("5")
+    assert next_day["baseline_source"] == "FIRST_VERIFIED_SNAPSHOT_OF_LOCAL_DAY"
     db.close()
