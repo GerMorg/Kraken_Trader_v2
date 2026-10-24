@@ -119,10 +119,10 @@ def test_backtest_does_not_double_charge_slippage_already_applied_to_fill_prices
     # when the simulated position actually crosses four-hour funding boundaries.
     # The 5 bps/side slippage is already reflected in entry/exit execution prices.
     for trade in trades:
-        elapsed_seconds = trade.exit_time - trade.entry_time
-        rollover_count = elapsed_seconds // (4 * 3600)
-        expected_cost_bps = D("52") + D("8") + D("20") + D(rollover_count) * D("20")
-        assert trade.total_cost_pct == expected_cost_bps / D(100)
+        assert trade.total_cost_usd == (
+            trade.trading_fees_usd + trade.spread_cost_usd + trade.margin_cost_usd
+        )
+        assert trade.total_cost_pct == trade.total_cost_usd / trade.notional_usd * D(100)
         direction_sign = D(1) if trade.direction == "LONG" else D(-1)
         assert trade.gross_pnl_usd == (
             trade.quantity * (trade.exit - trade.entry) * direction_sign
@@ -130,6 +130,10 @@ def test_backtest_does_not_double_charge_slippage_already_applied_to_fill_prices
         assert trade.gross_return_pct == trade.gross_pnl_usd / trade.notional_usd * D(100)
         assert trade.net_return_pct == trade.net_pnl_usd / trade.notional_usd * D(100)
         assert trade.net_pnl_usd == trade.gross_pnl_usd - trade.total_cost_usd
+        assert trade.all_in_cost_pct == (
+            trade.trading_fees_usd + trade.spread_cost_usd
+            + trade.slippage_impact_usd + trade.margin_cost_usd
+        ) / trade.notional_usd * D(100)
 
 
 
@@ -381,3 +385,91 @@ def test_ohlcv_backtest_uses_actual_simulated_holding_duration_for_rollover_cost
         ) / D("10000")
         for trade in trades
     )
+
+
+
+def _replace_bar(data, index, *, high=None, low=None, close=None):
+    previous = data[index]
+    updated_close = previous.close if close is None else close
+    updated_high = max(previous.open, updated_close, previous.high if high is None else high)
+    updated_low = min(previous.open, updated_close, previous.low if low is None else low)
+    data[index] = Bar(
+        previous.timestamp,
+        previous.open,
+        updated_high,
+        updated_low,
+        updated_close,
+        previous.base_volume,
+    )
+
+
+def test_scheduled_time_exit_does_not_inspect_terminal_bar_high_low():
+    data = bars(150)
+    time_exit_index = 73 + 2
+    terminal = data[time_exit_index]
+    data[time_exit_index] = Bar(
+        terminal.timestamp,
+        terminal.open,
+        terminal.open * D("1.20"),
+        terminal.open * D("0.80"),
+        terminal.close,
+        terminal.base_volume,
+    )
+    trades = simulate_trend_trades(
+        data,
+        BacktestCosts(D(26), D(8), D(5), D(20), D(20)),
+        max_holding_bars=2,
+    )
+
+    assert trades
+    first = trades[0]
+    assert first.exit_time == data[time_exit_index].timestamp
+    assert first.exit_reason == "TIME_EXIT"
+    assert first.take_profit_triggered is False
+    assert first.partial_exit_quantity == 0
+
+
+def test_take_profit_reduces_half_once_then_manages_remaining_position():
+    data = bars(150)
+    _replace_bar(data, 74, high=data[74].open * D("1.05"))
+    trades = simulate_trend_trades(
+        data,
+        BacktestCosts(D(26), D(8), D(5), D(20), D(20)),
+        max_holding_bars=2,
+        take_profit_pct=D("3.5"),
+        take_profit_fraction=D("0.5"),
+    )
+
+    assert trades
+    first = trades[0]
+    assert first.take_profit_triggered is True
+    assert first.partial_exit_quantity == first.quantity * D("0.5")
+    assert first.partial_exit_price == first.entry * D("1.035")
+    assert first.exit_reason == "TIME_EXIT_AFTER_PARTIAL_TAKE_PROFIT"
+    assert first.exit_time == data[75].timestamp
+    assert first.net_pnl_usd == first.gross_pnl_usd - first.total_cost_usd
+
+
+def test_ambiguous_same_candle_stop_and_take_profit_uses_conservative_stop_first():
+    data = bars(150)
+    _replace_bar(
+        data,
+        74,
+        high=data[74].open * D("1.05"),
+        low=data[74].open * D("0.95"),
+    )
+    trades = simulate_trend_trades(
+        data,
+        BacktestCosts(D(26), D(8), D(5), D(20), D(20)),
+        max_holding_bars=2,
+        stop_pct=D("3"),
+        take_profit_pct=D("3.5"),
+        take_profit_fraction=D("0.5"),
+    )
+
+    assert trades
+    first = trades[0]
+    assert first.exit_reason == "STOP_TP_SAME_BAR_STOP_FIRST"
+    assert first.take_profit_triggered is False
+    assert first.partial_exit_quantity == 0
+    assert first.exit_time == data[74].timestamp
