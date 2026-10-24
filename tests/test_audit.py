@@ -96,12 +96,16 @@ def test_no_trade_console_preserves_reason_and_cost_blockers(tmp_path):
                 "large_unneeded_detail": "x" * 1000,
             },
             release_gate_eligible=False,
+            minimum_volume="0.01",
+            calculated_volume="0.009",
         )
     finally:
         logger.close()
 
     payload = _console_records(stream)[0]["payload"]
     assert payload["reason"] == "MARGIN_COSTS_UNKNOWN_AND_EDGE_UNVALIDATED"
+    assert payload["minimum_volume"] == "0.01"
+    assert payload["calculated_volume"] == "0.009"
     assert payload["margin_cost_reasons"] == [
         "MARGIN_OPEN_FEE_UNKNOWN",
         "MARGIN_ROLLOVER_FEE_UNKNOWN",
