@@ -221,7 +221,7 @@ def test_live_shadow_candidates_produce_three_separate_predictions_with_walk_for
     assert all(item["direction"] in {"LONG", "SHORT", "NONE"} for item in signals)
     assert signals[0]["candidate_version"] == "tsm-0.2.0"
     model = signals[2]
-    assert model["features"]["training_status"] == "FITTED_ON_TRAIN_SPLIT_ONLY"
+    assert model["features"]["training_status"] == "FITTED_ON_PRIOR_MATURED_LABELS"
     assert model["features"]["training_sample_count"] >= 200
     assert model["features"]["training_labels_may_overlap"] is True
     assert model["features"]["probability_is_calibrated"] is False
