@@ -963,4 +963,4 @@ def strategy_candidate_observation_id(
         candidate_version,
         str(horizon_seconds),
     ))
-    return sha256(identity.encode("utf-8")).hexdigest()
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
