@@ -901,7 +901,9 @@ def generate_live_shadow_candidate_signals(
         model, model_status = _fit_logistic_model(mature_examples)
         logistic_features = {
             "model": "DETERMINISTIC_L2_LOGISTIC_REGRESSION",
-            "training_status": model_status,
+            "training_status": (
+                "FITTED_ON_PRIOR_MATURED_LABELS" if model is not None else model_status
+            ),
             "training_sample_count": len(mature_examples),
             "training_labels_may_overlap": True,
             "long_probability_threshold": LOGISTIC_LONG_THRESHOLD,
