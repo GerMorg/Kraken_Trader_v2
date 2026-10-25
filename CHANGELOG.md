@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.48 — Paralleles Forward-Shadow-Research mit drei Strategiekandidaten
+
+- Ergänzt eine separate, persistente Beobachtungsspur für die unveränderte TSM-Referenz, eine feste 24-Bar-Mean-Reversion-Hypothese und ein L2-logistisches Walk-Forward-Basismodell.
+- Das ML-Modell wird nur mit Labels trainiert, deren Zielkerze vor dem aktuellen Entscheidungsbalken liegt. Die Trainingslabels überlappen und sind ausdrücklich nicht unabhängig; Wahrscheinlichkeiten sind nicht kalibriert.
+- Alle drei Kandidaten werden nach jeder neuen, abgeschlossenen H1-Kerze idempotent protokolliert, einschließlich Nicht-Signalen. Nach dem Haltehorizont werden beobachtete Forward-Ergebnisse getrennt von bestehenden TSM-Berichten ausgewertet.
+- Kandidaten persistieren weder ausführbare Intents noch Orders und beeinflussen nicht die produktive Strategie. Die interne Live-Sperre bleibt False.
+- HA-Option shadow_strategy_lab_enabled ist standardmäßig aktiviert und kann für Debug-/Ressourcenfälle deaktiviert werden.
+- Ergänzt Tests für Deduplizierung, Settlement, Kostenqualität, chronologische Auswertung, Datenlücken und die unveränderte Order-/Freigabesicherheit.
+
 ## 0.1.47 — Isoliertes Strategie-Research-Labor
 
 - Ergänzt einen Offline-Import für Krakens headerlose OHLCVT-CSV-Dateien mit SHA-256-Provenienz, Validierung der OHLCV-Werte sowie Erkennung identischer Duplikate und widersprüchlicher Daten.
