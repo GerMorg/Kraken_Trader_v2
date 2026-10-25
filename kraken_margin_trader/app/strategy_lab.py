@@ -456,6 +456,7 @@ def _candidate_metrics(
         margin_scenarios[str(budget)] = summary
 
     return {
+        "evaluation_example_count": len(examples),
         "candidate_signal_count": len(ordered_signals),
         "non_overlapping_trade_count": len(selected),
         "overlapping_signals_excluded": overlap_excluded,
@@ -645,7 +646,10 @@ def compare_strategies(
         for left, right in zip(candles, candles[1:])
         if right.timestamp - left.timestamp > interval_seconds
     )
-    gap_crossing_samples_excluded = len(candles) - len(all_examples)
+    potential_examples = max(
+        0, len(candles) - holding_bars - 1 - FEATURE_LOOKBACK_BARS
+    )
+    gap_crossing_samples_excluded = potential_examples - len(all_examples)
     model_report: dict[str, Any] = {
         "status": model_status,
         "trained_only_on_chronological_train_split": True,
@@ -704,6 +708,9 @@ def compare_strategies(
             "holding_bars": holding_bars,
             "holding_horizon_minutes": interval_minutes * holding_bars,
             "split_ratio": {"train": 0.60, "validation": 0.20, "test": 0.20},
+            "eligible_examples_by_split": {
+                name: len(items) for name, items in splits.items()
+            },
             "target_horizon_purged_at_split_boundaries": True,
             "candidate_trade_horizons_are_non_overlapping_per_strategy": True,
             "cross_pair_correlation_modeled": False,
