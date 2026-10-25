@@ -743,3 +743,202 @@ def compare_strategies(
         "benchmarks": benchmarks,
         "candidates": candidate_results,
     }
+
+
+LIVE_SHADOW_CANDIDATE_VERSIONS = {
+    "current_tsm": "tsm-0.2.0",
+    "mean_reversion_24h": "mean-reversion-24h-0.1.0",
+    "logistic_regression_wf": "logistic-regression-wf-0.1.0",
+}
+
+
+def generate_live_shadow_candidate_signals(
+    raw_bars: Sequence[dict[str, Any]],
+    *,
+    fast_threshold_bps: Decimal,
+    slow_threshold_bps: Decimal,
+    holding_bars: int = 8,
+    tsm_version: str = "tsm-0.2.0",
+) -> list[dict[str, Any]]:
+    """Produce research-only signals from candles available at the current decision time.
+
+    The logistic model is re-fit only on labelled examples whose complete outcome
+    bar is older than the current decision bar. It is an online walk-forward
+    prediction, not an order recommendation. The caller must persist these records
+    in the isolated strategy-candidate table and must never feed them to execution.
+    """
+    from app.strategy import generate_trend_signal
+
+    if holding_bars < 1:
+        raise ValueError("LIVE_SHADOW_HOLDING_BARS_MUST_BE_POSITIVE")
+    if len(raw_bars) < FEATURE_LOOKBACK_BARS + 2:
+        return [
+            {
+                "candidate_name": name,
+                "candidate_version": version if name != "current_tsm" else tsm_version,
+                "direction": "NONE",
+                "signal_reason": "INSUFFICIENT_HISTORY",
+                "score": D(0),
+                "features": {"minimum_candles": FEATURE_LOOKBACK_BARS + 2},
+            }
+            for name, version in LIVE_SHADOW_CANDIDATE_VERSIONS.items()
+        ]
+
+    candles: list[Candle] = []
+    for index, row in enumerate(raw_bars):
+        try:
+            candle = Candle(
+                timestamp=int(row["ts"]),
+                open=D(str(row["open"])),
+                high=D(str(row["high"])),
+                low=D(str(row["low"])),
+                close=D(str(row["close"])),
+                volume=D(str(row.get("volume", "0"))),
+                trades=int(row.get("trades", 0)),
+            )
+        except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise HistoricalDataError(f"LIVE_CANDIDATE_CANDLE_INVALID_AT_INDEX_{index}") from exc
+        prices = (candle.open, candle.high, candle.low, candle.close)
+        if (
+            any(not value.is_finite() or value <= 0 for value in prices)
+            or not candle.volume.is_finite()
+            or candle.volume < 0
+            or candle.high < max(candle.open, candle.close, candle.low)
+            or candle.low > min(candle.open, candle.close, candle.high)
+        ):
+            raise HistoricalDataError(f"LIVE_CANDIDATE_OHLC_INVALID_AT_INDEX_{index}")
+        if candles and candle.timestamp <= candles[-1].timestamp:
+            raise HistoricalDataError("LIVE_CANDIDATE_BARS_NOT_STRICTLY_CHRONOLOGICAL")
+        candles.append(candle)
+
+    current_index = len(candles) - 1
+    closes = [item.close for item in candles]
+    tsm = generate_trend_signal(
+        "SHADOW_RESEARCH",
+        closes,
+        fast_threshold_bps=fast_threshold_bps,
+        slow_threshold_bps=slow_threshold_bps,
+    )
+    tsm_candidate = {
+        "candidate_name": "current_tsm",
+        "candidate_version": tsm_version,
+        "direction": tsm.direction,
+        "signal_reason": tsm.reason,
+        "score": tsm.score,
+        "features": {
+            "momentum_fast_bps": str(tsm.momentum_fast_bps),
+            "momentum_slow_bps": str(tsm.momentum_slow_bps),
+            "trend_efficiency_24h": str(tsm.trend_efficiency_24h),
+            "trend_efficiency_72h": str(tsm.trend_efficiency_72h),
+            "stop_distance_pct": str(tsm.stop_distance_pct),
+            "score_is_calibrated_probability": False,
+        },
+    }
+
+    mean_reversion: dict[str, Any] = {
+        "candidate_name": "mean_reversion_24h",
+        "candidate_version": LIVE_SHADOW_CANDIDATE_VERSIONS["mean_reversion_24h"],
+        "direction": "NONE",
+        "signal_reason": "MEAN_REVERSION_WITHIN_FIXED_THRESHOLD",
+        "score": D(0),
+        "features": {"window_bars": 24, "z_score_threshold": 2.0},
+    }
+    if len(closes) >= 24:
+        window = [float(value) for value in closes[-24:]]
+        average = fmean(window)
+        deviation = pstdev(window)
+        if math.isfinite(deviation) and deviation > 0:
+            z_score = (window[-1] - average) / deviation
+            if math.isfinite(z_score):
+                direction = (
+                    "SHORT" if z_score >= 2.0 else
+                    "LONG" if z_score <= -2.0 else "NONE"
+                )
+                reason = (
+                    "MEAN_REVERSION_ZSCORE_HIGH" if direction == "SHORT" else
+                    "MEAN_REVERSION_ZSCORE_LOW" if direction == "LONG" else
+                    "MEAN_REVERSION_WITHIN_FIXED_THRESHOLD"
+                )
+                mean_reversion.update({
+                    "direction": direction,
+                    "signal_reason": reason,
+                    "score": D(str(abs(z_score))),
+                    "features": {
+                        "window_bars": 24,
+                        "z_score_threshold": 2.0,
+                        "z_score": round(z_score, 8),
+                        "moving_average": str(D(str(average))),
+                        "population_stddev": str(D(str(deviation))),
+                    },
+                })
+        else:
+            mean_reversion["signal_reason"] = "MEAN_REVERSION_ZERO_OR_INVALID_VOLATILITY"
+
+    logistic: dict[str, Any] = {
+        "candidate_name": "logistic_regression_wf",
+        "candidate_version": LIVE_SHADOW_CANDIDATE_VERSIONS["logistic_regression_wf"],
+        "direction": "NONE",
+        "signal_reason": "ML_MODEL_NOT_READY",
+        "score": D(0),
+        "features": {
+            "model": "DETERMINISTIC_L2_LOGISTIC_REGRESSION",
+            "long_probability_threshold": LOGISTIC_LONG_THRESHOLD,
+            "short_probability_threshold": LOGISTIC_SHORT_THRESHOLD,
+        },
+    }
+    features = _feature_vector(candles, current_index, 3600)
+    if features is None:
+        logistic["signal_reason"] = "ML_CURRENT_FEATURE_WINDOW_HAS_GAP_OR_INVALID_VALUE"
+    else:
+        historical_examples = _build_examples(
+            candles, interval_minutes=60, holding_bars=holding_bars
+        )
+        # No training label may use an outcome bar at or after the current
+        # decision bar. This is the crucial live walk-forward cutoff.
+        mature_examples = [
+            item for item in historical_examples if item.exit_index < current_index
+        ]
+        model, model_status = _fit_logistic_model(mature_examples)
+        logistic_features = {
+            "model": "DETERMINISTIC_L2_LOGISTIC_REGRESSION",
+            "training_status": model_status,
+            "training_sample_count": len(mature_examples),
+            "training_labels_may_overlap": True,
+            "long_probability_threshold": LOGISTIC_LONG_THRESHOLD,
+            "short_probability_threshold": LOGISTIC_SHORT_THRESHOLD,
+            "feature_names": [
+                "return_1_bar_bps",
+                "return_6_bars_bps",
+                "return_24_bars_bps",
+                "return_72_bars_bps",
+                "realized_volatility_24_bars_bps",
+                "realized_volatility_72_bars_bps",
+                "path_efficiency_24_bars",
+                "path_efficiency_72_bars",
+            ],
+        }
+        if model is None:
+            logistic["signal_reason"] = "ML_" + model_status
+            logistic["features"] = logistic_features
+        else:
+            probability = model.probability_long(features)
+            direction = (
+                "LONG" if probability >= LOGISTIC_LONG_THRESHOLD else
+                "SHORT" if probability <= LOGISTIC_SHORT_THRESHOLD else "NONE"
+            )
+            logistic["direction"] = direction
+            logistic["signal_reason"] = (
+                "ML_LONG_PROBABILITY_THRESHOLD" if direction == "LONG" else
+                "ML_SHORT_PROBABILITY_THRESHOLD" if direction == "SHORT" else
+                "ML_PROBABILITY_IN_NO_TRADE_BAND"
+            )
+            logistic["score"] = D(str(round(probability, 10)))
+            logistic_features.update({
+                "probability_long": round(probability, 10),
+                "probability_is_calibrated": False,
+                "training_sample_count": model.training_samples,
+                "positive_training_label_rate_pct": round(model.positive_label_rate_pct, 6),
+            })
+            logistic["features"] = logistic_features
+
+    return [tsm_candidate, mean_reversion, logistic]
