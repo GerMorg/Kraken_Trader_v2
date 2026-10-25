@@ -1149,9 +1149,18 @@ def summarize_strategy_candidate_research(
             row for row in settled
             if test_start is not None and int(row.get("decision_ts", 0)) >= test_start
         ]
-        train_candidate_rows = [row for row in costed if row in train_rows]
-        validation_candidate_rows = [row for row in costed if row in validation_rows]
-        test_candidate_rows = [row for row in costed if row in test_rows]
+        train_ids = {str(row.get("candidate_id", "")) for row in train_rows}
+        validation_ids = {str(row.get("candidate_id", "")) for row in validation_rows}
+        test_ids = {str(row.get("candidate_id", "")) for row in test_rows}
+        train_candidate_rows = [
+            row for row in costed if str(row.get("candidate_id", "")) in train_ids
+        ]
+        validation_candidate_rows = [
+            row for row in costed if str(row.get("candidate_id", "")) in validation_ids
+        ]
+        test_candidate_rows = [
+            row for row in costed if str(row.get("candidate_id", "")) in test_ids
+        ]
 
         non_overlapping, overlap_excluded, invalid_timing = _non_overlapping_costed_rows(costed)
         summaries.append({
