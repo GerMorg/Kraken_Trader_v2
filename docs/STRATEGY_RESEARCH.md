@@ -160,3 +160,33 @@ Mehrfachtestung und die Auswahl des besten Backtests können die berichtete Perf
 5. Die Produktionsstrategie erst über einen bewusst geprüften, versionierten Wechsel ändern. Research-Dateien können niemals Live-Freigaben erzeugen.
 
 Die Produktivstrategie bleibt in Version 0.1.47 unverändert tsm-0.2.0. Der Offline-Research-Pfad wird nicht aus dem Runtime-Zyklus aufgerufen und verändert weder Orders noch persistente Live-Zustände.
+
+
+## Laufendes paralleles Forward-Shadow-Research ab Version 0.1.48
+
+### Ziel
+
+Die bisherigen Forward-Labels der produktiven TSM-Regel waren negativ. Die Produktionsregel wird deshalb nicht auf kurzfristig bessere Ergebnisse hin angepasst. Version 0.1.48 sammelt im normalen SHADOW-Zyklus Daten für drei klar getrennte Kandidaten, um sie im selben zukünftigen Marktzeitraum vergleichen zu können:
+
+- current_tsm / tsm-0.2.0: dieselbe produktive Trendfolgefunktion, ausschließlich als Referenz.
+- mean_reversion_24h / mean-reversion-24h-0.1.0: ein Gegensignal, wenn der letzte Schlusskurs mindestens zwei Populations-Standardabweichungen vom Mittel der letzten 24 Schlusskurse entfernt ist. Fenster und Schwelle werden im Forward-Test nicht angepasst.
+- logistic_regression_wf / logistic-regression-wf-0.1.0: eine deterministische L2-logistische Regression mit acht Rückblickmerkmalen (1-, 6-, 24- und 72-Bar-Rendite, 24-/72-Bar-Volatilität und 24-/72-Bar-Pfadeffizienz). LONG ab 0,60 prognostizierter positiver Brutto-Richtung, SHORT bis 0,40, dazwischen kein Signal.
+
+Das ML-Modell wird nur dann trainiert, wenn genügend historische Beispiele vorliegen und beide Labelklassen vorhanden sind. Für die aktuelle Entscheidung werden nur Trainingsbeispiele verwendet, deren Ausgangskerze vor der aktuellen Entscheidungsstunde abgeschlossen wurde. Die Features des aktuellen Signals enthalten keine Daten nach der Entscheidungsstunde. Das Modell wird bei einer neuen, abgeschlossenen H1-Kerze neu auf den vorangegangenen, bereits ausgereiften Labels trainiert. Die Trainingslabels überlappen und sind korreliert; die ausgegebene Wahrscheinlichkeit ist nicht kalibriert. Dieses Basismodell ist keine Gewinnprognose.
+
+### Persistenz und Vergleich
+
+Jeder Kandidat bekommt eine eigene Zeile in strategy_candidate_observations. Identitätsschlüssel enthalten Paar, Kerzenzeit, Kandidatenname/-version und Haltehorizont; Wiederholungen im Fünf-Minuten-Zyklus und Neustarts erzeugen daher keine Duplikate. Auch NONE-Signale werden gespeichert, jedoch nicht als ausstehende Trades behandelt. Die Tabelle ist von den existierenden TSM-Forward-Labels und insbesondere von Order-Intents, tatsächlichen Fills und der Execution-State-Machine getrennt.
+
+Nach dem konfigurierten Haltehorizont (Standard acht Stunden) wird das Ziel anhand der lokal gespeicherten Stundenkerze ermittelt. Die Kostenmessung verwendet die beim Signal aktuelle Kraken-Taker-Gebühr, den Einstiegsspread sowie den beim Auswertungszeitpunkt aktuellen Spread als Exit-Proxy und 5 bps Slippage pro Seite. Der spätere aktuelle Spread ist kein historischer Orderbuchnachweis. Wenn ein Zielbalken fehlt, wird kein Kurs erfunden; der Ausgang bleibt unvollständig. Margin-Nettoergebnisse werden nicht berechnet, weil die tatsächlichen konto- und positionsbezogenen Eröffnungs-/Rollover-Kosten nicht verifiziert sind.
+
+SHADOW_STRATEGY_LAB_SUMMARY trennt Ergebnisse nach Kandidatenname und -version. Sie zeigt Beobachtungen, Richtungssignale, fehlende Signale, ausstehende und abgeschlossene Labels, Brutto- und geschätzte Spot-Netto-Werte, Long-/Short-Ergebnisse, chronologische 60/20/20-Teilgruppen mit Ausschluss von Labels über Teilungsgrenzen und eine nicht überlappende Diagnose je Handelspaar. Unterschiedliche Paare können weiterhin korreliert sein. Diese Kennzahlen sind keine unabhängigen Live-Trades, kein Portfolio-PnL und kein Beweis eines positiven Nettovorteils.
+
+Die HA-Option shadow_strategy_lab_enabled ist standardmäßig true. Die Kandidaten werden nicht in die operative Entry-Entscheidung übernommen, es wird kein Kandidat automatisch ausgewählt, Parameter werden nicht promotet und kein Kandidat kann eine Live-Freigabe auslösen. Die Live-Order-Sperre bleibt code-seitig aktiv.
+
+### Dauer und Interpretation des Beobachtungstests
+
+Lass die Anwendung mindestens zwei bis vier Wochen in SHADOW laufen, ohne die persistente Datenbank zurückzusetzen. Die Dauer ist keine statistische Garantie, sondern soll einen ersten prospektiven Vergleich mehrerer Marktregime ermöglichen. Die ersten Ergebnisse entstehen erst nach Ablauf des Haltehorizonts; anschließend muss die Zahl abgeschlossener, nicht überlappender Signale getrennt nach Kandidat beurteilt werden. Eine große Anzahl von Einträgen bedeutet wegen der korrelierten Paare und überlappenden ML-Trainingslabels nicht automatisch eine große effektive Stichprobe.
+
+Zu prüfen sind insbesondere: ob jeder Kandidat konsistent Beobachtungen auf jeder neuen H1-Kerze erzeugt, wie viele seiner Signale tatsächlich gerichtet sind, wie viel Historie wegen Datenlücken fehlt, ob Ergebnislabels vollständig werden, ob der Spot-Kostenproxy positiv ist und ob Long/Short-Ergebnisse stark auseinanderfallen. Positive Ergebnisse müssen danach noch im erweiterten portfolio- und ausführungsgerechten Simulator bestätigt werden. Ein Kandidat mit positiver geschätzter Forward-Netto-Serie darf nicht automatisch live geschaltet werden.
+
