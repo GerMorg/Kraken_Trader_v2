@@ -50,6 +50,7 @@ class Settings:
     live_enabled: bool = False
     kill_switch: bool = True
     validate_shadow_orders: bool = False
+    shadow_strategy_lab_enabled: bool = True
     cycle_interval_seconds: int = 300
     max_market_candidates: int = 12
     market_max_age_seconds: int = 120
@@ -99,6 +100,7 @@ class Settings:
             mode=mode, live_enabled=_bool(raw, "live_enabled", False),
             kill_switch=_bool(raw, "kill_switch", True),
             validate_shadow_orders=_bool(raw, "validate_shadow_orders", False),
+            shadow_strategy_lab_enabled=_bool(raw, "shadow_strategy_lab_enabled", True),
             cycle_interval_seconds=_int(raw, "cycle_interval_seconds", 300, 60, 3600),
             max_market_candidates=_int(raw, "max_market_candidates", 12, 1, 30),
             market_max_age_seconds=_int(raw, "market_max_age_seconds", 120, 15, 600),
@@ -134,6 +136,7 @@ class Settings:
             "mode": self.mode, "live_enabled": self.live_enabled, "kill_switch": self.kill_switch,
             "live_requested": self.live_requested,
             "internal_live_release": INTERNAL_LIVE_EXECUTION_RELEASED,
+            "shadow_strategy_lab_enabled": self.shadow_strategy_lab_enabled,
             "credentials_present": self.credentials_present, "cycle_interval_seconds": self.cycle_interval_seconds,
             "position_take_profit_pct": str(self.position_take_profit_pct),
             "position_take_profit_fraction": str(self.position_take_profit_fraction),
