@@ -12,6 +12,20 @@ Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repos
 
 **Der Entry-Status ist ausdrücklich keine vollständige historische Portfolio-Reconciliation.** Die Edge bleibt nicht kalibriert und Margin-Eröffnungs-/Rollover-Kosten sind nicht bestätigt; diese echten Evidenzlücken bleiben sichtbar. Die interne Live-Order-Freigabe bleibt code-seitig gesperrt.
 
+## Aktueller Status — 0.1.48
+
+**Version 0.1.48 führt ein paralleles Forward-Shadow-Research ein.** Die App beobachtet bei abgeschlossenen Stundenkerzen drei Kandidaten: die bestehende TSM-Regel (als unveränderte Referenz), eine feste Mean-Reversion-Regel und eine einfache logistische Walk-Forward-Prognose. Signale und spätere Ergebnisse werden in einer separaten SQLite-Tabelle gespeichert, getrennt ausgewertet und auch bei Nicht-Signalen nachvollziehbar protokolliert. Alle Kandidaten sind reine Forschung und erzeugen keine Order-Intents.
+
+Das ML-Modell nutzt nur abgeschlossene historische Labels, die vor der aktuellen Entscheidungsstunde liegen. Seine Wahrscheinlichkeiten sind nicht kalibriert, Trainingslabels überlappen und alle Ergebnisse bleiben Forward-Labels statt Portfolio-PnL. Der Research-Bericht kann keine Parameterpromovierung und keine Live-Freigabe auslösen. Die produktive Strategie bleibt tsm-0.2.0, INTERNAL_LIVE_EXECUTION_RELEASED bleibt False.
+
+shadow_strategy_lab_enabled ist in der Home-Assistant-Konfiguration standardmäßig true. Für eine aussagekräftige Beobachtung sollten die App und ihr /data-Speicher mehrere Wochen ohne Löschen der Datenbank laufen. Die ersten acht Stunden liefern noch keine abgeschlossenen Labels dieses neuen Tests; mit wachsender Historie werden die Kandidaten getrennt vergleichbar.
+
+**Vollständige historische Portfolio-Reconciliation, verifizierte Margin-Eröffnungs-/Rollover-Kosten und eine realistische, portfolio-basierte Ausführungssimulation sind weiterhin offene Voraussetzungen.** Diese Version ist keine Live-Freigabe.
+
+### Vorherige Version — 0.1.47
+
+Version 0.1.47 ergänzte einen Offline-Research-Pfad zum Vergleich von TSM, Mean Reversion und einem logistischen ML-Basismodell auf historischen Kraken-OHLCVT-CSV-Dateien. Er prüft Quelldaten und Zeitlücken, ohne künstliche Kerzen zu erzeugen. Version 0.1.48 baut darauf auf und sammelt zusätzlich reine Vorwärtsbeobachtungen im normalen SHADOW-Betrieb.
+
 ### Vorherige Version — 0.1.44
 
 **Version 0.1.43 korrigiert einen zeitlichen Look-ahead-Fehler im OHLCV-Backtest: Der geplante Time-Exit erfolgt am Open des Zielbalkens; dessen späteres High/Low darf den bereits vorgesehenen Exit nicht rückwirkend ändern. Stop und Teilgewinnmitnahme werden jetzt auch im OHLCV-Szenario explizit modelliert. Bei Stop und Take-Profit innerhalb derselben Stundenkerze wird konservativ der Stop zuerst angenommen. Das ist weiterhin nur eine Simulation mit unvollständiger Intrabar-Information, keine Live-Exit-Implementierung und kein Profitabilitätsnachweis.**
