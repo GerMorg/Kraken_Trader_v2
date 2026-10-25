@@ -188,3 +188,92 @@ def test_strategy_lab_rejects_non_hourly_data_and_invalid_cost_assumptions():
             slippage_bps_per_side=D("2"),
             margin_cost_budgets_bps=[D("5")],
         )
+
+
+def test_live_shadow_candidates_produce_three_separate_predictions_with_walk_forward_ml():
+    from app.strategy_lab import generate_live_shadow_candidate_signals
+
+    candles = synthetic_candles(720)
+    raw_bars = [
+        {
+            "ts": item.timestamp,
+            "open": item.open,
+            "high": item.high,
+            "low": item.low,
+            "close": item.close,
+            "volume": item.volume,
+        }
+        for item in candles
+    ]
+    signals = generate_live_shadow_candidate_signals(
+        raw_bars,
+        fast_threshold_bps=D("120"),
+        slow_threshold_bps=D("180"),
+        holding_bars=8,
+        tsm_version="tsm-0.2.0",
+    )
+
+    assert [item["candidate_name"] for item in signals] == [
+        "current_tsm",
+        "mean_reversion_24h",
+        "logistic_regression_wf",
+    ]
+    assert all(item["direction"] in {"LONG", "SHORT", "NONE"} for item in signals)
+    assert signals[0]["candidate_version"] == "tsm-0.2.0"
+    model = signals[2]
+    assert model["features"]["training_status"] == "FITTED_ON_PRIOR_MATURED_LABELS"
+    assert model["features"]["training_sample_count"] >= 200
+    assert model["features"]["training_labels_may_overlap"] is True
+    assert model["features"]["probability_is_calibrated"] is False
+    assert all("order" not in str(item).lower() for item in signals)
+
+
+def test_live_walk_forward_model_does_not_train_on_the_current_decision_bar():
+    from app.strategy_lab import generate_live_shadow_candidate_signals
+
+    candles = synthetic_candles(720)
+    changed_last = list(candles)
+    last = changed_last[-1]
+    changed_open = last.open * D("1.02")
+    changed_close = last.close * D("1.03")
+    changed_last[-1] = Candle(
+        timestamp=last.timestamp,
+        open=changed_open,
+        high=max(changed_open, changed_close) * D("1.002"),
+        low=min(changed_open, changed_close) * D("0.998"),
+        close=changed_close,
+        volume=last.volume,
+        trades=last.trades,
+    )
+
+    def convert(data):
+        return [
+            {
+                "ts": item.timestamp,
+                "open": item.open,
+                "high": item.high,
+                "low": item.low,
+                "close": item.close,
+                "volume": item.volume,
+            }
+            for item in data
+        ]
+
+    original = generate_live_shadow_candidate_signals(
+        convert(candles),
+        fast_threshold_bps=D("120"),
+        slow_threshold_bps=D("180"),
+        holding_bars=8,
+    )[2]
+    changed = generate_live_shadow_candidate_signals(
+        convert(changed_last),
+        fast_threshold_bps=D("120"),
+        slow_threshold_bps=D("180"),
+        holding_bars=8,
+    )[2]
+
+    assert original["features"]["training_sample_count"] == changed["features"]["training_sample_count"]
+    assert (
+        original["features"]["positive_training_label_rate_pct"]
+        == changed["features"]["positive_training_label_rate_pct"]
+    )

@@ -1,3 +1,22 @@
+## Version 0.1.48 — Paralleles Forward-Shadow-Research
+
+Die Home-Assistant-Option shadow_strategy_lab_enabled ist standardmäßig aktiviert. Wenn aktiv, werden nach einer frischen, abgeschlossenen Stundenkerze drei getrennte Kandidatenbeobachtungen je Paar und Kerze gespeichert: current_tsm, mean_reversion_24h und logistic_regression_wf. Auch NONE-Entscheidungen werden gezählt. Ein eindeutiger Schlüssel je Paar/Kerze/Kandidat/Version/Haltehorizont verhindert Doppelaufzeichnungen nach einem Neustart oder in den 5-Minuten-Zyklen.
+
+Der Laufzeitpfad trainiert die logistische Regression bei einer neuen Beobachtung nur aus historischen Beispielen, deren Zielkerze vor der aktuellen Entscheidungsstunde abgeschlossen wurde. Die Modell-Ausgabe ist keine kalibrierte Wahrscheinlichkeit und keine Gewinnprognose. Die Train-Labels überlappen; ihre Anzahl darf nicht als unabhängige Stichprobe gelesen werden.
+
+Nach dem Haltehorizont wertet die App Vorwärtslabels in SHADOW_STRATEGY_CANDIDATE_OUTCOME_SETTLED aus. Die separate SHADOW_STRATEGY_LAB_SUMMARY zeigt pro Kandidat Beobachtungen, ausstehende/abgeschlossene Labels, Brutto- und geschätzte Spot-Netto-Ergebnisse, Long-/Short-Ergebnisse, zeitliche Teilgruppen und eine Überschneidungsdiagnostik. Diese Kennzahlen beruhen auf gespeicherten Stundenkerzen und dem beim Exit aktuellen Spread; sie sind weder exakte Zielhorizont-Fills noch Portfolio-PnL. Margin-Netto-Renditen werden nicht gerechnet, weil die echten Eröffnungs- und Rollover-Kosten nicht bestätigt sind. Es gibt keine automatische Siegerwahl.
+
+### Vorgesehener SHADOW-Beobachtungszeitraum
+
+- Lass die App mindestens 2 bis 4 Wochen in SHADOW laufen, ohne die persistente App-Datenbank unter /data/state/kraken_trader.sqlite3 zu löschen. Diese Dauer ist ein Datensammel-Fenster, keine statistische Garantie; die effektive Zahl abgeschlossener, nicht überlappender Kandidaten-Signale ist maßgeblich.
+- Die ersten abgeschlossenen Forward-Labels erscheinen nach dem konfigurierten Haltehorizont (standardmäßig acht Stunden). Bei Markt-/Datenlücken werden fehlende Resultate als unvollständig markiert, nicht geschätzt.
+- Im AppLog sind SHADOW_STRATEGY_CANDIDATE_RECORDED, SHADOW_STRATEGY_CANDIDATE_OUTCOME_SETTLED, SHADOW_STRATEGY_LAB_SUMMARY und die CYCLE_SUMMARY-Felder shadow_strategy_lab_* relevant.
+- Prüfe in SHADOW_STRATEGY_LAB_SUMMARY, ob alle drei Kandidaten neue Beobachtungen haben, welche Richtung sie vorschlagen, wie viele Labels ausstehen und wie viele nach Kosten geschätzt positiv oder negativ ausfallen. Eine kleine oder korrelierte Stichprobe ist nicht ausreichend für einen Strategieentscheid.
+- Die Research-Tabelle ist getrennt von der Trade-/Intent-Tabelle; die Kandidaten erzeugen keine Orders. INTERNAL_LIVE_EXECUTION_RELEASED bleibt False, unabhängig von Konfiguration und Ergebnissen.
+
+Zum Deaktivieren des zusätzlichen Research-Aufwands die Option shadow_strategy_lab_enabled in der Home-Assistant-App-Konfiguration auf false setzen. Dies deaktiviert nur das parallele Research, nicht die bestehende Shadow-Strategie oder den normalen Betriebsstatus.
+
+
 ## Version 0.1.47 — Offline-Research für Strategievergleiche
 
 Der Research-Pfad ist ein Entwickler-/Analysewerkzeug. Er wird nicht vom Runtime-Zyklus aufgerufen, schreibt nicht in die Produktiv-SQLite-Datenbank und kann keine Order erzeugen. Er soll den negativen bisherigen TSM-Befund mit vorab festgelegten Alternativen prüfen, nicht den aktuellen Trade-Gate übersteuern.

@@ -172,6 +172,39 @@ class Persistence:
                     ON research_observations(status,target_epoch);
                 CREATE INDEX IF NOT EXISTS research_pair_target_idx
                     ON research_observations(pair,interval_minutes,target_epoch);
+                CREATE TABLE IF NOT EXISTS strategy_candidate_observations(
+                    candidate_id TEXT PRIMARY KEY,
+                    pair TEXT NOT NULL,
+                    interval_minutes INTEGER NOT NULL,
+                    bar_ts INTEGER NOT NULL,
+                    decision_ts INTEGER NOT NULL,
+                    candidate_name TEXT NOT NULL,
+                    candidate_version TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    signal_reason TEXT NOT NULL,
+                    score TEXT NOT NULL,
+                    features_json TEXT NOT NULL,
+                    entry_mid_price TEXT NOT NULL,
+                    entry_spread_bps TEXT NOT NULL,
+                    taker_fee_bps TEXT,
+                    horizon_seconds INTEGER NOT NULL,
+                    target_epoch INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    outcome_bar_ts INTEGER,
+                    exit_close_price TEXT,
+                    exit_spread_bps TEXT,
+                    gross_return_bps TEXT,
+                    spot_cost_estimate_bps TEXT,
+                    spot_net_return_bps TEXT,
+                    cost_quality TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(pair,interval_minutes,bar_ts,candidate_name,candidate_version,horizon_seconds)
+                );
+                CREATE INDEX IF NOT EXISTS strategy_candidates_pending_idx
+                    ON strategy_candidate_observations(status,target_epoch);
+                CREATE INDEX IF NOT EXISTS strategy_candidates_pair_bar_idx
+                    ON strategy_candidate_observations(pair,interval_minutes,bar_ts);
             """)
             research_columns = {
                 str(row["name"]) for row in self.connection.execute("PRAGMA table_info(research_observations)")
@@ -208,7 +241,7 @@ class Persistence:
                     "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','9') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','10') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
@@ -593,6 +626,176 @@ class Persistence:
                 (max(1, min(int(limit), 20000)),),
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
+
+    def record_strategy_candidate_observation(self, observation: dict[str, Any]) -> bool:
+        """Persist an immutable research-only strategy candidate observation."""
+        required = (
+            "candidate_id", "pair", "interval_minutes", "bar_ts", "decision_ts",
+            "candidate_name", "candidate_version", "direction", "signal_reason",
+            "score", "features", "entry_mid_price", "entry_spread_bps",
+            "horizon_seconds", "target_epoch",
+        )
+        if any(key not in observation for key in required):
+            raise ValueError("STRATEGY_CANDIDATE_REQUIRED_FIELD_MISSING")
+        candidate_id = str(observation["candidate_id"]).strip()
+        pair = str(observation["pair"]).strip()
+        candidate_name = str(observation["candidate_name"]).strip()
+        candidate_version = str(observation["candidate_version"]).strip()
+        direction = str(observation["direction"]).upper()
+        if (
+            not candidate_id or not pair or not candidate_name or not candidate_version
+            or direction not in {"LONG", "SHORT", "NONE"}
+        ):
+            raise ValueError("STRATEGY_CANDIDATE_IDENTITY_INVALID")
+        try:
+            interval = int(observation["interval_minutes"])
+            bar_ts = int(observation["bar_ts"])
+            decision_ts = int(observation["decision_ts"])
+            horizon_seconds = int(observation["horizon_seconds"])
+            target_epoch = int(observation["target_epoch"])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("STRATEGY_CANDIDATE_TIME_INVALID") from exc
+        if (
+            interval <= 0 or bar_ts < 0 or decision_ts <= 0 or horizon_seconds <= 0
+            or target_epoch - decision_ts != horizon_seconds
+        ):
+            raise ValueError("STRATEGY_CANDIDATE_TIME_INVALID")
+        numeric_values: dict[str, Decimal] = {}
+        for field in ("score", "entry_mid_price", "entry_spread_bps"):
+            try:
+                value = Decimal(str(observation[field]))
+            except (ArithmeticError, TypeError, ValueError) as exc:
+                raise ValueError("STRATEGY_CANDIDATE_NUMERIC_FIELD_INVALID:" + field) from exc
+            if not value.is_finite():
+                raise ValueError("STRATEGY_CANDIDATE_NUMERIC_FIELD_NON_FINITE:" + field)
+            numeric_values[field] = value
+        if numeric_values["entry_mid_price"] <= 0 or numeric_values["entry_spread_bps"] < 0:
+            raise ValueError("STRATEGY_CANDIDATE_ENTRY_QUOTE_INVALID")
+        fee_value = observation.get("taker_fee_bps")
+        if fee_value is not None:
+            try:
+                fee = Decimal(str(fee_value))
+            except (ArithmeticError, TypeError, ValueError) as exc:
+                raise ValueError("STRATEGY_CANDIDATE_TAKER_FEE_INVALID") from exc
+            if not fee.is_finite() or fee < 0:
+                raise ValueError("STRATEGY_CANDIDATE_TAKER_FEE_INVALID")
+        features = observation["features"]
+        if not isinstance(features, dict):
+            raise ValueError("STRATEGY_CANDIDATE_FEATURES_NOT_MAPPING")
+
+        now = _now()
+        status = "PENDING" if direction in {"LONG", "SHORT"} else "NO_DIRECTION"
+        with self.lock:
+            cursor = self.connection.execute(
+                "INSERT OR IGNORE INTO strategy_candidate_observations("
+                "candidate_id,pair,interval_minutes,bar_ts,decision_ts,candidate_name,"
+                "candidate_version,direction,signal_reason,score,features_json,entry_mid_price,"
+                "entry_spread_bps,taker_fee_bps,horizon_seconds,target_epoch,status,created_at,updated_at"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    candidate_id, pair, interval, bar_ts, decision_ts, candidate_name,
+                    candidate_version, direction, str(observation["signal_reason"]),
+                    str(numeric_values["score"]), _json(features),
+                    str(numeric_values["entry_mid_price"]), str(numeric_values["entry_spread_bps"]),
+                    str(fee_value) if fee_value is not None else None, horizon_seconds,
+                    target_epoch, status, now, now,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def strategy_candidate_bar_is_complete(
+        self,
+        pair: str,
+        bar_ts: int,
+        *,
+        interval_minutes: int = 60,
+        expected_candidate_count: int = 3,
+    ) -> bool:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT COUNT(DISTINCT candidate_name || ':' || candidate_version) AS candidate_count "
+                "FROM strategy_candidate_observations WHERE pair=? AND interval_minutes=? AND bar_ts=?",
+                (str(pair), int(interval_minutes), int(bar_ts)),
+            ).fetchone()
+        return row is not None and int(row["candidate_count"]) >= expected_candidate_count
+
+    def pending_strategy_candidate_observations(
+        self, pair: str, interval_minutes: int = 60, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT * FROM strategy_candidate_observations WHERE status='PENDING' "
+                "AND pair=? AND interval_minutes=? ORDER BY target_epoch,decision_ts LIMIT ?",
+                (pair, interval_minutes, max(1, min(int(limit), 5000))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def settle_strategy_candidate_observation(
+        self, candidate_id: str, outcome: dict[str, Any]
+    ) -> bool:
+        required = (
+            "status", "outcome_bar_ts", "exit_close_price", "exit_spread_bps",
+            "gross_return_bps", "spot_cost_estimate_bps", "spot_net_return_bps",
+            "cost_quality",
+        )
+        if any(key not in outcome for key in required):
+            raise ValueError("STRATEGY_CANDIDATE_OUTCOME_REQUIRED_FIELD_MISSING")
+        status = str(outcome["status"])
+        if status not in {
+            "SETTLED_COST_ESTIMATE", "SETTLED_GROSS_ONLY", "INCOMPLETE_MISSING_TARGET_BAR"
+        }:
+            raise ValueError("STRATEGY_CANDIDATE_OUTCOME_STATUS_INVALID")
+        for field in (
+            "exit_close_price", "exit_spread_bps", "gross_return_bps",
+            "spot_cost_estimate_bps", "spot_net_return_bps",
+        ):
+            value = outcome[field]
+            if value is None:
+                continue
+            try:
+                parsed = Decimal(str(value))
+            except (ArithmeticError, TypeError, ValueError) as exc:
+                raise ValueError("STRATEGY_CANDIDATE_OUTCOME_NUMERIC_INVALID:" + field) from exc
+            if not parsed.is_finite():
+                raise ValueError("STRATEGY_CANDIDATE_OUTCOME_NUMERIC_INVALID:" + field)
+            if field == "exit_close_price" and parsed <= 0:
+                raise ValueError("STRATEGY_CANDIDATE_OUTCOME_NUMERIC_INVALID:" + field)
+            if field == "exit_spread_bps" and parsed < 0:
+                raise ValueError("STRATEGY_CANDIDATE_OUTCOME_NUMERIC_INVALID:" + field)
+        now = _now()
+        with self.lock:
+            cursor = self.connection.execute(
+                "UPDATE strategy_candidate_observations SET status=?,outcome_bar_ts=?,"
+                "exit_close_price=?,exit_spread_bps=?,gross_return_bps=?,"
+                "spot_cost_estimate_bps=?,spot_net_return_bps=?,cost_quality=?,updated_at=? "
+                "WHERE candidate_id=? AND status='PENDING'",
+                (
+                    status,
+                    int(outcome["outcome_bar_ts"]) if outcome["outcome_bar_ts"] is not None else None,
+                    str(outcome["exit_close_price"]) if outcome["exit_close_price"] is not None else None,
+                    str(outcome["exit_spread_bps"]) if outcome["exit_spread_bps"] is not None else None,
+                    str(outcome["gross_return_bps"]) if outcome["gross_return_bps"] is not None else None,
+                    str(outcome["spot_cost_estimate_bps"]) if outcome["spot_cost_estimate_bps"] is not None else None,
+                    str(outcome["spot_net_return_bps"]) if outcome["spot_net_return_bps"] is not None else None,
+                    str(outcome["cost_quality"]), now, str(candidate_id),
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def strategy_candidate_observations(self, limit: int = 100000) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT * FROM strategy_candidate_observations "
+                "ORDER BY decision_ts DESC,candidate_id DESC LIMIT ?",
+                (max(1, min(int(limit), 100000)),),
+            ).fetchall()
+        result = [dict(row) for row in reversed(rows)]
+        for row in result:
+            try:
+                row["features"] = json.loads(str(row.pop("features_json")))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                row["features"] = {}
+        return result
 
     def create_intent(self, intent: dict[str, Any], *, initial_state: str = "INTENT_CREATED") -> bool:
         required = ("intent_id", "decision_id", "client_order_id", "pair", "action", "side", "volume")

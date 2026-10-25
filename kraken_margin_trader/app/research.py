@@ -985,3 +985,257 @@ def settle_due_observations(
                 },
             })
     return results
+
+
+def settle_due_strategy_candidate_observations(
+    persistence: Any,
+    *,
+    pair: str,
+    current_exit_spread_bps: Decimal,
+    interval_minutes: int = 60,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Settle isolated parallel-candidate labels; never creates execution intents."""
+    if not current_exit_spread_bps.is_finite() or current_exit_spread_bps < 0:
+        return []
+    results: list[dict[str, Any]] = []
+    for row in persistence.pending_strategy_candidate_observations(
+        pair, interval_minutes, limit
+    ):
+        target_epoch = int(row["target_epoch"])
+        target_bar = persistence.research_bar_covering_epoch(
+            pair, interval_minutes, target_epoch
+        )
+        if target_bar is None:
+            newest_bar_ts = persistence.latest_bar_timestamp(pair, interval_minutes)
+            if newest_bar_ts is None or newest_bar_ts < target_epoch:
+                continue
+            outcome: dict[str, Any] = {
+                "status": "INCOMPLETE_MISSING_TARGET_BAR",
+                "outcome_bar_ts": None,
+                "exit_close_price": None,
+                "exit_spread_bps": str(current_exit_spread_bps),
+                "gross_return_bps": None,
+                "spot_cost_estimate_bps": None,
+                "spot_net_return_bps": None,
+                "cost_quality": "TARGET_HOURLY_BAR_MISSING;NO_OUTCOME_INFERRED",
+            }
+            if persistence.settle_strategy_candidate_observation(row["candidate_id"], outcome):
+                results.append({
+                    "event": "SHADOW_STRATEGY_CANDIDATE_OUTCOME_INCOMPLETE",
+                    "payload": {
+                        "candidate_id": row["candidate_id"],
+                        "candidate_name": row["candidate_name"],
+                        "candidate_version": row["candidate_version"],
+                        "pair": pair,
+                        "direction": row["direction"],
+                        "target_epoch": target_epoch,
+                        "latest_bar_ts": newest_bar_ts,
+                        "reason": "TARGET_HOURLY_BAR_MISSING",
+                        "actual_fill": False,
+                        "portfolio_pnl": False,
+                    },
+                })
+            continue
+
+        fee = D(str(row["taker_fee_bps"])) if row.get("taker_fee_bps") is not None else None
+        estimate = estimate_forward_outcome(
+            direction=str(row["direction"]),
+            entry_mid_price=D(str(row["entry_mid_price"])),
+            exit_close_price=D(str(target_bar["close"])),
+            entry_spread_bps=D(str(row["entry_spread_bps"])),
+            exit_spread_bps=current_exit_spread_bps,
+            taker_fee_bps=fee,
+        )
+        status = "SETTLED_COST_ESTIMATE" if fee is not None else "SETTLED_GROSS_ONLY"
+        outcome = {
+            "status": status,
+            "outcome_bar_ts": int(target_bar["ts"]),
+            "exit_close_price": str(target_bar["close"]),
+            "exit_spread_bps": str(current_exit_spread_bps),
+            "gross_return_bps": estimate["gross_return_bps"],
+            "spot_cost_estimate_bps": estimate["spot_cost_estimate_bps"],
+            "spot_net_return_bps": estimate["spot_net_return_bps"],
+            "cost_quality": str(estimate["cost_quality"]),
+        }
+        if persistence.settle_strategy_candidate_observation(row["candidate_id"], outcome):
+            results.append({
+                "event": "SHADOW_STRATEGY_CANDIDATE_OUTCOME_SETTLED",
+                "payload": {
+                    "candidate_id": row["candidate_id"],
+                    "candidate_name": row["candidate_name"],
+                    "candidate_version": row["candidate_version"],
+                    "pair": pair,
+                    "direction": row["direction"],
+                    "decision_ts": int(row["decision_ts"]),
+                    "target_epoch": target_epoch,
+                    "outcome_bar_ts": int(target_bar["ts"]),
+                    "gross_return_bps": str(estimate["gross_return_bps"]),
+                    "spot_net_return_bps": (
+                        str(estimate["spot_net_return_bps"])
+                        if estimate["spot_net_return_bps"] is not None else None
+                    ),
+                    "cost_quality": estimate["cost_quality"],
+                    "actual_fill": False,
+                    "portfolio_pnl": False,
+                },
+            })
+    return results
+
+
+def summarize_strategy_candidate_research(
+    observations: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """Summarize each live-observed candidate independently without a release decision."""
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in observations:
+        name = str(row.get("candidate_name", "unknown"))
+        version = str(row.get("candidate_version", "unknown"))
+        groups.setdefault((name, version), []).append(row)
+
+    summaries: list[dict[str, Any]] = []
+    for (name, version), group in sorted(groups.items()):
+        ordered = sorted(
+            group,
+            key=lambda row: (
+                int(row.get("decision_ts", 0)),
+                str(row.get("pair", "")),
+                str(row.get("candidate_id", "")),
+            ),
+        )
+        directional = [
+            row for row in ordered if str(row.get("direction", "")).upper() in {"LONG", "SHORT"}
+        ]
+        settled = [
+            row for row in directional
+            if row.get("status") in {"SETTLED_COST_ESTIMATE", "SETTLED_GROSS_ONLY"}
+        ]
+        gross_rows = [row for row in settled if row.get("gross_return_bps") is not None]
+        costed = [row for row in settled if row.get("spot_net_return_bps") is not None]
+        pending = [row for row in directional if row.get("status") == "PENDING"]
+        incomplete = [
+            row for row in directional if row.get("status") == "INCOMPLETE_MISSING_TARGET_BAR"
+        ]
+
+        decision_times = sorted({int(row.get("decision_ts", 0)) for row in settled})
+        train_boundary_index = int(len(decision_times) * 0.60)
+        validation_boundary_index = int(len(decision_times) * 0.80)
+        validation_start = (
+            decision_times[train_boundary_index]
+            if train_boundary_index < len(decision_times) else None
+        )
+        test_start = (
+            decision_times[validation_boundary_index]
+            if validation_boundary_index < len(decision_times) else None
+        )
+        if validation_start is not None:
+            train_rows = [
+                row for row in settled
+                if int(row.get("decision_ts", 0)) < validation_start
+                and int(row.get("target_epoch", 0)) < validation_start
+            ]
+        else:
+            train_rows = []
+        if validation_start is not None and test_start is not None:
+            validation_rows = [
+                row for row in settled
+                if int(row.get("decision_ts", 0)) >= validation_start
+                and int(row.get("decision_ts", 0)) < test_start
+                and int(row.get("target_epoch", 0)) < test_start
+            ]
+        else:
+            validation_rows = []
+        test_rows = [
+            row for row in settled
+            if test_start is not None and int(row.get("decision_ts", 0)) >= test_start
+        ]
+        train_ids = {str(row.get("candidate_id", "")) for row in train_rows}
+        validation_ids = {str(row.get("candidate_id", "")) for row in validation_rows}
+        test_ids = {str(row.get("candidate_id", "")) for row in test_rows}
+        train_candidate_rows = [
+            row for row in costed if str(row.get("candidate_id", "")) in train_ids
+        ]
+        validation_candidate_rows = [
+            row for row in costed if str(row.get("candidate_id", "")) in validation_ids
+        ]
+        test_candidate_rows = [
+            row for row in costed if str(row.get("candidate_id", "")) in test_ids
+        ]
+
+        non_overlapping, overlap_excluded, invalid_timing = _non_overlapping_costed_rows(costed)
+        summaries.append({
+            "candidate_name": name,
+            "candidate_version": version,
+            "observation_count": len(ordered),
+            "directional_observation_count": len(directional),
+            "no_direction_count": sum(1 for row in ordered if row.get("status") == "NO_DIRECTION"),
+            "pending_directional_count": len(pending),
+            "settled_directional_count": len(settled),
+            "costed_outcome_count": len(costed),
+            "incomplete_directional_count": len(incomplete),
+            "gross_outcomes": _metrics_for_field(gross_rows, "gross_return_bps", "gross"),
+            "spot_net_cost_proxy": _metrics_for_field(costed, "spot_net_return_bps", "net"),
+            "spot_net_cost_proxy_by_direction": {
+                direction: _metrics_for_field(
+                    [row for row in costed if str(row.get("direction", "")).upper() == direction],
+                    "spot_net_return_bps",
+                    "net",
+                )
+                for direction in ("LONG", "SHORT")
+            },
+            "chronological_costed_splits_with_target_horizon_purge": {
+                "train_first_60_percent": _metrics_for_field(
+                    train_candidate_rows, "spot_net_return_bps", "net"
+                ),
+                "validation_next_20_percent": _metrics_for_field(
+                    validation_candidate_rows, "spot_net_return_bps", "net"
+                ),
+                "test_last_20_percent": _metrics_for_field(
+                    test_candidate_rows, "spot_net_return_bps", "net"
+                ),
+                "split_boundary_purge_applied": True,
+            },
+            "non_overlapping_costed_diagnostic": {
+                "candidate_count": len(costed),
+                "selected_count": len(non_overlapping),
+                "overlap_excluded_count": overlap_excluded,
+                "invalid_timing_excluded_count": invalid_timing,
+                "metrics": _metrics_for_field(
+                    non_overlapping, "spot_net_return_bps", "net"
+                ),
+                "cross_pair_correlation_modeled": False,
+            },
+            "actual_fills": False,
+            "portfolio_pnl": False,
+            "release_gate_eligible": False,
+        })
+
+    return {
+        "event_scope": "PARALLEL_SHADOW_RESEARCH_ONLY",
+        "status": "INSUFFICIENT_FORWARD_SAMPLE" if not summaries or not any(
+            item["costed_outcome_count"] for item in summaries
+        ) else "FORWARD_SAMPLES_AVAILABLE_REVIEW_REQUIRED",
+        "candidate_count": len(summaries),
+        "candidates": summaries,
+        "cost_model": {
+            "spot_fee_basis": "KRAKEN_TRADE_VOLUME_TAKER_FEE_WHEN_AVAILABLE",
+            "spread_basis": "ENTRY_SPREAD_AND_CURRENT_EXIT_SPREAD_ESTIMATE",
+            "slippage_bps_per_side": str(RESEARCH_SLIPPAGE_BPS_PER_SIDE),
+            "margin_net_returns_calculated": False,
+            "margin_open_and_rollover_costs_confirmed": False,
+        },
+        "actual_fills": False,
+        "portfolio_pnl": False,
+        "automatic_strategy_selection": False,
+        "parameter_promotion": False,
+        "release_gate_eligible": False,
+        "limitations": [
+            "A candidate observation is a forecast label, not an executed order or fill.",
+            "The logistic candidate is refit using only labels completed before the current decision bar.",
+            "The logistic training samples have overlapping horizons and are correlated.",
+            "Forward outcomes use the close of the stored hourly candle covering the target time, not an exact-horizon executable price.",
+            "The primary net series uses the current exit spread, not historical order-book evidence.",
+            "The costed spot series does not include confirmed margin opening or rollover costs.",
+            "No portfolio sizing, cross-pair correlation, order-book execution, liquidation, or live PnL is modeled.",
+        ],
+    }

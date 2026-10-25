@@ -21,6 +21,11 @@ def test_options_cannot_raise_code_owned_caps():
     assert config.live_requested
 
 
+def test_parallel_strategy_research_defaults_on_and_can_be_disabled():
+    assert Settings().shadow_strategy_lab_enabled is True
+    assert Settings.from_mapping({"shadow_strategy_lab_enabled": False}).shadow_strategy_lab_enabled is False
+
+
 def test_unknown_mode_falls_back_to_shadow():
     assert Settings.from_mapping({"mode": "unexpected"}).mode == "SHADOW"
 
