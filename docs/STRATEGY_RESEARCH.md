@@ -114,3 +114,49 @@ Die OHLCV-Kennzahlen bleiben als `SCENARIO_ONLY_NOT_LIVE_VALIDATION` ausgewiesen
 8. Erst nach vorab dokumentierten Stichproben-, Performance- und Sicherheitskriterien separat über einen kleinen beaufsichtigten Live-Test entscheiden.
 
 News, Gemini, autonomes Lernen und automatische Parameterpromotion sind im v1-Umfang ausdrücklich nicht vorgesehen.
+
+## Isolierter Strategievergleich ab Version 0.1.47
+
+### Anlass und Ziel
+
+Die bisherige H1-TSM-Variante hat in den vorliegenden Shadow-Forward- und Szenario-Berichten keinen positiven Netto-Vorteil gezeigt. Daraus folgt weder, dass jede Trendfolge ungeeignet ist, noch dass Machine Learning besser wäre. Die nächste Stufe vergleicht daher wenige vorab festgelegte Kandidaten mit identischer zeitlicher Zieldefinition und expliziten Kostenannahmen, statt Schwellenwerte an den bereits beobachteten Ergebnissen nachzujustieren.
+
+### Import und Datenqualität
+
+Das neue Offline-Modul app/strategy_lab.py und scripts/compare_strategies.py lesen eine lokal bereitgestellte Kraken-OHLCVT-CSV. Kraken beschreibt die Quelldatei als headerloses CSV mit sieben Feldern je Zeile: timestamp, open, high, low, close, volume und trades. Der Import speichert im Bericht den SHA-256-Hash der Eingabedatei. Er bricht bei ungültigen Werten, nicht chronologischen Zeilen und widersprüchlichen Duplikaten ab. Identische wiederholte Zeilen werden gezählt und dedupliziert.
+
+Die offiziellen OHLCVT-Dateien enthalten nur Intervalle mit Trades; fehlende Candles dürfen nicht pauschal als Preisbewegung null behandelt oder erfunden werden. Deshalb werden Features und Vorwärtslabels, deren Lookback oder Haltehorizont eine Zeitlücke überschreitet, aus dem Vergleich entfernt. Datenlücken, ausgeschlossene Beispiele und Zeitgrenzen stehen im JSON-Bericht. Quelle: https://support.kraken.com/de/articles/360047124832-downloadable-historical-ohlcvt-open-high-low-close-volume-trades-data
+
+### Vorab festgelegte Kandidaten
+
+1. current_tsm: Aufruf der bestehenden Funktion generate_trend_signal mit den dokumentierten Standard-Schwellen 120 bps (24 Stunden) und 180 bps (72 Stunden). Das ist ein Referenzkandidat, keine Aussage über eine kalibrierte Renditeprognose.
+2. mean_reversion_24h: Gegenläufiges Signal, wenn der letzte Schlusskurs mindestens zwei Standardabweichungen vom Mittel der letzten 24 Schlusskurse entfernt liegt. Fenster und Schwelle werden nicht nach dem Holdout-Ergebnis optimiert.
+3. logistic_regression_baseline: deterministische L2-logistische Regression mit acht zeitlich rückwärtsgerichteten Features: 1-, 6-, 24- und 72-Bar-Rendite, 24- und 72-Bar-Volatilität sowie 24- und 72-Bar-Pfadeffizienz. Ein LONG wird nur ab vorher festgelegter Wahrscheinlichkeit 0,60, ein SHORT nur bis 0,40 signalisiert; sonst bleibt das Modell flat. Die Normalisierung und Modellparameter werden ausschließlich auf dem Train-Abschnitt angepasst. Keine externe ML-Abhängigkeit und kein Online-Lernen.
+
+Cash (Nullrendite) und Buy-and-Hold werden als Benchmarks separat angezeigt. Da ein fixer Satz von Kandidaten vorab definiert ist, ist das Ergebnis noch kein Nachweis einer statistisch überlegenen Strategie. Das logistische Modell ist ein kleines, transparentes Basismodell, kein Deep Learning und kein autonomer Strategiewechsel.
+
+### Zeitliche Methodik und Metriken
+
+Die erste Version verwendet einen chronologischen 60/20/20-Train-/Validation-/Test-Schnitt. Das geplante Haltefenster beträgt standardmäßig acht Stunden; jeder Einstieg wird erst am Open der nächsten Stundenkerze und der Ausgang am Open acht Kerzen später bewertet. Zielhorizonte, die in den nächsten Abschnitt hineinreichen würden, werden an den Trennlinien ausgeschlossen. Pro Kandidat werden überlappende Trades durch eine deterministische zeitliche Regel entfernt. Train-Ergebnisse für das ML-Modell sind In-Sample; Validation und Test werden als zeitlich zurückgehalten ausgewiesen.
+
+Diese Implementierung ist ausdrücklich noch keine vollständige expanding-window Walk-Forward-Validierung. Die Kostenseite verwendet vom Aufrufer eingegebene Taker-Gebühr, Round-trip-Spread, Slippage und mehrere kombinierte Margin-Kostenbudgets. Margin-Budgets sind Sensitivitätsannahmen, keine Kraken-Quotes. Die Auswertung misst Forward-Bewegungen bezogen auf das Positionsnotional und bildet keinen vollständigen Order-/Positionspfad ab.
+
+Der Bericht kennzeichnet dauerhaft: release_gate_eligible=false, actual_fills=false, portfolio_pnl=false und parameter_promotion=false. Er modelliert aktuell keine reale Leverage-Equitykurve, Position Sizing, Stop-Ausführung innerhalb von OHLC-Bars, Liquidation, historische Orderbuchtiefe, Queue-Priorität, Teilfüllungen, Margin-Finanzierungszeitpunkte oder Cross-Pair-Korrelation. Positive Werte wären deshalb nur ein Anlass für weitere Research-Schritte, nie allein eine Live-Freigabe.
+
+### Warum ML nur ein Basismodell ist
+
+Neuere Arbeiten zeigen, warum Prognosegenauigkeit und Nettorendite getrennt geprüft werden müssen. Bysik und Ślepaczuk untersuchen in einem 2026er Preprint stündliche BTC-USDT-Daten über 2018–2026 und berichten, dass simple richtungsbasierte Modelle unter Transaktionskosten scheitern können; kostenabhängige Filter verringern den Turnover und helfen ausgewählten Varianten. Der beschriebene Markt, Kostenansatz und Simulator sind nicht mit diesem Kraken-Konto gleichzusetzen: https://arxiv.org/abs/2606.00060
+
+Kim beschreibt in einem 2026er SSRN-Arbeitspapier anhand von Varianten für mehrere Assets und Zeitrahmen unter anderem Richtungsbias und die Lücke zwischen statistischer Vorhersage und ökonomischem Nutzen. Das ist ein Working Paper und kein Nachweis einer übertragbaren Strategie: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6508779
+
+Mehrfachtestung und die Auswahl des besten Backtests können die berichtete Performance verzerren; dazu siehe Bailey et al., The Probability of Backtest Overfitting: https://www.davidhbailey.com/dhbpapers/backtest-prob.pdf. Deshalb wird das Testsegment nicht zur Schwellenwertsuche verwendet und keine automatische Parameterpromotion zugelassen. Eine spätere Erweiterung muss vorab registrierte Walk-Forward-Folds, Kosten-/Ausführungsrealismus, Ergebnisunsicherheit und Tests gegen Mehrfachauswahl berücksichtigen.
+
+### Nächste Research-Stufen
+
+1. Den Offline-Import auf mehreren liquiden USD-Paaren einsetzen und Datenumfang, Quellhash, Gaps, tatsächliche Fee-Tier und Marktzeiträume prüfen.
+2. Den festen Holdout um mehrere expanding-window Walk-Forward-Folds mit einem final unangetasteten Endsegment erweitern, die vor der Auswertung dokumentiert werden.
+3. Den Vergleich in einen portfolio-basierten Simulator integrieren, der Positionsgrößen, bestätigte/geschätzte Gebühren, Margin-Kosten über die echte Haltedauer, offene Orders, Slippage, Spread, Stress und Korrelation berücksichtigt.
+4. Erst nach diesem Schritt strategische Varianten auswählen und separat gegen längere Out-of-Sample- und Forward-Shadow-Daten prüfen.
+5. Die Produktionsstrategie erst über einen bewusst geprüften, versionierten Wechsel ändern. Research-Dateien können niemals Live-Freigaben erzeugen.
+
+Die Produktivstrategie bleibt in Version 0.1.47 unverändert tsm-0.2.0. Der Offline-Research-Pfad wird nicht aus dem Runtime-Zyklus aufgerufen und verändert weder Orders noch persistente Live-Zustände.
