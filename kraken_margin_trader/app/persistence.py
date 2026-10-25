@@ -786,10 +786,10 @@ class Persistence:
         with self.lock:
             rows = self.connection.execute(
                 "SELECT * FROM strategy_candidate_observations "
-                "ORDER BY decision_ts,candidate_id LIMIT ?",
+                "ORDER BY decision_ts DESC,candidate_id DESC LIMIT ?",
                 (max(1, min(int(limit), 100000)),),
             ).fetchall()
-        result = [dict(row) for row in rows]
+        result = [dict(row) for row in reversed(rows)]
         for row in result:
             try:
                 row["features"] = json.loads(str(row.pop("features_json")))
