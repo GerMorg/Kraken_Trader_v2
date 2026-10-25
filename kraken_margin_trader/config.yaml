@@ -1,5 +1,5 @@
 name: Kraken Margin Trader
-version: 0.1.47
+version: 0.1.48
 slug: kraken_margin_trader
 description: >-
   Eigenständiger Kraken Spot- und Spot-Margin-Trader mit Auditspur.
@@ -23,6 +23,7 @@ options:
   live_enabled: false
   kill_switch: true
   validate_shadow_orders: false
+  shadow_strategy_lab_enabled: true
   cycle_interval_seconds: 300
   max_market_candidates: 12
   market_max_age_seconds: 120
@@ -50,6 +51,7 @@ schema:
   live_enabled: bool
   kill_switch: bool
   validate_shadow_orders: bool
+  shadow_strategy_lab_enabled: bool
   cycle_interval_seconds: int(60,3600)
   max_market_candidates: int(1,30)
   market_max_age_seconds: int(15,600)
