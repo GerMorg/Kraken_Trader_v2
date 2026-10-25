@@ -172,6 +172,39 @@ class Persistence:
                     ON research_observations(status,target_epoch);
                 CREATE INDEX IF NOT EXISTS research_pair_target_idx
                     ON research_observations(pair,interval_minutes,target_epoch);
+                CREATE TABLE IF NOT EXISTS strategy_candidate_observations(
+                    candidate_id TEXT PRIMARY KEY,
+                    pair TEXT NOT NULL,
+                    interval_minutes INTEGER NOT NULL,
+                    bar_ts INTEGER NOT NULL,
+                    decision_ts INTEGER NOT NULL,
+                    candidate_name TEXT NOT NULL,
+                    candidate_version TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    signal_reason TEXT NOT NULL,
+                    score TEXT NOT NULL,
+                    features_json TEXT NOT NULL,
+                    entry_mid_price TEXT NOT NULL,
+                    entry_spread_bps TEXT NOT NULL,
+                    taker_fee_bps TEXT,
+                    horizon_seconds INTEGER NOT NULL,
+                    target_epoch INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    outcome_bar_ts INTEGER,
+                    exit_close_price TEXT,
+                    exit_spread_bps TEXT,
+                    gross_return_bps TEXT,
+                    spot_cost_estimate_bps TEXT,
+                    spot_net_return_bps TEXT,
+                    cost_quality TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(pair,interval_minutes,bar_ts,candidate_name,candidate_version,horizon_seconds)
+                );
+                CREATE INDEX IF NOT EXISTS strategy_candidates_pending_idx
+                    ON strategy_candidate_observations(status,target_epoch);
+                CREATE INDEX IF NOT EXISTS strategy_candidates_pair_bar_idx
+                    ON strategy_candidate_observations(pair,interval_minutes,bar_ts);
             """)
             research_columns = {
                 str(row["name"]) for row in self.connection.execute("PRAGMA table_info(research_observations)")
@@ -208,7 +241,7 @@ class Persistence:
                     "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','9') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','10') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
