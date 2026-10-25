@@ -17,15 +17,18 @@
 - `app/persistence.py`: SQLite/WAL unter `/data/state/kraken_trader.sqlite3`, Bar-/Ereignis-/Intent-/Fill-/Ledger-/Steuerhistorie und persistente Circuit Breaker. Das Container-Entrypoint migriert den älteren Datenbankpfad samt SQLite-Seitendateien vor dem UID-Wechsel, erhält Root-Eigentum des Mount-Parents und bricht bei widersprüchlichen Datenbankzuständen ab.
 - `app/audit.py`: vollständige redigierte Ereignisdatensätze in der rotierenden JSONL-Datei `/data/logs/events.jsonl`; eigenständige kompakte JSON-Console-Ansicht in stdout. Kompakte Felder und Report-Deduplizierung betreffen ausschließlich stdout. Die Datei behält alle exakten Werte und Wiederholungen.
 - `app/backtest.py`: eingeschränkter OHLCV-Szenario-Simulator.
-- `app/strategy_lab.py`: Offline-Research-Modul für streng validierten Kraken-Historienimport, feste TSM-/Mean-Reversion-/logistische-Regression-Vergleiche und chronologische Holdouts. Es wird nicht vom Runtime-Zyklus importiert und verwendet weder Order Authority noch Live-SQLite.
+- `app/strategy_lab.py`: isoliertes Research-Modul für streng validierten Kraken-Historienimport und den Vergleich von TSM, Mean Reversion und logistischer Regression. Die historischen CLI-Analysen bleiben offline; die kleine Signalberechnung für parallele Kandidaten wird im Runtime-Zyklus nur als SHADOW-Messung aufgerufen.
+- `strategy_candidate_observations` in SQLite: eigenständige, idempotente Research-Tabelle mit allen Kandidaten-Signalen einschließlich NONE, Modell-/Feature-Metadaten und späteren Forward-Labels. Sie ist getrennt von `intents`, `fills` und der bisherigen TSM-Research-Tabelle.
 - `app/tax.py`: Jahres-Export JSON/CSV/Markdown mit Datenlücken- und manuellen Prüfhinweisen.
 - `app/runtime.py`, `app/main.py`: Zyklussteuerung, Startdiagnose und kontrolliertes Stoppen.
 
-## Separater Offline-Research-Pfad ab Version 0.1.47
+## Research-Pfade ab Version 0.1.47/0.1.48
 
 `scripts/compare_strategies.py` liest eine lokal bereitgestellte Kraken-OHLCVT-CSV, berechnet deren SHA-256 und ruft `app.strategy_lab` auf. Der Bericht enthält Quellmetadaten, erkannte Datenlücken, die festen Train-/Validation-/Test-Grenzen, die nur auf Train gefitteten ML-Koeffizienten, kostenbereinigte Forward-Ergebnisse und Margin-Kostensensitivitäten. Weder importierte Kerzen noch Modellparameter werden in die Live-Persistenz geschrieben. Die einzige Ausgabe ist stdout und optional eine JSON-Datei des explizit angegebenen Pfads.
 
 Der erste Schritt ist ein fester chronologischer Holdout, kein vollständiger Portfolio- oder Orderbuchsimulator und keine expanding-window Walk-Forward-Schätzung. Der Report ist immer als Research-only markiert und kann kein Laufzeit-Gate ändern.
+
+Ab Version 0.1.48 erzeugt der laufende SHADOW-Zyklus zusätzlich drei idempotente Parallelbeobachtungen auf jeder frischen H1-Kerze. Das Walk-Forward-ML trainiert nur auf Zielkerzen, die vor dem Entscheidungsbalken liegen. Kandidatensignale werden nicht in die Entry-Logik übertragen; das bestehende TSM-Research bleibt davon getrennt. Die neue Zusammenfassung lautet `SHADOW_STRATEGY_LAB_SUMMARY` und kann keine Order oder Release-Freigabe auslösen.
 
 ## Kontrollfluss
 
