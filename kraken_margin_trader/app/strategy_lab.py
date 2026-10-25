@@ -942,3 +942,23 @@ def generate_live_shadow_candidate_signals(
             logistic["features"] = logistic_features
 
     return [tsm_candidate, mean_reversion, logistic]
+
+
+def strategy_candidate_observation_id(
+    *,
+    pair: str,
+    interval_minutes: int,
+    bar_ts: int,
+    candidate_name: str,
+    candidate_version: str,
+    horizon_seconds: int,
+) -> str:
+    identity = "|".join((
+        pair,
+        str(interval_minutes),
+        str(bar_ts),
+        candidate_name,
+        candidate_version,
+        str(horizon_seconds),
+    ))
+    return sha256(identity.encode("utf-8")).hexdigest()
