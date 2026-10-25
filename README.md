@@ -2,7 +2,9 @@
 
 Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
 
-## Aktueller Status — 0.1.46
+## Aktueller Status — 0.1.47
+
+**Version 0.1.47 ergänzt einen vom Live-Handel getrennten Offline-Research-Pfad.** Er kann Kraken-H1-OHLCVT-CSV-Dateien prüfen und drei vorab festgelegte Kandidaten (bestehende TSM-Regel, Mean Reversion und ein einfaches logistisches ML-Basismodell) anhand chronologischer Train-/Validation-/Test-Abschnitte vergleichen. Kostenannahmen müssen explizit angegeben werden; fehlende Kerzen werden nicht erfunden. Dies ist eine Forschungsdiagnostik und noch kein vollständiger Ausführungssimulator oder Profitabilitätsnachweis. Die Produktivstrategie bleibt tsm-0.2.0, der Laufzeit- und Orderpfad wurden nicht geändert, die interne Live-Sperre bleibt bestehen.
 
 **Version 0.1.45 ersetzt den dauerhaft gesetzten Reconciliation-Blocker durch einen dokumentierten, datengetriebenen Entry-Abgleich.** Eine vollständige Wallet-Delta-Prüfung ohne neue Ledger-Buchungen gilt bei unveränderten Kontoständen als gültig; aktuelle Kontostruktur, Historienstatus, Order-/Fill-Zustand und Reconciliation-Breaker werden separat bewertet. Tages-PnL und Drawdown werden aus einer persistenten Kraken-Equity-Baseline berechnet, die Container-Neustarts übersteht und bekannte USD-/USDC-Kapitalbewegungen berücksichtigt. Bei nicht USD-bewertbaren externen Transfers wird ein transparenter neuer Messzeitraum protokolliert, statt Kapitalbewegung als Trading-PnL zu behandeln. Ein sauberer Folgeabgleich kann nur die dazugehörigen Reconciliation-Breaker auflösen.
 
