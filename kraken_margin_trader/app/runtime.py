@@ -28,7 +28,13 @@ from app.research import (
     observation_id,
     run_ohlcv_backtest_scenarios,
     settle_due_observations,
+    settle_due_strategy_candidate_observations,
     summarize_shadow_research,
+    summarize_strategy_candidate_research,
+)
+from app.strategy_lab import (
+    generate_live_shadow_candidate_signals,
+    strategy_candidate_observation_id,
 )
 from app.portfolio import aggregate_position_exposure
 from app.portfolio_reconciliation import (
@@ -410,7 +416,7 @@ class TraderRuntime:
 
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
-        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0}
+        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0,"strategy_lab_observations_recorded":0,"strategy_lab_outcomes_settled":0,"strategy_lab_outcomes_incomplete":0}
         history_ready_for_entries = False
         history_evidence_gaps = ["ACCOUNT_HISTORY_NOT_CHECKED"]
         api_permissions_ready = False
@@ -1120,6 +1126,35 @@ class TraderRuntime:
                         exception_type=type(exc).__name__,
                         reason=str(exc)[:120],
                     )
+                if self.settings.shadow_strategy_lab_enabled:
+                    try:
+                        candidate_settlement_events = settle_due_strategy_candidate_observations(
+                            self.persistence,
+                            pair=instrument.pair_id,
+                            current_exit_spread_bps=ticker.spread_bps,
+                            interval_minutes=60,
+                        )
+                        for candidate_event in candidate_settlement_events:
+                            event_name = candidate_event["event"]
+                            event_payload = {
+                                "cycle_id": cycle_id,
+                                **candidate_event["payload"],
+                            }
+                            self.persistence.record_event(event_name, event_payload)
+                            self.audit.emit(event_name, **event_payload)
+                            if event_name == "SHADOW_STRATEGY_CANDIDATE_OUTCOME_SETTLED":
+                                counts["strategy_lab_outcomes_settled"] += 1
+                            elif event_name == "SHADOW_STRATEGY_CANDIDATE_OUTCOME_INCOMPLETE":
+                                counts["strategy_lab_outcomes_incomplete"] += 1
+                    except (ArithmeticError, TypeError, ValueError) as exc:
+                        self.audit.emit(
+                            "SHADOW_STRATEGY_CANDIDATE_SETTLEMENT_ERROR",
+                            cycle_id=cycle_id,
+                            pair=instrument.wsname,
+                            exception_type=type(exc).__name__,
+                            reason=str(exc)[:120],
+                            release_gate_eligible=False,
+                        )
                 signal=generate_trend_signal(instrument.pair_id,[b["close"] for b in bars],
                     fast_threshold_bps=self.settings.strategy_fast_bps,slow_threshold_bps=self.settings.strategy_slow_bps)
                 self.audit.emit("MARKET_SIGNAL_EVALUATED",cycle_id=cycle_id,pair=instrument.wsname,
@@ -1260,6 +1295,107 @@ class TraderRuntime:
                             signal_bar_ts=latest_bar_ts,
                             bar_age_seconds=bar_age_seconds,
                         )
+                if self.settings.shadow_strategy_lab_enabled and bars:
+                    shadow_bar_ts = int(bars[-1]["ts"])
+                    shadow_decision_ts = int(time.time())
+                    shadow_bar_age = shadow_decision_ts - (shadow_bar_ts + 3600)
+                    if (
+                        -60 <= shadow_bar_age <= 3900
+                        and not self.persistence.strategy_candidate_bar_is_complete(
+                            instrument.pair_id, shadow_bar_ts, interval_minutes=60,
+                            expected_candidate_count=3,
+                        )
+                    ):
+                        try:
+                            shadow_candidates = generate_live_shadow_candidate_signals(
+                                bars,
+                                fast_threshold_bps=self.settings.strategy_fast_bps,
+                                slow_threshold_bps=self.settings.strategy_slow_bps,
+                                holding_bars=self.settings.expected_holding_hours,
+                                tsm_version=STRATEGY_VERSION,
+                            )
+                            shadow_mid = (ticker.bid + ticker.ask) / D(2)
+                            shadow_horizon = self.settings.expected_holding_hours * 3600
+                            for candidate in shadow_candidates:
+                                candidate_name = str(candidate["candidate_name"])
+                                candidate_version = str(candidate["candidate_version"])
+                                candidate_direction = str(candidate["direction"]).upper()
+                                candidate_id = strategy_candidate_observation_id(
+                                    pair=instrument.pair_id,
+                                    interval_minutes=60,
+                                    bar_ts=shadow_bar_ts,
+                                    candidate_name=candidate_name,
+                                    candidate_version=candidate_version,
+                                    horizon_seconds=shadow_horizon,
+                                )
+                                candidate_observation = {
+                                    "candidate_id": candidate_id,
+                                    "pair": instrument.pair_id,
+                                    "interval_minutes": 60,
+                                    "bar_ts": shadow_bar_ts,
+                                    "decision_ts": shadow_decision_ts,
+                                    "candidate_name": candidate_name,
+                                    "candidate_version": candidate_version,
+                                    "direction": candidate_direction,
+                                    "signal_reason": str(candidate["signal_reason"]),
+                                    "score": candidate["score"],
+                                    "features": candidate["features"],
+                                    "entry_mid_price": shadow_mid,
+                                    "entry_spread_bps": ticker.spread_bps,
+                                    "taker_fee_bps": fee,
+                                    "horizon_seconds": shadow_horizon,
+                                    "target_epoch": shadow_decision_ts + shadow_horizon,
+                                }
+                                recorded = self.persistence.record_strategy_candidate_observation(
+                                    candidate_observation
+                                )
+                                if not recorded:
+                                    continue
+                                counts["strategy_lab_observations_recorded"] += 1
+                                candidate_payload = {
+                                    "cycle_id": cycle_id,
+                                    "candidate_id": candidate_id,
+                                    "pair": instrument.wsname,
+                                    "signal_bar_ts": shadow_bar_ts,
+                                    "decision_ts": shadow_decision_ts,
+                                    "candidate_name": candidate_name,
+                                    "candidate_version": candidate_version,
+                                    "direction": candidate_direction,
+                                    "reason": candidate["signal_reason"],
+                                    "score": str(candidate["score"]),
+                                    "entry_mid_price": str(shadow_mid),
+                                    "entry_spread_bps": str(ticker.spread_bps),
+                                    "taker_fee_bps": str(fee) if fee is not None else None,
+                                    "taker_fee_source": (
+                                        "KRAKEN_TRADE_VOLUME" if fee is not None else "UNKNOWN"
+                                    ),
+                                    "horizon_seconds": shadow_horizon,
+                                    "target_epoch": shadow_decision_ts + shadow_horizon,
+                                    "outcome_model": "FORWARD_HOURLY_BAR_CLOSE_COST_ESTIMATE",
+                                    "actual_fill": False,
+                                    "portfolio_pnl": False,
+                                    "release_gate_eligible": False,
+                                }
+                                self.persistence.record_event(
+                                    "SHADOW_STRATEGY_CANDIDATE_RECORDED", candidate_payload
+                                )
+                                self.audit.emit(
+                                    "SHADOW_STRATEGY_CANDIDATE_RECORDED", **candidate_payload
+                                )
+                        except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError) as exc:
+                            self.audit.emit(
+                                "SHADOW_STRATEGY_CANDIDATE_GENERATION_ERROR",
+                                cycle_id=cycle_id,
+                                pair=instrument.wsname,
+                                signal_bar_ts=shadow_bar_ts,
+                                exception_type=type(exc).__name__,
+                                reason=str(exc)[:120],
+                                no_order_created=True,
+                                release_gate_eligible=False,
+                            )
+                    elif shadow_bar_age > 3900 or shadow_bar_age < -60:
+                        # Stale or still-forming hourly bars are never promoted into research.
+                        pass
                 if not signal.has_direction:
                     continue
                 counts["signals"] += 1
@@ -1591,6 +1727,12 @@ class TraderRuntime:
             )
             self.persistence.record_event("SHADOW_RESEARCH_SUMMARY", research_summary)
             self.audit.emit("SHADOW_RESEARCH_SUMMARY", **research_summary)
+            strategy_lab_summary = summarize_strategy_candidate_research(
+                self.persistence.strategy_candidate_observations(limit=100000)
+            )
+            strategy_lab_summary["enabled"] = self.settings.shadow_strategy_lab_enabled
+            self.persistence.record_event("SHADOW_STRATEGY_LAB_SUMMARY", strategy_lab_summary)
+            self.audit.emit("SHADOW_STRATEGY_LAB_SUMMARY", **strategy_lab_summary)
             final_breaker_rows = self.persistence.circuit_breakers()
             final_breaker_diagnostics = _circuit_breaker_diagnostics(final_breaker_rows)
             result = {
@@ -1610,6 +1752,10 @@ class TraderRuntime:
                 "shadow_research_costed_sample_count": research_summary["costed_spot_proxy_observations"],
                 "shadow_research_holdout_available": research_summary["holdout_sample_available_for_review"],
                 "shadow_research_release_gate_eligible": research_summary["release_gate_eligible"],
+                "shadow_strategy_lab_enabled": self.settings.shadow_strategy_lab_enabled,
+                "shadow_strategy_lab_candidate_count": strategy_lab_summary["candidate_count"],
+                "shadow_strategy_lab_status": strategy_lab_summary["status"],
+                "shadow_strategy_lab_release_gate_eligible": strategy_lab_summary["release_gate_eligible"],
                 "note": (
                     "Real order submission also requires the internal release gate; "
                     "INTERNAL_LIVE_EXECUTION_RELEASED is false in this version. "
