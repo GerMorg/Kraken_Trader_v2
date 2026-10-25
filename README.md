@@ -1,24 +1,10 @@
-# Kraken Trader v2
-
-Eigenständige Home-Assistant-App für Kraken Spot und Spot Margin. Dieses Repository startet bewusst als neue, schlanke Implementierung; es kopiert die alte App nicht. Die verbindliche Spezifikation steht in [Anweisung.txt](Anweisung.txt).
-
-## Aktueller Status — 0.1.47
-
-**Version 0.1.47 ergänzt einen vom Live-Handel getrennten Offline-Research-Pfad.** Er kann Kraken-H1-OHLCVT-CSV-Dateien prüfen und drei vorab festgelegte Kandidaten (bestehende TSM-Regel, Mean Reversion und ein einfaches logistisches ML-Basismodell) anhand chronologischer Train-/Validation-/Test-Abschnitte vergleichen. Kostenannahmen müssen explizit angegeben werden; fehlende Kerzen werden nicht erfunden. Dies ist eine Forschungsdiagnostik und noch kein vollständiger Ausführungssimulator oder Profitabilitätsnachweis. Die Produktivstrategie bleibt tsm-0.2.0, der Laufzeit- und Orderpfad wurden nicht geändert, die interne Live-Sperre bleibt bestehen.
-
-**Version 0.1.45 ersetzt den dauerhaft gesetzten Reconciliation-Blocker durch einen dokumentierten, datengetriebenen Entry-Abgleich.** Eine vollständige Wallet-Delta-Prüfung ohne neue Ledger-Buchungen gilt bei unveränderten Kontoständen als gültig; aktuelle Kontostruktur, Historienstatus, Order-/Fill-Zustand und Reconciliation-Breaker werden separat bewertet. Tages-PnL und Drawdown werden aus einer persistenten Kraken-Equity-Baseline berechnet, die Container-Neustarts übersteht und bekannte USD-/USDC-Kapitalbewegungen berücksichtigt. Bei nicht USD-bewertbaren externen Transfers wird ein transparenter neuer Messzeitraum protokolliert, statt Kapitalbewegung als Trading-PnL zu behandeln. Ein sauberer Folgeabgleich kann nur die dazugehörigen Reconciliation-Breaker auflösen.
-
-**Version 0.1.46 ergänzt eine separate, reproduzierbare Forward-Diagnostik ohne überlappende Bewertungshorizonte pro Handelspaar.** Sie entfernt nach einer klar dokumentierten Greedy-Regel doppelt überlappende, bereits kostenbewertete Beobachtungen und meldet Anzahl, Long-/Short-Ergebnisse sowie chronologische Teilmengen. Die bestehende, überlappende Zeitreihe bleibt erhalten. Unterschiedliche Handelspaare können weiterhin korreliert sein; auch diese Diagnostik ist weder Portfolio-PnL noch ein Handels- oder Live-Freigabenachweis.
-
-**Der Entry-Status ist ausdrücklich keine vollständige historische Portfolio-Reconciliation.** Die Edge bleibt nicht kalibriert und Margin-Eröffnungs-/Rollover-Kosten sind nicht bestätigt; diese echten Evidenzlücken bleiben sichtbar. Die interne Live-Order-Freigabe bleibt code-seitig gesperrt.
-
 ## Aktueller Status — 0.1.48
 
-**Version 0.1.48 führt ein paralleles Forward-Shadow-Research ein.** Die App beobachtet bei abgeschlossenen Stundenkerzen drei Kandidaten: die bestehende TSM-Regel (als unveränderte Referenz), eine feste Mean-Reversion-Regel und eine einfache logistische Walk-Forward-Prognose. Signale und spätere Ergebnisse werden in einer separaten SQLite-Tabelle gespeichert, getrennt ausgewertet und auch bei Nicht-Signalen nachvollziehbar protokolliert. Alle Kandidaten sind reine Forschung und erzeugen keine Order-Intents.
+**Version 0.1.48 führt ein paralleles Forward-Shadow-Research ein.** Die App beobachtet bei abgeschlossenen Stundenkerzen drei Kandidaten: die bestehende TSM-Regel (als unveränderte Referenz), eine feste Mean-Reversion-Regel und eine einfache logistische Walk-Forward-Prognose. Signale und spätere Ergebnisse werden in einer separaten SQLite-Tabelle gespeichert, getrennt ausgewertet und auch bei Nicht-Signalen protokolliert. Alle Kandidaten sind reine Forschung und erzeugen keine Order-Intents.
 
-Das ML-Modell nutzt nur abgeschlossene historische Labels, die vor der aktuellen Entscheidungsstunde liegen. Seine Wahrscheinlichkeiten sind nicht kalibriert, Trainingslabels überlappen und alle Ergebnisse bleiben Forward-Labels statt Portfolio-PnL. Der Research-Bericht kann keine Parameterpromovierung und keine Live-Freigabe auslösen. Die produktive Strategie bleibt tsm-0.2.0, INTERNAL_LIVE_EXECUTION_RELEASED bleibt False.
+Das ML-Modell nutzt nur abgeschlossene historische Labels, deren Zielkerze vor der aktuellen Entscheidungsstunde liegt. Seine Wahrscheinlichkeiten sind nicht kalibriert, Trainingslabels überlappen und Ergebnisse bleiben Forward-Labels statt Portfolio-PnL. Der Research-Bericht kann weder Parameterpromovierung noch Live-Freigabe auslösen. Die produktive Strategie bleibt tsm-0.2.0; INTERNAL_LIVE_EXECUTION_RELEASED bleibt False.
 
-shadow_strategy_lab_enabled ist in der Home-Assistant-Konfiguration standardmäßig true. Für eine aussagekräftige Beobachtung sollten die App und ihr /data-Speicher mehrere Wochen ohne Löschen der Datenbank laufen. Die ersten acht Stunden liefern noch keine abgeschlossenen Labels dieses neuen Tests; mit wachsender Historie werden die Kandidaten getrennt vergleichbar.
+Die Home-Assistant-Option shadow_strategy_lab_enabled ist standardmäßig true. Für eine aussagekräftige Beobachtung sollten die App und ihr persistenter /data-Speicher mehrere Wochen laufen, ohne die Datenbank zu löschen. Die ersten abgeschlossenen Labels entstehen erst nach dem konfigurierten Haltehorizont (Standard: acht Stunden).
 
 **Vollständige historische Portfolio-Reconciliation, verifizierte Margin-Eröffnungs-/Rollover-Kosten und eine realistische, portfolio-basierte Ausführungssimulation sind weiterhin offene Voraussetzungen.** Diese Version ist keine Live-Freigabe.
 
