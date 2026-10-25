@@ -1,3 +1,25 @@
+## Version 0.1.47 — Offline-Research für Strategievergleiche
+
+Der Research-Pfad ist ein Entwickler-/Analysewerkzeug. Er wird nicht vom Runtime-Zyklus aufgerufen, schreibt nicht in die Produktiv-SQLite-Datenbank und kann keine Order erzeugen. Er soll den negativen bisherigen TSM-Befund mit vorab festgelegten Alternativen prüfen, nicht den aktuellen Trade-Gate übersteuern.
+
+### Datenimport und Vergleich
+
+Kraken veröffentlicht historische OHLCVT-Dateien als headerlose CSV mit sieben Spalten: timestamp, open, high, low, close, volume, trades. Der Parser validiert Zeilen und meldet Quellen-SHA-256, identische Duplikate sowie zeitliche Lücken. Konfligierende Duplikate, ungeordnete Daten, nicht endliche Werte und ungültige OHLC-Verhältnisse führen zu einem Fehler. Lücken werden nie durch künstliche Kerzen ersetzt.
+
+Die erste Vergleichsstufe akzeptiert ausschließlich 60-Minuten-Daten und vergleicht drei vorab festgelegte Kandidaten: aktuelle TSM-Regel, 24-Bar-Mean-Reversion und eine einfache L2-logistische Regression. Cash und Buy-and-Hold werden getrennt als Referenzen ausgewiesen. Die ML-Standardisierung und das Modell werden nur mit dem 60-Prozent-Trainingsabschnitt geschätzt. Ein chronologischer 20-Prozent-Validierungs- und 20-Prozent-Testabschnitt bleiben außerhalb des Fits; Zielhorizonte, die eine Abschnittsgrenze überschreiten würden, werden ausgeschlossen. Dies ist eine feste chronologische Holdout-Auswertung, noch keine expanding-window Walk-Forward-Rekalibrierung.
+
+Gebühren, angenommener Round-trip-Spread und Slippage müssen übergeben werden. Die Margin-Kostenszenarien sind Sensitivitätsbudgets, keine Kraken-Quotes. Ergebnisse verwenden den nächsten Kerzen-Open als Einstieg und den Open nach dem festen Haltehorizont als Ausgang; je Kandidat werden zeitlich nicht überlappende Trades ausgewertet. Das ist kein vollständiger Ausführungssimulator: Hebelwirkung, Equity-Positionsgrößen, Orderbuch, partielle Fills, echte historische Fees, tatsächliche Margin-Kosten, Liquidation, Cross-Pair-Korrelation und Portfolio-PnL werden nicht modelliert.
+
+Zur Anzeige der verfügbaren Kommandozeilenoptionen:
+
+```bash
+python scripts/compare_strategies.py --help
+```
+
+Die Vergleichs-CLI benötigt konkrete Kosteneingaben und schreibt optional einen JSON-Bericht in einen vom Aufrufer gewählten Pfad. Die Sensitivitätsbudgets 5, 10, 20 und 40 bps sind ausschließlich Annahmen und bestätigen keine Gebühren. Das Programm meldet release_gate_eligible=false unabhängig vom Ergebnis. Kein automatisches Kandidaten-Ranking, Strategie-Wechsel oder Parameter-Promotion ist implementiert.
+
+Offizielle Datenbeschreibung: https://support.kraken.com/de/articles/360047124832-downloadable-historical-ohlcvt-open-high-low-close-volume-trades-data
+
 ## Version 0.1.46 — Überlappungsbereinigte Forward-Diagnostik
 
 Die `SHADOW_RESEARCH_SUMMARY`-Ausgabe enthält zusätzlich `non_overlapping_costed_forward_diagnostics`. Die Diagnostik beginnt nur mit abgeschlossenen, kostenbewerteten Forward-Beobachtungen, gruppiert nach Handelspaar und Entscheidungszeit und übernimmt deterministisch die früheste Beobachtung, deren Entscheidungszeit nicht vor dem Zielzeitpunkt der zuletzt übernommenen Beobachtung liegt. Überlappende Beobachtungen desselben Paars werden gezählt und ausgelassen; Zeitangaben ohne plausiblen Zielhorizont werden separat gezählt.

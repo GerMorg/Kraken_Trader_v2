@@ -17,8 +17,15 @@
 - `app/persistence.py`: SQLite/WAL unter `/data/state/kraken_trader.sqlite3`, Bar-/Ereignis-/Intent-/Fill-/Ledger-/Steuerhistorie und persistente Circuit Breaker. Das Container-Entrypoint migriert den älteren Datenbankpfad samt SQLite-Seitendateien vor dem UID-Wechsel, erhält Root-Eigentum des Mount-Parents und bricht bei widersprüchlichen Datenbankzuständen ab.
 - `app/audit.py`: vollständige redigierte Ereignisdatensätze in der rotierenden JSONL-Datei `/data/logs/events.jsonl`; eigenständige kompakte JSON-Console-Ansicht in stdout. Kompakte Felder und Report-Deduplizierung betreffen ausschließlich stdout. Die Datei behält alle exakten Werte und Wiederholungen.
 - `app/backtest.py`: eingeschränkter OHLCV-Szenario-Simulator.
+- `app/strategy_lab.py`: Offline-Research-Modul für streng validierten Kraken-Historienimport, feste TSM-/Mean-Reversion-/logistische-Regression-Vergleiche und chronologische Holdouts. Es wird nicht vom Runtime-Zyklus importiert und verwendet weder Order Authority noch Live-SQLite.
 - `app/tax.py`: Jahres-Export JSON/CSV/Markdown mit Datenlücken- und manuellen Prüfhinweisen.
 - `app/runtime.py`, `app/main.py`: Zyklussteuerung, Startdiagnose und kontrolliertes Stoppen.
+
+## Separater Offline-Research-Pfad ab Version 0.1.47
+
+`scripts/compare_strategies.py` liest eine lokal bereitgestellte Kraken-OHLCVT-CSV, berechnet deren SHA-256 und ruft `app.strategy_lab` auf. Der Bericht enthält Quellmetadaten, erkannte Datenlücken, die festen Train-/Validation-/Test-Grenzen, die nur auf Train gefitteten ML-Koeffizienten, kostenbereinigte Forward-Ergebnisse und Margin-Kostensensitivitäten. Weder importierte Kerzen noch Modellparameter werden in die Live-Persistenz geschrieben. Die einzige Ausgabe ist stdout und optional eine JSON-Datei des explizit angegebenen Pfads.
+
+Der erste Schritt ist ein fester chronologischer Holdout, kein vollständiger Portfolio- oder Orderbuchsimulator und keine expanding-window Walk-Forward-Schätzung. Der Report ist immer als Research-only markiert und kann kein Laufzeit-Gate ändern.
 
 ## Kontrollfluss
 

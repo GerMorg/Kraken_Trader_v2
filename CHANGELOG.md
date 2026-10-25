@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.47 — Isoliertes Strategie-Research-Labor
+
+- Ergänzt einen Offline-Import für Krakens headerlose OHLCVT-CSV-Dateien mit SHA-256-Provenienz, Validierung der OHLCV-Werte sowie Erkennung identischer Duplikate und widersprüchlicher Daten.
+- Fehlende Handelsintervalle werden ausgewiesen, niemals mit künstlichen Kerzen aufgefüllt. Feature- und Zielzeiträume, die eine Datenlücke schneiden, werden ausgelassen.
+- Ergänzt einen vorab festgelegten Vergleich von aktueller TSM-Trendfolge, 24-Bar-Mean-Reversion und einem deterministischen L2-logistischen ML-Basismodell; Cash und Buy-and-Hold dienen als Referenzen.
+- Der ML-Klassifikator wird ausschließlich auf dem chronologischen Trainingsabschnitt trainiert. Die feste 60/20/20-Aufteilung purgt Zielhorizonte an Abschnittsgrenzen; Validierungs- und Testdaten werden nicht für Fit oder Schwellenwertsuche verwendet.
+- Gebühren, Spread, Slippage und Margin-Kostensensitivitäten werden ausdrücklich als Annahmen übergeben. Das Ergebnis ist kein Ausführungssimulator, kein Portfolio-PnL und keine Live-Freigabe.
+- Der Research-Pfad verwendet weder die Live-Persistenz noch die Order Authority; Produktivstrategie tsm-0.2.0 und interne Live-Sperre bleiben unverändert.
+
+
 ## 0.1.46 — Überlappungsbereinigte Forward-Diagnostik
 
 - Ergänzt eine separate Greedy-Stichprobe kostenbewerteter Forward-Ergebnisse, die überlappende beabsichtigte Haltehorizonte desselben Handelspaars ausschließt.
