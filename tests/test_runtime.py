@@ -831,11 +831,10 @@ def test_current_online_kraken_status_resolves_only_stale_maintenance_breaker():
 
     assert recovered is True
     assert all(row["name"] != "KRAKEN_STATUS" for row in db.circuit_breakers())
-    assert any(
-        event["name"] == "CIRCUIT_BREAKER_RECOVERED"
-        and event["payload"]["name"] == "KRAKEN_STATUS"
-        for event in db.events()
-    )
+    recovered_events = db.connection.execute(
+        "SELECT COUNT(*) AS count FROM events WHERE name='CIRCUIT_BREAKER_RECOVERED'"
+    ).fetchone()
+    assert recovered_events["count"] == 1
     audit.close()
     db.close()
 
