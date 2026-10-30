@@ -57,3 +57,6 @@ Die Trade-/Ledger-Erstbefüllung läuft schrittweise über gespeicherte Seiten-C
 ## Runtime-Fehlerdiagnostik ab Version 0.1.49
 
 Die Runtime führt einen nicht persistierten failure_stage-Marker durch wichtige Verarbeitungsschritte und die Finalisierung. Bei einem unerwarteten Fehler enthält CYCLE_FAILED_CIRCUIT_BREAKER die Phase und die letzte Traceback-Stelle (Dateibasename, Zeile, Funktion). Nur bei sqlite3.Error werden zusätzlich die begrenzte SQLite-Meldung und SQLite-Fehlercode/-name ausgegeben. Für andere Fehler werden keine unkontrollierten Exception-Texte ausgegeben. Die Ausnahme wird weiterhin mit UNHANDLED_RUNTIME als Circuit Breaker behandelt. Es findet weder Auto-Recovery dieses Breakers noch eine Veränderung der Execution- oder Live-Release-Logik statt.
+
+
+Ab Version 0.1.49 wird ein KRAKEN_STATUS/KRAKEN_NOT_ONLINE-Breaker nach einer aktuellen erfolgreichen SystemStatus-Antwort online gezielt aufgelöst. Der UNHANDLED_RUNTIME-Breaker wird weiterhin nicht automatisch bereinigt. Unerwartete Runtime-Fehler protokollieren bei SQLite-Ausnahmen die begrenzte Fehlerdiagnose sowie ihre letzte Python-Fehlerstelle.
