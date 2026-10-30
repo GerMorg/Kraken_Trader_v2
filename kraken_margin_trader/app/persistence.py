@@ -3,8 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 import json
+import os
 from pathlib import Path
 import sqlite3
+import stat
+import tempfile
 import threading
 import time
 from typing import Any
@@ -172,6 +175,8 @@ class Persistence:
                     ON research_observations(status,target_epoch);
                 CREATE INDEX IF NOT EXISTS research_pair_target_idx
                     ON research_observations(pair,interval_minutes,target_epoch);
+                CREATE INDEX IF NOT EXISTS research_decision_order_idx
+                    ON research_observations(decision_ts DESC,observation_id DESC);
                 CREATE TABLE IF NOT EXISTS strategy_candidate_observations(
                     candidate_id TEXT PRIMARY KEY,
                     pair TEXT NOT NULL,
@@ -205,6 +210,8 @@ class Persistence:
                     ON strategy_candidate_observations(status,target_epoch);
                 CREATE INDEX IF NOT EXISTS strategy_candidates_pair_bar_idx
                     ON strategy_candidate_observations(pair,interval_minutes,bar_ts);
+                CREATE INDEX IF NOT EXISTS strategy_candidate_decision_order_idx
+                    ON strategy_candidate_observations(decision_ts DESC,candidate_id DESC);
             """)
             research_columns = {
                 str(row["name"]) for row in self.connection.execute("PRAGMA table_info(research_observations)")
@@ -1433,6 +1440,65 @@ class Persistence:
                 },
             )
             return True
+
+    def storage_diagnostics(self) -> dict[str, Any]:
+        """Return bounded filesystem and SQLite settings for database-open failures."""
+        if self.path == ":memory:":
+            return {"database_path": ":memory:", "storage_mode": "MEMORY"}
+
+        def path_state(path: Path) -> dict[str, Any]:
+            try:
+                info = path.stat()
+            except OSError as exc:
+                return {"exists": False, "stat_errno": exc.errno}
+            is_directory = stat.S_ISDIR(info.st_mode)
+            return {
+                "exists": True,
+                "is_directory": is_directory,
+                "mode": oct(stat.S_IMODE(info.st_mode)),
+                "uid": info.st_uid,
+                "gid": info.st_gid,
+                "size_bytes": info.st_size,
+                "readable": os.access(path, os.R_OK),
+                "writable": os.access(path, os.W_OK),
+                "searchable": os.access(path, os.X_OK) if is_directory else None,
+            }
+
+        database_path = Path(self.path)
+        try:
+            temporary_path = Path(tempfile.gettempdir())
+            temporary_state = path_state(temporary_path)
+        except (OSError, RuntimeError):
+            temporary_path = None
+            temporary_state = {"exists": False, "reason": "TEMP_DIRECTORY_UNAVAILABLE"}
+
+        details: dict[str, Any] = {
+            "process_uid": os.getuid(),
+            "process_gid": os.getgid(),
+            "database_path": str(database_path),
+            "database": path_state(database_path),
+            "database_parent": path_state(database_path.parent),
+            "database_wal": path_state(Path(f"{self.path}-wal")),
+            "database_shm": path_state(Path(f"{self.path}-shm")),
+            "database_journal": path_state(Path(f"{self.path}-journal")),
+            "temporary_directory": str(temporary_path) if temporary_path is not None else None,
+            "temporary_directory_state": temporary_state,
+        }
+        with self.lock:
+            for key, statement in (
+                ("sqlite_temp_store", "PRAGMA temp_store"),
+                ("sqlite_journal_mode", "PRAGMA journal_mode"),
+            ):
+                try:
+                    row = self.connection.execute(statement).fetchone()
+                    details[key] = str(row[0]) if row is not None else None
+                except sqlite3.Error as exc:
+                    details[f"{key}_probe_error"] = {
+                        "exception_type": type(exc).__name__,
+                        "sqlite_error_code": getattr(exc, "sqlite_errorcode", None),
+                        "sqlite_error_name": getattr(exc, "sqlite_errorname", None),
+                    }
+        return details
 
     def close(self) -> None:
         with self.lock:
