@@ -809,8 +809,12 @@ def test_runtime_failure_context_identifies_sqlite_error_and_failing_location():
 
 
 def test_runtime_failure_context_does_not_log_arbitrary_exception_messages():
-    exc = ValueError("private-api-secret-must-not-be-logged")
-    details = _runtime_failure_context(exc, failure_stage="MARKET_SCAN:XXBTZUSD")
+    try:
+        raise ValueError("private-api-secret-must-not-be-logged")
+    except ValueError as exc:
+        details = _runtime_failure_context(
+            exc, failure_stage="MARKET_SCAN:XXBTZUSD"
+        )
 
     assert details["failure_stage"] == "MARKET_SCAN:XXBTZUSD"
     assert details["exception_type"] == "ValueError"
