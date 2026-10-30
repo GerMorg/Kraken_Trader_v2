@@ -8,6 +8,12 @@ Die Home-Assistant-Option shadow_strategy_lab_enabled ist standardmäßig true. 
 
 **Vollständige historische Portfolio-Reconciliation, verifizierte Margin-Eröffnungs-/Rollover-Kosten und eine realistische, portfolio-basierte Ausführungssimulation sind weiterhin offene Voraussetzungen.** Diese Version ist keine Live-Freigabe.
 
+### Hotfix-Status — 0.1.49
+
+Version 0.1.49 ergänzt Diagnoseinformationen für fehlgeschlagene Runtime-Zyklen. Die bisherige Fehlerbehandlung protokollierte nur den Typ der Ausnahme; dadurch ließ sich ein wiederkehrender OperationalError im tatsächlichen HA-Datenbankzustand nicht lokalisieren. Die neue Version ergänzt Fehlerphase, SQLite-Fehlermeldung/-code/-name und die letzte Python-Fehlerstelle, ohne beliebige Exception-Texte oder API-Geheimnisse offenzulegen.
+
+**Wichtig:** Dies ist zunächst ein Diagnose-Hotfix, keine Behauptung, dass die konkrete Ursache des bisherigen OperationalError bereits behoben ist. Nach dem Update genügt ein kurzer Kontrolllauf, um die konkrete Fehlerstelle zu erhalten. Die vorhandenen Research-Daten und die SQLite-Datenbank werden nicht zurückgesetzt. Produktionsstrategie tsm-0.2.0, Kandidaten-Trennung und interne Live-Sperre bleiben unverändert.
+
 ### Vorherige Version — 0.1.47
 
 Version 0.1.47 ergänzte einen Offline-Research-Pfad zum Vergleich von TSM, Mean Reversion und einem logistischen ML-Basismodell auf historischen Kraken-OHLCVT-CSV-Dateien. Er prüft Quelldaten und Zeitlücken, ohne künstliche Kerzen zu erzeugen. Version 0.1.48 baut darauf auf und sammelt zusätzlich reine Vorwärtsbeobachtungen im normalen SHADOW-Betrieb.
