@@ -4,7 +4,8 @@
 
 - Ergänzt einen expliziten Fehlerphasenmarker für Startup, Marktverarbeitung und die einzelnen Finalisierungsschritte.
 - Bei SQLite-Ausnahmen werden begrenzt die sichere Fehlermeldung, SQLite-Fehlercode/-name und die letzte Python-Datei/Funktion/Zeile protokolliert. Beliebige Exception-Texte außerhalb von SQLite werden weiterhin nicht ausgegeben.
-- Die bestehende Circuit-Breaker-Wirkung, Handelsentscheidung, Research-Persistenz und Live-Sperre bleiben unverändert.
+- Ein veralteter KRAKEN_STATUS/KRAKEN_NOT_ONLINE-Breaker wird ausschließlich nach einer neuen erfolgreichen SystemStatus-Antwort online gezielt aufgelöst; andere Breakergründe bleiben bestehen.
+- Der UNHANDLED_RUNTIME-Breaker bleibt bewusst bestehen und erfordert weiterhin Ursachenprüfung. Strategieparameter, Research-Persistenz, Handelsentscheidung und Live-Sperre bleiben ansonsten unverändert.
 - Ergänzt Regressionstests für SQLite-Diagnostik und das Nicht-Protokollieren beliebiger Exception-Nachrichten.
 
 ## 0.1.48 — Paralleles Forward-Shadow-Research mit drei Strategiekandidaten
