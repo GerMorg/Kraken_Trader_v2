@@ -808,6 +808,35 @@ def test_runtime_failure_context_identifies_sqlite_error_and_failing_location():
     assert details["failure_location"]["function"] == "test_runtime_failure_context_identifies_sqlite_error_and_failing_location"
 
 
+def test_runtime_failure_context_adds_storage_state_for_sqlite_cantopen(tmp_path):
+    db = Persistence(str(tmp_path / "trader.sqlite3"))
+    missing_database = tmp_path / "missing-directory" / "missing.sqlite3"
+    try:
+        sqlite3.connect(str(missing_database))
+    except sqlite3.OperationalError as exc:
+        details = _runtime_failure_context(
+            exc,
+            failure_stage="FINALIZE_TSM_RESEARCH_SUMMARY_READ",
+            persistence=db,
+        )
+    else:
+        raise AssertionError("Expected SQLITE_CANTOPEN")
+
+    diagnostics = details["sqlite_storage_diagnostics"]
+    assert details["sqlite_error_name"] == "SQLITE_CANTOPEN"
+    assert diagnostics["database_path"] == str(tmp_path / "trader.sqlite3")
+    assert diagnostics["database"]["exists"] is True
+    assert diagnostics["temporary_directory_state"]["exists"] is True
+    assert "sqlite_storage_diagnostics" not in str(
+        _runtime_failure_context(
+            ValueError("must-not-be-logged"),
+            failure_stage="MARKET_SCAN",
+            persistence=db,
+        )
+    )
+    db.close()
+
+
 def test_runtime_failure_context_does_not_log_arbitrary_exception_messages():
     try:
         raise ValueError("private-api-secret-must-not-be-logged")
