@@ -9,6 +9,7 @@ from app.persistence import Persistence
 from app.runtime import (
     TraderRuntime,
     _runtime_failure_context,
+    _resolve_online_kraken_status_breaker,
     _circuit_breaker_diagnostics,
     _open_position_rows,
     _recover_transient_public_network_breaker,
@@ -816,3 +817,46 @@ def test_runtime_failure_context_does_not_log_arbitrary_exception_messages():
     assert "sqlite_error_message" not in details
     assert "private-api-secret-must-not-be-logged" not in str(details)
     assert details["failure_location"]["file"] == "test_runtime.py"
+
+
+def test_current_online_kraken_status_resolves_only_stale_maintenance_breaker():
+    runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker(
+        "KRAKEN_STATUS", "KRAKEN_NOT_ONLINE", {"status": "maintenance"}
+    )
+
+    recovered = _resolve_online_kraken_status_breaker(
+        db, audit, cycle_id="recovered-cycle", system_status="online"
+    )
+
+    assert recovered is True
+    assert all(row["name"] != "KRAKEN_STATUS" for row in db.circuit_breakers())
+    assert any(
+        event["name"] == "CIRCUIT_BREAKER_RECOVERED"
+        and event["payload"]["name"] == "KRAKEN_STATUS"
+        for event in db.events()
+    )
+    audit.close()
+    db.close()
+
+
+def test_kraken_status_breaker_is_not_resolved_when_offline_or_reason_changed():
+    runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker(
+        "KRAKEN_STATUS", "KRAKEN_NOT_ONLINE", {"status": "maintenance"}
+    )
+
+    assert _resolve_online_kraken_status_breaker(
+        db, audit, cycle_id="still-offline", system_status="maintenance"
+    ) is False
+    assert db.circuit_breakers()[0]["reason"] == "KRAKEN_NOT_ONLINE"
+
+    db.trip_circuit_breaker(
+        "KRAKEN_STATUS", "OPERATOR_REVIEW_REQUIRED", {"status": "online"}
+    )
+    assert _resolve_online_kraken_status_breaker(
+        db, audit, cycle_id="changed-reason", system_status="online"
+    ) is False
+    assert db.circuit_breakers()[0]["reason"] == "OPERATOR_REVIEW_REQUIRED"
+    audit.close()
+    db.close()
