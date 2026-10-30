@@ -1,3 +1,23 @@
+## Version 0.1.49 — Runtime-Fehlerdiagnostik
+
+Die Exception-Behandlung ergänzt bei einem fehlgeschlagenen Zyklus nun:
+- failure_stage: letzter protokollierter Runtime-Schritt, insbesondere die einzelnen Finalisierungsschritte nach dem Marktscan.
+- failure_location: Dateiname, Zeile und Python-Funktion der letzten Traceback-Stelle.
+- Bei sqlite3.Error zusätzlich sqlite_error_message, sqlite_error_code und sqlite_error_name.
+
+Beliebige Nachrichten von anderen Exception-Typen werden nicht protokolliert. Es werden keine API-Schlüssel, Secrets oder lokalen Variablen-Dumps ausgegeben. Der Circuit Breaker bleibt unverändert aktiv; dieser Hotfix schaltet keine Fehler frei und sendet keine Orders.
+
+### Vorgehen nach einem wiederkehrenden OperationalError
+
+1. Auf Version 0.1.49 aktualisieren und die App normal in SHADOW starten.
+2. Nur einen vollständigen Kontrollzyklus abwarten. Der Fehlerbericht enthält danach die konkrete failure_stage sowie bei SQLite-Fehlern den Grund und die Fehlerstelle.
+3. Den Eintrag CYCLE_FAILED_CIRCUIT_BREAKER und den zugehörigen CIRCUIT_BREAKER_STATUS aus dem AppLog sichern und zur gezielten Behebung prüfen.
+4. Die persistente Datenbank unter /data/state/kraken_trader.sqlite3 nicht löschen oder neu initialisieren. Die bereits aufgezeichneten SHADOW-Strategiekandidaten bleiben so erhalten.
+5. Erst nach dem gezielten Fehlerfix den mehrwöchigen Forward-Test fortsetzen. Der bisherige Beobachtungszeitraum muss nicht von null beginnen; bei der Ergebnisbewertung sind allerdings Versions- und Zeitgrenzen getrennt zu halten.
+
+Der Hotfix ändert keine Strategieparameter, keine Research-Kandidaten, keine Datenbanktabellen und keine Orderlogik. Die Live-Ausführung bleibt code-seitig gesperrt.
+
+
 ## Version 0.1.48 — Paralleles Forward-Shadow-Research
 
 Die Home-Assistant-Option shadow_strategy_lab_enabled ist standardmäßig aktiviert. Wenn aktiv, werden nach einer frischen, abgeschlossenen Stundenkerze drei getrennte Kandidatenbeobachtungen je Paar und Kerze gespeichert: current_tsm, mean_reversion_24h und logistic_regression_wf. Auch NONE-Entscheidungen werden gezählt. Ein eindeutiger Schlüssel je Paar/Kerze/Kandidat/Version/Haltehorizont verhindert Doppelaufzeichnungen nach einem Neustart oder in den 5-Minuten-Zyklen.
