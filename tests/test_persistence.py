@@ -452,3 +452,42 @@ def test_equity_risk_baseline_rolls_daily_pnl_at_local_day_boundary_but_keeps_pe
     assert next_day["drawdown_pct"] == Decimal("5")
     assert next_day["baseline_source"] == "FIRST_VERIFIED_SNAPSHOT_OF_LOCAL_DAY"
     db.close()
+
+def test_research_summary_reads_use_ordering_indexes_without_temp_sort():
+    db = Persistence(":memory:")
+    research_plan = " ".join(
+        str(row["detail"])
+        for row in db.connection.execute(
+            "EXPLAIN QUERY PLAN SELECT * FROM research_observations "
+            "ORDER BY decision_ts DESC,observation_id DESC LIMIT 5000"
+        ).fetchall()
+    )
+    candidate_plan = " ".join(
+        str(row["detail"])
+        for row in db.connection.execute(
+            "EXPLAIN QUERY PLAN SELECT * FROM strategy_candidate_observations "
+            "ORDER BY decision_ts DESC,candidate_id DESC LIMIT 100000"
+        ).fetchall()
+    )
+
+    assert "research_decision_order_idx" in research_plan
+    assert "strategy_candidate_decision_order_idx" in candidate_plan
+    assert "TEMP B-TREE FOR ORDER BY" not in research_plan
+    assert "TEMP B-TREE FOR ORDER BY" not in candidate_plan
+    db.close()
+
+
+def test_storage_diagnostics_report_database_and_temp_directory_state(tmp_path):
+    path = str(tmp_path / "trader.sqlite3")
+    db = Persistence(path)
+
+    diagnostics = db.storage_diagnostics()
+
+    assert diagnostics["database_path"] == path
+    assert diagnostics["database"]["exists"] is True
+    assert diagnostics["database"]["writable"] is True
+    assert diagnostics["database_parent"]["searchable"] is True
+    assert diagnostics["temporary_directory_state"]["exists"] is True
+    assert diagnostics["sqlite_temp_store"] in {"0", "1", "2"}
+    assert diagnostics["sqlite_journal_mode"].lower() == "wal"
+    db.close()

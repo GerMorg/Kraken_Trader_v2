@@ -1,3 +1,24 @@
+## Version 0.1.50 — SQLite-Research-Finalisierung
+
+Die beiden Research-Zusammenfassungen lesen ihre Datensätze jetzt über persistente Sortierindizes:
+- `research_observations(decision_ts DESC, observation_id DESC)`
+- `strategy_candidate_observations(decision_ts DESC, candidate_id DESC)`
+
+Damit benötigen die betreffenden `ORDER BY`-Abfragen keine temporäre SQLite-B-Tree-Sortierung. Die Indizes werden durch die normale, idempotente Schema-Migration ergänzt; vorhandene Beobachtungen bleiben bestehen.
+
+Bei `SQLITE_CANTOPEN` enthält `CYCLE_FAILED_CIRCUIT_BREAKER` zusätzlich begrenzte Diagnostik für Datenbankdatei, Elternverzeichnis, WAL/SHM/Journal-Sidecars, Prozess-UID/GID, Temp-Verzeichniszugriff und SQLite-`temp_store`/`journal_mode`. Die Diagnose protokolliert keine API-Secrets oder Dateiinhalte.
+
+### Kontrolllauf nach dem Update
+
+1. Version 0.1.50 installieren, ohne `/data/state/kraken_trader.sqlite3` zu löschen oder umzubenennen.
+2. Einen vollständigen SHADOW-Zyklus beobachten.
+3. Erwartet werden `SHADOW_RESEARCH_SUMMARY`, `SHADOW_STRATEGY_LAB_SUMMARY` und `CYCLE_SUMMARY`.
+4. Falls erneut `SQLITE_CANTOPEN` auftritt, den vollständigen `sqlite_storage_diagnostics`-Block mitsenden. Damit lässt sich unterscheiden, ob Datenbankdatei/Verzeichnis, WAL-Sidecars oder das temporäre Verzeichnis nicht zugänglich sind.
+
+Der Fix verändert weder Strategie noch Orderlogik. Der bestehende `UNHANDLED_RUNTIME`-Breaker bleibt aktiv, bis ein erfolgreicher Recovery-Pfad nachgewiesen wurde. Es wird keine Live-Freigabe erteilt.
+
+---
+
 ## Version 0.1.49 — Runtime-Fehlerdiagnostik
 
 Die Exception-Behandlung ergänzt bei einem fehlgeschlagenen Zyklus nun:

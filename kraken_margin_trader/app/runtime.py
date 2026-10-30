@@ -51,7 +51,12 @@ from app.tax import AustrianTaxReports
 
 D=Decimal
 
-def _runtime_failure_context(exc: Exception, *, failure_stage: str) -> dict[str, Any]:
+def _runtime_failure_context(
+    exc: Exception,
+    *,
+    failure_stage: str,
+    persistence: Persistence | None = None,
+) -> dict[str, Any]:
     """Return bounded diagnostics without exposing API credentials or arbitrary locals."""
     details: dict[str, Any] = {
         "failure_stage": failure_stage,
@@ -63,6 +68,8 @@ def _runtime_failure_context(exc: Exception, *, failure_stage: str) -> dict[str,
         error_name = getattr(exc, "sqlite_errorname", None)
         if error_code is not None:
             details["sqlite_error_code"] = int(error_code)
+            if persistence is not None and (int(error_code) & 0xFF) == sqlite3.SQLITE_CANTOPEN:
+                details["sqlite_storage_diagnostics"] = persistence.storage_diagnostics()
         if error_name is not None:
             details["sqlite_error_name"] = str(error_name)[:80]
     frames = traceback.extract_tb(exc.__traceback__)
@@ -1854,7 +1861,7 @@ class TraderRuntime:
             return {"cycle_id":cycle_id,"status":"FAILED","reason":exc.code}
         except Exception as exc:
             failure_details = _runtime_failure_context(
-                exc, failure_stage=failure_stage
+                exc, failure_stage=failure_stage, persistence=self.persistence
             )
             self.persistence.trip_circuit_breaker(
                 "UNHANDLED_RUNTIME",
