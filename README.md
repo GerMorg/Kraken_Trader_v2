@@ -1,12 +1,12 @@
-## Hotfix-Status — 0.1.49
+## Hotfix-Status — 0.1.50
 
-Version 0.1.49 ergänzt Diagnoseinformationen für fehlgeschlagene Runtime-Zyklen: Fehlerphase, SQLite-Fehlermeldung/-code/-name und die letzte Python-Fehlerstelle. Beliebige Exception-Texte außerhalb von SQLite werden nicht ausgegeben. Ein alter KRAKEN_STATUS/KRAKEN_NOT_ONLINE-Breaker wird nach einer aktuellen SystemStatus-Antwort online gezielt aufgelöst; der UNHANDLED_RUNTIME-Breaker bleibt dagegen aktiv, bis seine Ursache geprüft wurde.
+Version 0.1.50 ergänzt persistente Sortierindizes für beide Research-Zusammenfassungen. Die TSM- und Strategy-Lab-Abfragen können dadurch ihre Ergebnisreihenfolge über den vorhandenen Index lesen, statt eine temporäre SQLite-Sortierstruktur anzulegen. Bei SQLITE_CANTOPEN protokolliert die Runtime zusätzlich begrenzte Statusdaten zu Datenbankdatei, WAL/SHM, Verzeichnis, Prozessrechten und SQLite-Temp-Einstellungen.
 
-Dies ist ein Diagnose-Hotfix, keine Behauptung, dass die konkrete Ursache des bisherigen OperationalError bereits behoben ist. Nach dem Update genügt zunächst ein kurzer Kontrolllauf. Die vorhandene Datenbank und die bereits gespeicherten Kandidatenbeobachtungen werden nicht zurückgesetzt.
+Dies ist eine gezielte Stabilitäts- und Diagnoseänderung. Sie beseitigt die unnötige temporäre Sortierdatei in den beiden Summary-Abfragen; ob dies auch die konkrete SQLITE_CANTOPEN-Ursache behebt, muss der nächste Kontrollzyklus zeigen. Die vorhandene Datenbank und alle gespeicherten Beobachtungen bleiben erhalten.
 
-## Aktueller Status — 0.1.49
+## Aktueller Status — 0.1.50
 
-**Version 0.1.49 baut auf dem in 0.1.48 eingeführten parallelen Forward-Shadow-Research auf.** Die App beobachtet bei abgeschlossenen Stundenkerzen drei Kandidaten: die bestehende TSM-Regel (als unveränderte Referenz), eine feste Mean-Reversion-Regel und eine einfache logistische Walk-Forward-Prognose. Signale und spätere Ergebnisse werden in einer separaten SQLite-Tabelle gespeichert, getrennt ausgewertet und auch bei Nicht-Signalen protokolliert. Alle Kandidaten sind reine Forschung und erzeugen keine Order-Intents.
+**Version 0.1.50 baut auf dem in 0.1.48 eingeführten parallelen Forward-Shadow-Research auf und stabilisiert die abschließenden Research-Abfragen.** Die App beobachtet bei abgeschlossenen Stundenkerzen drei Kandidaten: die bestehende TSM-Regel (als unveränderte Referenz), eine feste Mean-Reversion-Regel und eine einfache logistische Walk-Forward-Prognose. Signale und spätere Ergebnisse werden in einer separaten SQLite-Tabelle gespeichert, getrennt ausgewertet und auch bei Nicht-Signalen protokolliert. Alle Kandidaten sind reine Forschung und erzeugen keine Order-Intents.
 
 Das ML-Modell nutzt nur abgeschlossene historische Labels, deren Zielkerze vor der aktuellen Entscheidungsstunde liegt. Seine Wahrscheinlichkeiten sind nicht kalibriert, Trainingslabels überlappen und Ergebnisse bleiben Forward-Labels statt Portfolio-PnL. Der Research-Bericht kann weder Parameterpromovierung noch Live-Freigabe auslösen. Die produktive Strategie bleibt tsm-0.2.0; INTERNAL_LIVE_EXECUTION_RELEASED bleibt False.
 
