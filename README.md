@@ -4,9 +4,9 @@ Version 0.1.49 ergänzt Diagnoseinformationen für fehlgeschlagene Runtime-Zykle
 
 Dies ist ein Diagnose-Hotfix, keine Behauptung, dass die konkrete Ursache des bisherigen OperationalError bereits behoben ist. Nach dem Update genügt zunächst ein kurzer Kontrolllauf. Die vorhandene Datenbank und die bereits gespeicherten Kandidatenbeobachtungen werden nicht zurückgesetzt.
 
-## Aktueller Status — 0.1.48
+## Aktueller Status — 0.1.49
 
-**Version 0.1.48 führt ein paralleles Forward-Shadow-Research ein.** Die App beobachtet bei abgeschlossenen Stundenkerzen drei Kandidaten: die bestehende TSM-Regel (als unveränderte Referenz), eine feste Mean-Reversion-Regel und eine einfache logistische Walk-Forward-Prognose. Signale und spätere Ergebnisse werden in einer separaten SQLite-Tabelle gespeichert, getrennt ausgewertet und auch bei Nicht-Signalen protokolliert. Alle Kandidaten sind reine Forschung und erzeugen keine Order-Intents.
+**Version 0.1.49 baut auf dem in 0.1.48 eingeführten parallelen Forward-Shadow-Research auf.** Die App beobachtet bei abgeschlossenen Stundenkerzen drei Kandidaten: die bestehende TSM-Regel (als unveränderte Referenz), eine feste Mean-Reversion-Regel und eine einfache logistische Walk-Forward-Prognose. Signale und spätere Ergebnisse werden in einer separaten SQLite-Tabelle gespeichert, getrennt ausgewertet und auch bei Nicht-Signalen protokolliert. Alle Kandidaten sind reine Forschung und erzeugen keine Order-Intents.
 
 Das ML-Modell nutzt nur abgeschlossene historische Labels, deren Zielkerze vor der aktuellen Entscheidungsstunde liegt. Seine Wahrscheinlichkeiten sind nicht kalibriert, Trainingslabels überlappen und Ergebnisse bleiben Forward-Labels statt Portfolio-PnL. Der Research-Bericht kann weder Parameterpromovierung noch Live-Freigabe auslösen. Die produktive Strategie bleibt tsm-0.2.0; INTERNAL_LIVE_EXECUTION_RELEASED bleibt False.
 
