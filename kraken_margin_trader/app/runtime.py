@@ -70,7 +70,7 @@ def _runtime_failure_context(exc: Exception, *, failure_stage: str) -> dict[str,
         frame = frames[-1]
         details["failure_location"] = {
             "file": frame.filename.rsplit("/", 1)[-1][:100],
-            "line": int(frame.lineno),
+            **({"line": frame.lineno} if frame.lineno is not None else {}),
             "function": str(frame.name)[:100],
         }
     return details
