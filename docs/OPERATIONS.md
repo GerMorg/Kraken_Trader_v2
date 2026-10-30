@@ -5,7 +5,7 @@ Die Exception-Behandlung ergänzt bei einem fehlgeschlagenen Zyklus nun:
 - failure_location: Dateiname, Zeile und Python-Funktion der letzten Traceback-Stelle.
 - Bei sqlite3.Error zusätzlich sqlite_error_message, sqlite_error_code und sqlite_error_name.
 
-Beliebige Nachrichten von anderen Exception-Typen werden nicht protokolliert. Es werden keine API-Schlüssel, Secrets oder lokalen Variablen-Dumps ausgegeben. Der Circuit Breaker bleibt unverändert aktiv; dieser Hotfix schaltet keine Fehler frei und sendet keine Orders.
+Beliebige Nachrichten von anderen Exception-Typen werden nicht protokolliert. Es werden keine API-Schlüssel, Secrets oder lokalen Variablen-Dumps ausgegeben. Der UNHANDLED_RUNTIME-Circuit-Breaker bleibt aktiv, bis die Ursache geprüft wurde. Ein alter KRAKEN_STATUS/KRAKEN_NOT_ONLINE-Breaker wird nur dann aufgelöst, wenn eine aktuelle Kraken-SystemStatus-Abfrage online zurückliefert. Andere Namen und Gründe bleiben unverändert. Dieser Hotfix schaltet keine Fehler frei und sendet keine Orders.
 
 ### Vorgehen nach einem wiederkehrenden OperationalError
 
