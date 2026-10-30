@@ -54,6 +54,10 @@ Ab Version 0.1.48 erzeugt der laufende SHADOW-Zyklus zusätzlich drei idempotent
 
 Die Trade-/Ledger-Erstbefüllung läuft schrittweise über gespeicherte Seiten-Cursor und wiederholt bei Folgeläufen ein überlappendes Zeitfenster. Sie ist noch keine durchgängige Order-/Fill-/OpenPosition-/Ledger-Abstimmung: externe/manuelle Trades, offene/geschlossene Orders, Reservierungen, Kredite, USDC-Konversionen und Crashfenster sind noch nicht verifiziert. Exchange-seitige Schutzorder-Recovery, tatsächliche FX-/USDC-Zuordnung sowie ein realistischer Orderbuch-Backtest und Forward-Shadow-Test fehlen ebenfalls. Ein vollständig importierter Verlauf ist nicht gleichbedeutend mit vollständig reconciliertem Portfolio. Diese Lücken verhindern die Live-Freigabe.
 
+## Research-Finalisierung ab Version 0.1.50
+
+Die TSM-Research- und Strategy-Lab-Summary-Leseabfragen werden jeweils über einen dedizierten Index auf `decision_ts` und dem deterministischen zweiten Sortierschlüssel bedient. Dadurch entsteht für diese beiden Abfragen kein temporärer SQLite-Sortier-B-Tree. Bei `SQLITE_CANTOPEN` ergänzt die Runtime Diagnoseinformationen zum Zustand der DB-Datei, des Elternverzeichnisses, der WAL-Sidecars und des konfigurierten temporären Verzeichnisses sowie zu `temp_store` und `journal_mode`. Diese Daten sind Diagnosehinweise, kein automatisches Löschen, Reparieren oder Zurücksetzen der Datenbank.
+
 ## Runtime-Fehlerdiagnostik ab Version 0.1.49
 
 Die Runtime führt einen nicht persistierten failure_stage-Marker durch wichtige Verarbeitungsschritte und die Finalisierung. Bei einem unerwarteten Fehler enthält CYCLE_FAILED_CIRCUIT_BREAKER die Phase und die letzte Traceback-Stelle (Dateibasename, Zeile, Funktion). Nur bei sqlite3.Error werden zusätzlich die begrenzte SQLite-Meldung und SQLite-Fehlercode/-name ausgegeben. Für andere Fehler werden keine unkontrollierten Exception-Texte ausgegeben. Die Ausnahme wird weiterhin mit UNHANDLED_RUNTIME als Circuit Breaker behandelt. Es findet weder Auto-Recovery dieses Breakers noch eine Veränderung der Execution- oder Live-Release-Logik statt.
