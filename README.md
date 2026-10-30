@@ -1,3 +1,9 @@
+## Hotfix-Status — 0.1.49
+
+Version 0.1.49 ergänzt Diagnoseinformationen für fehlgeschlagene Runtime-Zyklen: Fehlerphase, SQLite-Fehlermeldung/-code/-name und die letzte Python-Fehlerstelle. Beliebige Exception-Texte außerhalb von SQLite werden nicht ausgegeben. Ein alter KRAKEN_STATUS/KRAKEN_NOT_ONLINE-Breaker wird nach einer aktuellen SystemStatus-Antwort online gezielt aufgelöst; der UNHANDLED_RUNTIME-Breaker bleibt dagegen aktiv, bis seine Ursache geprüft wurde.
+
+Dies ist ein Diagnose-Hotfix, keine Behauptung, dass die konkrete Ursache des bisherigen OperationalError bereits behoben ist. Nach dem Update genügt zunächst ein kurzer Kontrolllauf. Die vorhandene Datenbank und die bereits gespeicherten Kandidatenbeobachtungen werden nicht zurückgesetzt.
+
 ## Aktueller Status — 0.1.48
 
 **Version 0.1.48 führt ein paralleles Forward-Shadow-Research ein.** Die App beobachtet bei abgeschlossenen Stundenkerzen drei Kandidaten: die bestehende TSM-Regel (als unveränderte Referenz), eine feste Mean-Reversion-Regel und eine einfache logistische Walk-Forward-Prognose. Signale und spätere Ergebnisse werden in einer separaten SQLite-Tabelle gespeichert, getrennt ausgewertet und auch bei Nicht-Signalen protokolliert. Alle Kandidaten sind reine Forschung und erzeugen keine Order-Intents.
