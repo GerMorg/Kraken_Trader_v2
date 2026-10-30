@@ -186,6 +186,47 @@ def _resolve_clean_reconciliation_breaker(
     return recovered
 
 
+def _resolve_online_kraken_status_breaker(
+    persistence: Persistence,
+    audit: AuditLogger,
+    *,
+    cycle_id: str,
+    system_status: str,
+) -> bool:
+    """Clear only a prior maintenance breaker after Kraken currently reports online."""
+    if str(system_status).strip().lower() != "online":
+        return False
+    expected_reason = "KRAKEN_NOT_ONLINE"
+    for breaker in persistence.circuit_breakers():
+        if (
+            breaker.get("name") != "KRAKEN_STATUS"
+            or breaker.get("reason") != expected_reason
+        ):
+            continue
+        recovery_detail = {
+            "cycle_id": cycle_id,
+            "recovery_method": "CURRENT_KRAKEN_SYSTEM_STATUS_ONLINE",
+            "previous_status": (
+                breaker.get("detail", {}).get("status")
+                if isinstance(breaker.get("detail"), dict) else None
+            ),
+            "current_status": "online",
+        }
+        if persistence.resolve_circuit_breaker(
+            "KRAKEN_STATUS", expected_reason, recovery_detail
+        ):
+            audit.emit(
+                "CIRCUIT_BREAKER_RECOVERED",
+                cycle_id=cycle_id,
+                name="KRAKEN_STATUS",
+                previous_reason=expected_reason,
+                recovery_method="CURRENT_KRAKEN_SYSTEM_STATUS_ONLINE",
+                current_status="online",
+            )
+            return True
+    return False
+
+
 def _recover_transient_public_network_breaker(
     persistence: Persistence,
     audit: AuditLogger,
@@ -465,6 +506,12 @@ class TraderRuntime:
                 self.persistence.trip_circuit_breaker("KRAKEN_STATUS","KRAKEN_NOT_ONLINE",{"status":status})
                 self.audit.emit("CYCLE_BLOCKED",cycle_id=cycle_id,reason="KRAKEN_NOT_ONLINE",status=status)
                 return {"cycle_id":cycle_id,"status":"BLOCKED","reason":"KRAKEN_NOT_ONLINE"}
+            _resolve_online_kraken_status_breaker(
+                self.persistence,
+                self.audit,
+                cycle_id=cycle_id,
+                system_status=status,
+            )
             instruments=usd_crypto_universe(self.client.public("AssetPairs")); counts["universe"]=len(instruments)
             if not instruments:
                 self.persistence.trip_circuit_breaker("MARKET_UNIVERSE","NO_VALID_USD_MARKETS")
