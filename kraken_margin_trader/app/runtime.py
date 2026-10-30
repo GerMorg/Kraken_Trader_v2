@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 import json
+import sqlite3
 import time
+import traceback
 import uuid
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -48,6 +50,31 @@ from app.strategy import generate_trend_signal
 from app.tax import AustrianTaxReports
 
 D=Decimal
+
+def _runtime_failure_context(exc: Exception, *, failure_stage: str) -> dict[str, Any]:
+    """Return bounded diagnostics without exposing API credentials or arbitrary locals."""
+    details: dict[str, Any] = {
+        "failure_stage": failure_stage,
+        "exception_type": type(exc).__name__,
+    }
+    if isinstance(exc, sqlite3.Error):
+        details["sqlite_error_message"] = str(exc)[:240]
+        error_code = getattr(exc, "sqlite_errorcode", None)
+        error_name = getattr(exc, "sqlite_errorname", None)
+        if error_code is not None:
+            details["sqlite_error_code"] = int(error_code)
+        if error_name is not None:
+            details["sqlite_error_name"] = str(error_name)[:80]
+    frames = traceback.extract_tb(exc.__traceback__)
+    if frames:
+        frame = frames[-1]
+        details["failure_location"] = {
+            "file": frame.filename.rsplit("/", 1)[-1][:100],
+            "line": int(frame.lineno),
+            "function": str(frame.name)[:100],
+        }
+    return details
+
 
 def _decimal(value: Any) -> Decimal | None:
     try:
@@ -416,6 +443,7 @@ class TraderRuntime:
 
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
+        failure_stage = "CYCLE_INITIALIZATION"
         counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0,"strategy_lab_observations_recorded":0,"strategy_lab_outcomes_settled":0,"strategy_lab_outcomes_incomplete":0}
         history_ready_for_entries = False
         history_evidence_gaps = ["ACCOUNT_HISTORY_NOT_CHECKED"]
@@ -429,7 +457,9 @@ class TraderRuntime:
         position_reconciliation: dict[str, Any] | None = None
         self.audit.emit("CYCLE_START",cycle_id=cycle_id,mode=self.settings.mode)
         try:
+            failure_stage = "REFRESH_TAX_REPORT"
             self._refresh_tax_report()
+            failure_stage = "KRAKEN_SYSTEM_STATUS"
             status=str(self.client.public("SystemStatus").get("status","unknown")).lower()
             if status!="online":
                 self.persistence.trip_circuit_breaker("KRAKEN_STATUS","KRAKEN_NOT_ONLINE",{"status":status})
@@ -1050,6 +1080,7 @@ class TraderRuntime:
                 breakers=active_breaker_diagnostics,
             )
             for instrument in candidates:
+                failure_stage = f"MARKET_SCAN:{instrument.pair_id}"
                 if account is not None:
                     try:
                         fresh_ticker = self._fetch_fresh_ticker(instrument)
@@ -1703,6 +1734,7 @@ class TraderRuntime:
                         state="SHADOW_ONLY",
                         **intent,
                     )
+            failure_stage = "FINALIZE_TARGET_OPEN_BACKFILL"
             try:
                 target_open_backfill = backfill_target_open_outcomes(self.persistence)
                 if target_open_backfill["updated"] > 0:
@@ -1721,16 +1753,20 @@ class TraderRuntime:
                     reason=str(exc)[:120],
                     primary_outcomes_unchanged=True,
                 )
+            failure_stage = "FINALIZE_TSM_RESEARCH_SUMMARY_READ"
             research_summary = summarize_shadow_research(
                 self.persistence.research_observations(limit=5000),
                 strategy_version=STRATEGY_VERSION,
             )
+            failure_stage = "FINALIZE_TSM_RESEARCH_SUMMARY_WRITE"
             self.persistence.record_event("SHADOW_RESEARCH_SUMMARY", research_summary)
             self.audit.emit("SHADOW_RESEARCH_SUMMARY", **research_summary)
+            failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_READ"
             strategy_lab_summary = summarize_strategy_candidate_research(
                 self.persistence.strategy_candidate_observations(limit=100000)
             )
             strategy_lab_summary["enabled"] = self.settings.shadow_strategy_lab_enabled
+            failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_WRITE"
             self.persistence.record_event("SHADOW_STRATEGY_LAB_SUMMARY", strategy_lab_summary)
             self.audit.emit("SHADOW_STRATEGY_LAB_SUMMARY", **strategy_lab_summary)
             final_breaker_rows = self.persistence.circuit_breakers()
@@ -1762,6 +1798,7 @@ class TraderRuntime:
                     "No fill is assumed from an acknowledged submission."
                 ),
             }
+            failure_stage = "FINALIZE_CYCLE_SUMMARY_WRITE"
             self.persistence.record_event("CYCLE_SUMMARY",result); self.audit.emit("CYCLE_SUMMARY",**result)
             return result
         except KrakenAPIError as exc:
@@ -1769,7 +1806,22 @@ class TraderRuntime:
             self.audit.emit("CYCLE_FAILED_CIRCUIT_BREAKER",cycle_id=cycle_id,code=exc.code)
             return {"cycle_id":cycle_id,"status":"FAILED","reason":exc.code}
         except Exception as exc:
-            self.persistence.trip_circuit_breaker("UNHANDLED_RUNTIME","CYCLE_EXCEPTION",
-                {"cycle_id":cycle_id,"exception_type":type(exc).__name__})
-            self.audit.emit("CYCLE_FAILED_CIRCUIT_BREAKER",cycle_id=cycle_id,exception_type=type(exc).__name__)
-            return {"cycle_id":cycle_id,"status":"FAILED","reason":type(exc).__name__}
+            failure_details = _runtime_failure_context(
+                exc, failure_stage=failure_stage
+            )
+            self.persistence.trip_circuit_breaker(
+                "UNHANDLED_RUNTIME",
+                "CYCLE_EXCEPTION",
+                {"cycle_id": cycle_id, **failure_details},
+            )
+            self.audit.emit(
+                "CYCLE_FAILED_CIRCUIT_BREAKER",
+                cycle_id=cycle_id,
+                **failure_details,
+            )
+            return {
+                "cycle_id": cycle_id,
+                "status": "FAILED",
+                "reason": type(exc).__name__,
+                "failure_stage": failure_stage,
+            }
