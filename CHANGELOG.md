@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.50 — SQLite-Research-Finalisierung und CANTOPEN-Diagnostik
+
+- Ergänzt Sortierindizes für die TSM-Research- und Strategy-Lab-Zusammenfassungen. Beide Abfragen können ihre chronologische Reihenfolge indexgestützt lesen, ohne eine temporäre B-Tree-Sortierstruktur anzulegen.
+- Bei SQLITE_CANTOPEN protokolliert die Runtime zusätzlich Dateisystemstatus der Datenbankdatei, des Elternverzeichnisses und der WAL/SHM/Journal-Sidecars sowie Prozess-UID/GID, Temp-Verzeichniszugriff, SQLite temp_store und journal_mode.
+- Ergänzt Tests für die Query-Pläne ohne TEMP-B-TREE sowie für sichere Dateisystemdiagnostik. Die bestehende Datenbank und die Research-Daten werden nicht gelöscht oder neu initialisiert.
+- Keine Änderung an Signalregeln, Ordererstellung, Risikoparametern oder Live-Freigabe; echte Orderübermittlung bleibt intern gesperrt.
+
+
+
 ## 0.1.49 — Diagnose fehlgeschlagene Runtime-Zyklen
 
 - Ergänzt einen expliziten Fehlerphasenmarker für Startup, Marktverarbeitung und die einzelnen Finalisierungsschritte.
