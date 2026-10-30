@@ -1,4 +1,5 @@
 import io
+import sqlite3
 import time
 from decimal import Decimal
 
@@ -7,6 +8,7 @@ from app.config import Settings
 from app.persistence import Persistence
 from app.runtime import (
     TraderRuntime,
+    _runtime_failure_context,
     _circuit_breaker_diagnostics,
     _open_position_rows,
     _recover_transient_public_network_breaker,
@@ -781,3 +783,36 @@ def test_unclean_account_snapshot_does_not_resolve_stale_reconciliation_breaker(
     ]
     audit.close()
     db.close()
+
+
+def test_runtime_failure_context_identifies_sqlite_error_and_failing_location():
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute("SELECT * FROM definitely_missing_table")
+    except sqlite3.OperationalError as exc:
+        details = _runtime_failure_context(
+            exc, failure_stage="FINALIZE_TSM_RESEARCH_SUMMARY_READ"
+        )
+    else:
+        raise AssertionError("Expected SQLite OperationalError")
+    finally:
+        connection.close()
+
+    assert details["failure_stage"] == "FINALIZE_TSM_RESEARCH_SUMMARY_READ"
+    assert details["exception_type"] == "OperationalError"
+    assert details["sqlite_error_message"] == "no such table: definitely_missing_table"
+    assert details["sqlite_error_name"] == "SQLITE_ERROR"
+    assert isinstance(details["sqlite_error_code"], int)
+    assert details["failure_location"]["file"] == "test_runtime.py"
+    assert details["failure_location"]["function"] == "test_runtime_failure_context_identifies_sqlite_error_and_failing_location"
+
+
+def test_runtime_failure_context_does_not_log_arbitrary_exception_messages():
+    exc = ValueError("private-api-secret-must-not-be-logged")
+    details = _runtime_failure_context(exc, failure_stage="MARKET_SCAN:XXBTZUSD")
+
+    assert details["failure_stage"] == "MARKET_SCAN:XXBTZUSD"
+    assert details["exception_type"] == "ValueError"
+    assert "sqlite_error_message" not in details
+    assert "private-api-secret-must-not-be-logged" not in str(details)
+    assert details["failure_location"]["file"] == "test_runtime.py"
