@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.49 — Diagnose fehlgeschlagene Runtime-Zyklen
+
+- Ergänzt einen expliziten Fehlerphasenmarker für Startup, Marktverarbeitung und die einzelnen Finalisierungsschritte.
+- Bei SQLite-Ausnahmen werden begrenzt die sichere Fehlermeldung, SQLite-Fehlercode/-name und die letzte Python-Datei/Funktion/Zeile protokolliert. Beliebige Exception-Texte außerhalb von SQLite werden weiterhin nicht ausgegeben.
+- Die bestehende Circuit-Breaker-Wirkung, Handelsentscheidung, Research-Persistenz und Live-Sperre bleiben unverändert.
+- Ergänzt Regressionstests für SQLite-Diagnostik und das Nicht-Protokollieren beliebiger Exception-Nachrichten.
+
 ## 0.1.48 — Paralleles Forward-Shadow-Research mit drei Strategiekandidaten
 
 - Ergänzt eine separate, persistente Beobachtungsspur für die unveränderte TSM-Referenz, eine feste 24-Bar-Mean-Reversion-Hypothese und ein L2-logistisches Walk-Forward-Basismodell.
