@@ -1,12 +1,24 @@
-## Aktueller Status — 0.1.48
+## Hotfix-Status — 0.1.49
 
-**Version 0.1.48 führt ein paralleles Forward-Shadow-Research ein.** Die App beobachtet bei abgeschlossenen Stundenkerzen drei Kandidaten: die bestehende TSM-Regel (als unveränderte Referenz), eine feste Mean-Reversion-Regel und eine einfache logistische Walk-Forward-Prognose. Signale und spätere Ergebnisse werden in einer separaten SQLite-Tabelle gespeichert, getrennt ausgewertet und auch bei Nicht-Signalen protokolliert. Alle Kandidaten sind reine Forschung und erzeugen keine Order-Intents.
+Version 0.1.49 ergänzt Diagnoseinformationen für fehlgeschlagene Runtime-Zyklen: Fehlerphase, SQLite-Fehlermeldung/-code/-name und die letzte Python-Fehlerstelle. Beliebige Exception-Texte außerhalb von SQLite werden nicht ausgegeben. Ein alter KRAKEN_STATUS/KRAKEN_NOT_ONLINE-Breaker wird nach einer aktuellen SystemStatus-Antwort online gezielt aufgelöst; der UNHANDLED_RUNTIME-Breaker bleibt dagegen aktiv, bis seine Ursache geprüft wurde.
+
+Dies ist ein Diagnose-Hotfix, keine Behauptung, dass die konkrete Ursache des bisherigen OperationalError bereits behoben ist. Nach dem Update genügt zunächst ein kurzer Kontrolllauf. Die vorhandene Datenbank und die bereits gespeicherten Kandidatenbeobachtungen werden nicht zurückgesetzt.
+
+## Aktueller Status — 0.1.49
+
+**Version 0.1.49 baut auf dem in 0.1.48 eingeführten parallelen Forward-Shadow-Research auf.** Die App beobachtet bei abgeschlossenen Stundenkerzen drei Kandidaten: die bestehende TSM-Regel (als unveränderte Referenz), eine feste Mean-Reversion-Regel und eine einfache logistische Walk-Forward-Prognose. Signale und spätere Ergebnisse werden in einer separaten SQLite-Tabelle gespeichert, getrennt ausgewertet und auch bei Nicht-Signalen protokolliert. Alle Kandidaten sind reine Forschung und erzeugen keine Order-Intents.
 
 Das ML-Modell nutzt nur abgeschlossene historische Labels, deren Zielkerze vor der aktuellen Entscheidungsstunde liegt. Seine Wahrscheinlichkeiten sind nicht kalibriert, Trainingslabels überlappen und Ergebnisse bleiben Forward-Labels statt Portfolio-PnL. Der Research-Bericht kann weder Parameterpromovierung noch Live-Freigabe auslösen. Die produktive Strategie bleibt tsm-0.2.0; INTERNAL_LIVE_EXECUTION_RELEASED bleibt False.
 
 Die Home-Assistant-Option shadow_strategy_lab_enabled ist standardmäßig true. Für eine aussagekräftige Beobachtung sollten die App und ihr persistenter /data-Speicher mehrere Wochen laufen, ohne die Datenbank zu löschen. Die ersten abgeschlossenen Labels entstehen erst nach dem konfigurierten Haltehorizont (Standard: acht Stunden).
 
 **Vollständige historische Portfolio-Reconciliation, verifizierte Margin-Eröffnungs-/Rollover-Kosten und eine realistische, portfolio-basierte Ausführungssimulation sind weiterhin offene Voraussetzungen.** Diese Version ist keine Live-Freigabe.
+
+### Hotfix-Status — 0.1.49
+
+Version 0.1.49 ergänzt Diagnoseinformationen für fehlgeschlagene Runtime-Zyklen. Die bisherige Fehlerbehandlung protokollierte nur den Typ der Ausnahme; dadurch ließ sich ein wiederkehrender OperationalError im tatsächlichen HA-Datenbankzustand nicht lokalisieren. Die neue Version ergänzt Fehlerphase, SQLite-Fehlermeldung/-code/-name und die letzte Python-Fehlerstelle, ohne beliebige Exception-Texte oder API-Geheimnisse offenzulegen.
+
+**Wichtig:** Dies ist zunächst ein Diagnose-Hotfix, keine Behauptung, dass die konkrete Ursache des bisherigen OperationalError bereits behoben ist. Nach dem Update genügt ein kurzer Kontrolllauf, um die konkrete Fehlerstelle zu erhalten. Die vorhandenen Research-Daten und die SQLite-Datenbank werden nicht zurückgesetzt. Produktionsstrategie tsm-0.2.0, Kandidaten-Trennung und interne Live-Sperre bleiben unverändert.
 
 ### Vorherige Version — 0.1.47
 

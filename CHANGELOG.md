@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.49 — Diagnose fehlgeschlagene Runtime-Zyklen
+
+- Ergänzt einen expliziten Fehlerphasenmarker für Startup, Marktverarbeitung und die einzelnen Finalisierungsschritte.
+- Bei SQLite-Ausnahmen werden begrenzt die sichere Fehlermeldung, SQLite-Fehlercode/-name und die letzte Python-Datei/Funktion/Zeile protokolliert. Beliebige Exception-Texte außerhalb von SQLite werden weiterhin nicht ausgegeben.
+- Ein veralteter KRAKEN_STATUS/KRAKEN_NOT_ONLINE-Breaker wird ausschließlich nach einer neuen erfolgreichen SystemStatus-Antwort online gezielt aufgelöst; andere Breakergründe bleiben bestehen.
+- Der UNHANDLED_RUNTIME-Breaker bleibt bewusst bestehen und erfordert weiterhin Ursachenprüfung. Strategieparameter, Research-Persistenz, Handelsentscheidung und Live-Sperre bleiben ansonsten unverändert.
+- Ergänzt Regressionstests für SQLite-Diagnostik und das Nicht-Protokollieren beliebiger Exception-Nachrichten.
+
 ## 0.1.48 — Paralleles Forward-Shadow-Research mit drei Strategiekandidaten
 
 - Ergänzt eine separate, persistente Beobachtungsspur für die unveränderte TSM-Referenz, eine feste 24-Bar-Mean-Reversion-Hypothese und ein L2-logistisches Walk-Forward-Basismodell.

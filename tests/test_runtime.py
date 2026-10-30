@@ -1,4 +1,5 @@
 import io
+import sqlite3
 import time
 from decimal import Decimal
 
@@ -7,6 +8,8 @@ from app.config import Settings
 from app.persistence import Persistence
 from app.runtime import (
     TraderRuntime,
+    _runtime_failure_context,
+    _resolve_online_kraken_status_breaker,
     _circuit_breaker_diagnostics,
     _open_position_rows,
     _recover_transient_public_network_breaker,
@@ -779,5 +782,84 @@ def test_unclean_account_snapshot_does_not_resolve_stale_reconciliation_breaker(
     assert [(row["name"], row["reason"]) for row in db.circuit_breakers()] == [
         ("ACCOUNT_SNAPSHOT", "POSITION_SNAPSHOT_SHAPE_INVALID")
     ]
+    audit.close()
+    db.close()
+
+
+def test_runtime_failure_context_identifies_sqlite_error_and_failing_location():
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute("SELECT * FROM definitely_missing_table")
+    except sqlite3.OperationalError as exc:
+        details = _runtime_failure_context(
+            exc, failure_stage="FINALIZE_TSM_RESEARCH_SUMMARY_READ"
+        )
+    else:
+        raise AssertionError("Expected SQLite OperationalError")
+    finally:
+        connection.close()
+
+    assert details["failure_stage"] == "FINALIZE_TSM_RESEARCH_SUMMARY_READ"
+    assert details["exception_type"] == "OperationalError"
+    assert details["sqlite_error_message"] == "no such table: definitely_missing_table"
+    assert details["sqlite_error_name"] == "SQLITE_ERROR"
+    assert isinstance(details["sqlite_error_code"], int)
+    assert details["failure_location"]["file"] == "test_runtime.py"
+    assert details["failure_location"]["function"] == "test_runtime_failure_context_identifies_sqlite_error_and_failing_location"
+
+
+def test_runtime_failure_context_does_not_log_arbitrary_exception_messages():
+    try:
+        raise ValueError("private-api-secret-must-not-be-logged")
+    except ValueError as exc:
+        details = _runtime_failure_context(
+            exc, failure_stage="MARKET_SCAN:XXBTZUSD"
+        )
+
+    assert details["failure_stage"] == "MARKET_SCAN:XXBTZUSD"
+    assert details["exception_type"] == "ValueError"
+    assert "sqlite_error_message" not in details
+    assert "private-api-secret-must-not-be-logged" not in str(details)
+    assert details["failure_location"]["file"] == "test_runtime.py"
+
+
+def test_current_online_kraken_status_resolves_only_stale_maintenance_breaker():
+    runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker(
+        "KRAKEN_STATUS", "KRAKEN_NOT_ONLINE", {"status": "maintenance"}
+    )
+
+    recovered = _resolve_online_kraken_status_breaker(
+        db, audit, cycle_id="recovered-cycle", system_status="online"
+    )
+
+    assert recovered is True
+    assert all(row["name"] != "KRAKEN_STATUS" for row in db.circuit_breakers())
+    recovered_events = db.connection.execute(
+        "SELECT COUNT(*) AS count FROM events WHERE name='CIRCUIT_BREAKER_RECOVERED'"
+    ).fetchone()
+    assert recovered_events["count"] == 1
+    audit.close()
+    db.close()
+
+
+def test_kraken_status_breaker_is_not_resolved_when_offline_or_reason_changed():
+    runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker(
+        "KRAKEN_STATUS", "KRAKEN_NOT_ONLINE", {"status": "maintenance"}
+    )
+
+    assert _resolve_online_kraken_status_breaker(
+        db, audit, cycle_id="still-offline", system_status="maintenance"
+    ) is False
+    assert db.circuit_breakers()[0]["reason"] == "KRAKEN_NOT_ONLINE"
+
+    db.trip_circuit_breaker(
+        "KRAKEN_STATUS", "OPERATOR_REVIEW_REQUIRED", {"status": "online"}
+    )
+    assert _resolve_online_kraken_status_breaker(
+        db, audit, cycle_id="changed-reason", system_status="online"
+    ) is False
+    assert db.circuit_breakers()[0]["reason"] == "OPERATOR_REVIEW_REQUIRED"
     audit.close()
     db.close()

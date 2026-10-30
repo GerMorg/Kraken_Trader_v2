@@ -53,3 +53,10 @@ Ab Version 0.1.48 erzeugt der laufende SHADOW-Zyklus zusätzlich drei idempotent
 ## Bekannte Lücken
 
 Die Trade-/Ledger-Erstbefüllung läuft schrittweise über gespeicherte Seiten-Cursor und wiederholt bei Folgeläufen ein überlappendes Zeitfenster. Sie ist noch keine durchgängige Order-/Fill-/OpenPosition-/Ledger-Abstimmung: externe/manuelle Trades, offene/geschlossene Orders, Reservierungen, Kredite, USDC-Konversionen und Crashfenster sind noch nicht verifiziert. Exchange-seitige Schutzorder-Recovery, tatsächliche FX-/USDC-Zuordnung sowie ein realistischer Orderbuch-Backtest und Forward-Shadow-Test fehlen ebenfalls. Ein vollständig importierter Verlauf ist nicht gleichbedeutend mit vollständig reconciliertem Portfolio. Diese Lücken verhindern die Live-Freigabe.
+
+## Runtime-Fehlerdiagnostik ab Version 0.1.49
+
+Die Runtime führt einen nicht persistierten failure_stage-Marker durch wichtige Verarbeitungsschritte und die Finalisierung. Bei einem unerwarteten Fehler enthält CYCLE_FAILED_CIRCUIT_BREAKER die Phase und die letzte Traceback-Stelle (Dateibasename, Zeile, Funktion). Nur bei sqlite3.Error werden zusätzlich die begrenzte SQLite-Meldung und SQLite-Fehlercode/-name ausgegeben. Für andere Fehler werden keine unkontrollierten Exception-Texte ausgegeben. Die Ausnahme wird weiterhin mit UNHANDLED_RUNTIME als Circuit Breaker behandelt. Es findet weder Auto-Recovery dieses Breakers noch eine Veränderung der Execution- oder Live-Release-Logik statt.
+
+
+Ab Version 0.1.49 wird ein KRAKEN_STATUS/KRAKEN_NOT_ONLINE-Breaker nach einer aktuellen erfolgreichen SystemStatus-Antwort online gezielt aufgelöst. Der UNHANDLED_RUNTIME-Breaker wird weiterhin nicht automatisch bereinigt. Unerwartete Runtime-Fehler protokollieren bei SQLite-Ausnahmen die begrenzte Fehlerdiagnose sowie ihre letzte Python-Fehlerstelle.
