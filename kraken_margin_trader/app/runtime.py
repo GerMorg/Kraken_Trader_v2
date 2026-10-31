@@ -1802,34 +1802,61 @@ class TraderRuntime:
             failure_stage = "FINALIZE_MULTI_ASSET_STRATEGY_RESEARCH"
             if self.settings.shadow_strategy_lab_enabled:
                 try:
-                    from app.portfolio_strategies import run_multi_asset_strategy_research
-
-                    multi_asset_research_summary = run_multi_asset_strategy_research(
-                        portfolio_histories,
-                        portfolio_market_costs,
-                        now_epoch=int(time.time()),
+                    nonempty_histories = [
+                        rows for rows in portfolio_histories.values() if rows
+                    ]
+                    candidate_bar_ts = (
+                        min(int(rows[-1]["ts"]) for rows in nonempty_histories)
+                        if len(nonempty_histories) >= 2 else None
                     )
-                    multi_asset_research_summary["snapshot_persisted"] = False
-                    if (
-                        multi_asset_research_summary.get("status") == "RESEARCH_COMPLETE"
-                        and multi_asset_research_summary.get("as_of_bar_freshness") == "FRESH"
-                    ):
-                        saved = self.persistence.record_multi_asset_research_run(
-                            multi_asset_research_summary
+                    latest_bar_is_common = (
+                        candidate_bar_ts is not None
+                        and all(
+                            any(int(bar["ts"]) == candidate_bar_ts for bar in rows)
+                            for rows in nonempty_histories
                         )
-                        multi_asset_research_summary["snapshot_persisted"] = saved
-                        if saved:
-                            counts["multi_asset_research_runs_recorded"] += 1
-                            self.persistence.record_event(
-                                "MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY",
-                                multi_asset_research_summary,
+                    )
+                    if (
+                        latest_bar_is_common
+                        and candidate_bar_ts is not None
+                        and self.persistence.multi_asset_research_bar_exists(candidate_bar_ts)
+                    ):
+                        multi_asset_research_summary = {
+                            "status": "ALREADY_RECORDED_FOR_COMMON_BAR",
+                            "as_of_bar_ts": candidate_bar_ts,
+                            "snapshot_persisted": True,
+                            "release_gate_eligible": False,
+                            "order_creation_allowed": False,
+                        }
+                    else:
+                        from app.portfolio_strategies import run_multi_asset_strategy_research
+
+                        multi_asset_research_summary = run_multi_asset_strategy_research(
+                            portfolio_histories,
+                            portfolio_market_costs,
+                            now_epoch=int(time.time()),
+                        )
+                        multi_asset_research_summary["snapshot_persisted"] = False
+                        if (
+                            multi_asset_research_summary.get("status") == "RESEARCH_COMPLETE"
+                            and multi_asset_research_summary.get("as_of_bar_freshness") == "FRESH"
+                        ):
+                            saved = self.persistence.record_multi_asset_research_run(
+                                multi_asset_research_summary
                             )
-                            self.audit.emit(
-                                "MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY",
-                                **multi_asset_research_summary,
-                            )
-                        else:
-                            multi_asset_research_summary["duplicate_snapshot"] = True
+                            multi_asset_research_summary["snapshot_persisted"] = saved
+                            if saved:
+                                counts["multi_asset_research_runs_recorded"] += 1
+                                self.persistence.record_event(
+                                    "MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY",
+                                    multi_asset_research_summary,
+                                )
+                                self.audit.emit(
+                                    "MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY",
+                                    **multi_asset_research_summary,
+                                )
+                            else:
+                                multi_asset_research_summary["duplicate_snapshot"] = True
                 except Exception as exc:
                     multi_asset_research_summary = {
                         "status": "RESEARCH_FAILED",
