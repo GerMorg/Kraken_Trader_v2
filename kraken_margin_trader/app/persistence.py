@@ -851,6 +851,15 @@ class Persistence:
             )
             return cursor.rowcount == 1
 
+    def multi_asset_research_bar_exists(self, as_of_bar_ts: int) -> bool:
+        """Check whether a multi-asset snapshot already exists for this common H1 bar."""
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT 1 FROM multi_asset_research_runs WHERE as_of_bar_ts=? LIMIT 1",
+                (int(as_of_bar_ts),),
+            ).fetchone()
+        return row is not None
+
     def multi_asset_research_runs(self, limit: int = 100) -> list[dict[str, Any]]:
         """Return the newest immutable multi-asset research reports for review."""
         with self.lock:
