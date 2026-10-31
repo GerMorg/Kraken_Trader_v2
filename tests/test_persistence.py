@@ -526,3 +526,17 @@ def test_multi_asset_research_runs_reject_incomplete_identity():
             "symbols": ["XBT/USD", ""],
         })
     db.close()
+
+
+def test_multi_asset_research_bar_lookup_skips_repeated_five_minute_cycles():
+    db = Persistence(":memory:")
+    first = {
+        "research_key": "bar-one-universe-a",
+        "research_version": "parrondo-multi-asset-v0.1",
+        "as_of_bar_ts": 1793462400,
+        "symbols": ["XBT/USD", "ETH/USD"],
+    }
+    assert db.multi_asset_research_bar_exists(first["as_of_bar_ts"]) is False
+    assert db.record_multi_asset_research_run(first) is True
+    assert db.multi_asset_research_bar_exists(first["as_of_bar_ts"]) is True
+    db.close()
