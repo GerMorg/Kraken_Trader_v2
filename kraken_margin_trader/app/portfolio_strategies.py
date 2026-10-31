@@ -269,10 +269,13 @@ def _simulate_rebalancing(
             traded_weights = sum(abs(value) for value in deltas.values())
             trade_cost_fraction = 0.0
             if costs_complete:
-                trade_cost_fraction = sum(
-                    abs(deltas[symbol]) * float(costs[symbol]) / 10000.0
-                    for symbol in symbols
-                )
+                for symbol in symbols:
+                    side_cost_bps = costs[symbol]
+                    if side_cost_bps is None:
+                        continue
+                    trade_cost_fraction += (
+                        abs(deltas[symbol]) * side_cost_bps / 10000.0
+                    )
             turnover += traded_weights
             rebalance_count += 1
             cost_total_fraction += trade_cost_fraction
