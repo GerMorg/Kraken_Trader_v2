@@ -1809,6 +1809,7 @@ class TraderRuntime:
                         portfolio_market_costs,
                         now_epoch=int(time.time()),
                     )
+                    multi_asset_research_summary["snapshot_persisted"] = False
                     if (
                         multi_asset_research_summary.get("status") == "RESEARCH_COMPLETE"
                         and multi_asset_research_summary.get("as_of_bar_freshness") == "FRESH"
@@ -1816,6 +1817,7 @@ class TraderRuntime:
                         saved = self.persistence.record_multi_asset_research_run(
                             multi_asset_research_summary
                         )
+                        multi_asset_research_summary["snapshot_persisted"] = saved
                         if saved:
                             counts["multi_asset_research_runs_recorded"] += 1
                             self.persistence.record_event(
@@ -1828,14 +1830,6 @@ class TraderRuntime:
                             )
                         else:
                             multi_asset_research_summary["duplicate_snapshot"] = True
-                    else:
-                        multi_asset_research_summary["snapshot_persisted"] = False
-                    multi_asset_research_summary["snapshot_persisted"] = bool(
-                        multi_asset_research_summary.get("snapshot_persisted", saved if (
-                            multi_asset_research_summary.get("status") == "RESEARCH_COMPLETE"
-                            and multi_asset_research_summary.get("as_of_bar_freshness") == "FRESH"
-                        ) else False)
-                    )
                 except Exception as exc:
                     multi_asset_research_summary = {
                         "status": "RESEARCH_FAILED",
