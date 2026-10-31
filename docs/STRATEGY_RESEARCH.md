@@ -1,5 +1,18 @@
 # Strategie- und Research-Hypothese
 
+## Zusätzliche Multi-Asset-Kandidaten ab Version 0.1.51
+
+Neben TSM, Mean Reversion und dem logistischen Basismodell werden zwei eigene Multi-Asset-Verfahren beobachtet:
+
+- **Volatility Harvesting / negatives Korrelations-Rebalancing:** rollierende H1-Renditekorrelationen, disjunkte Paare bis -0,25, 24-Stunden-Neuauswahl, Equal-Weight auf ausgewählte Assets und USD-Cash für nicht ausgewählte Titel. Getestet gegen periodisches Equal-Weight-Rebalancing und einmaliges Equal-Weight-Buy-and-Hold.
+- **Relative-Value-Pairs:** rollierende OLS-Regression logarithmierter Preise, Hedge-Ratio, positiver gemeinsamer Renditeverlauf, AR(1)-Residualhalbwertszeit, Z-Score-Einstieg/-Ausstieg, adverser Spread-Stop und Zeitlimit. Das Modell erzeugt hypothetische LONG_SPREAD-/SHORT_SPREAD-Kandidaten, keine Order-Intents.
+
+Alle Reihen müssen zeitlich synchronisiert und lückenlos sein; fehlende H1-Balken werden nicht ergänzt. Die Auswertung verwendet chronologische Train-/Validation-/Test-Zeitabschnitte und kennzeichnet Kosten ausdrücklich als historische Proxys aus aktuellen Gebühren-/Spread-Werten plus angenommener Slippage. Unbekannte Kosten bleiben unvollständig. Für Pair-Trades werden beide Legs belastet.
+
+Wichtige Grenzen: Die Residual-AR(1)-Halbwertszeit ist **kein formaler Cointegrationstest**; Mehrfachtestkorrektur, Survivorship-Bias-Korrektur, Margin-Finanzierung und gemeinsame Exposures gleichzeitig offener Pairs fehlen. Instrument-Metadaten zu BUY-/SELL-Leverage bestätigen keine tatsächliche Konto-Margin-Freigabe. Die Kennzahlen sind Forschung und keine Portfolio-PnL-/Fill-Evidenz.
+
+Details, Schwellenwerte, Persistenz und spätere Auswahlkriterien stehen in [MULTI_ASSET_STRATEGY_RESEARCH.md](MULTI_ASSET_STRATEGY_RESEARCH.md). Keine Variante wird automatisch gewählt oder in die produktive Entry-Logik übertragen. Die interne Order-Freigabe bleibt gesperrt.
+
 ## Validierungshinweis ab App-Version 0.1.43
 
 Der OHLCV-Szenario-Backtest prüft Stops ausschließlich in Kerzen, die vor dem geplanten Time-Exit-Balken liegen. Der Time-Exit findet am Open des geplanten Exit-Balkens statt; dessen späteres High/Low wird nicht ausgewertet. Ein Take-Profit reduziert einmalig den konfigurierten Anteil der verbleibenden Position (Standard 50 % bei +3,5 % Brutto-Kursbewegung), während die Restposition bis Stop oder Time-Exit verwaltet wird. Werden Stop und Take-Profit innerhalb derselben Stundenkerze berührt, nimmt der Simulator konservativ an, dass der Stop zuerst ausgelöst wurde. OHLC enthält keine genaue Intrabar-Reihenfolge; auch diese Regeln bleiben daher Annahmen und kein Fill-Nachweis.
