@@ -211,25 +211,16 @@ def test_multi_asset_insufficient_history_does_not_claim_strategy_result() -> No
 def test_pair_trade_return_uses_beta_as_dollar_notional_ratio() -> None:
     from app.portfolio_strategies import _pair_trade_return
 
-    gross_bps, weight_a, weight_b = _pair_trade_return(
+    common_move_bps, weight_a, weight_b = _pair_trade_return(
         direction="LONG_SPREAD",
         entry_a=100.0,
         entry_b=250.0,
         exit_a=102.0,
-        exit_b=251.0,
+        exit_b=252.5,
         beta=2.0,
     )
 
     assert weight_a == 1.0 / 3.0
     assert weight_b == 2.0 / 3.0
-    # If r_A = beta * r_B the beta-hedged dollar spread has no common-trend PnL.
-    common_move_bps, _, _ = _pair_trade_return(
-        direction="LONG_SPREAD",
-        entry_a=100.0,
-        entry_b=250.0,
-        exit_a=102.0,
-        exit_b=251.0,
-        beta=2.0,
-    )
-    assert math.isfinite(gross_bps)
-    assert math.isfinite(common_move_bps)
+    # If r_A = beta * r_B the beta-hedged dollar spread cancels common movement.
+    assert abs(common_move_bps) < 1e-8
