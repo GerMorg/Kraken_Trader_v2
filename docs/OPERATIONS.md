@@ -1,3 +1,23 @@
+## Version 0.1.51 — Multi-Asset-Research (SHADOW only)
+
+Version 0.1.51 ergänzt MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY für zwei neue Research-Varianten:
+
+- Variante A: dynamische Auswahl disjunkter negativ korrelierter Paare, 24-Stunden-Rebalancing, USD-Cash für nicht ausgewählte Titel, Vergleich gegen periodisches Equal-Weight-Rebalancing und Buy-and-Hold.
+- Variante B: Relative-Value-/Mean-Reversion-Pairs mit rollierender Hedge-Ratio, Residual-AR(1)-Halbwertszeit, Z-Score-Einstieg/-Ausstieg, Spread-Stop, maximal 48 Stunden Haltedauer und Kennzeichnung der nötigen BUY-/SELL-Margin-Richtung pro Leg.
+
+Die App verwendet synchronisierte geschlossene H1-Kerzen und ergänzt fehlende Balken niemals. Snapshots werden je gemeinsamem Stundenzeitpunkt idempotent in multi_asset_research_runs gespeichert; die Datenbankmigration ist additiv. Vorhandene SQLite-Daten dürfen nicht gelöscht oder neu initialisiert werden.
+
+### Beobachtung und Interpretation
+
+1. Version 0.1.51 installieren, ohne den vorhandenen /data/state/kraken_trader.sqlite3-Datenbestand zu löschen.
+2. Prüfen, dass der Zyklus CYCLE_SUMMARY mit multi_asset_research_status ausgibt.
+3. Bei ausreichender gemeinsamer H1-Historie erscheint MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY höchstens einmal pro neuem gemeinsamen Stundenbalken.
+4. variant_a_volatility_harvesting getrennt nach Brutto- und Spot-Netto-Proxy, Drawdown, Turnover und Buy-and-Hold-/periodischem Benchmark prüfen.
+5. variant_b_relative_value_pairs nach Train-/Validation-/Test-Samples, Paaranzahl, Kostenqualität, durchschnittlichem Netto-Proxy, Win-Rate, Profit-Factor, Spread-Stop-Häufigkeit und pending_trades_at_sample_end prüfen.
+6. Unbekannte Fee-/Spread-Werte bleiben unvollständig. Margin-Finanzierung ist nicht eingerechnet; Instrument-Leverage-Metadaten sind kein Nachweis einer kontoseitigen Margin-Freigabe.
+
+Die Pair-Methode verwendet nur die AR(1)-Residual-Halbwertszeit als Mean-Reversion-Filter; sie hat noch keinen formalen Cointegrationstest und keine Mehrfachtestkorrektur. Die gleichzeitige Kapitalbindung über mehrere Pair-Signale wird noch nicht als gemeinsames Portfolio simuliert. Daher sind auch positive Testwerte keine Live-Freigabe. Beide Varianten bleiben vom operativen Entry-Pfad getrennt.
+
 ## Version 0.1.50 — SQLite-Research-Finalisierung
 
 Die beiden Research-Zusammenfassungen lesen ihre Datensätze jetzt über persistente Sortierindizes:
