@@ -492,7 +492,7 @@ class TraderRuntime:
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
         failure_stage = "CYCLE_INITIALIZATION"
-        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0,"strategy_lab_observations_recorded":0,"strategy_lab_outcomes_settled":0,"strategy_lab_outcomes_incomplete":0}
+        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0,"strategy_lab_observations_recorded":0,"strategy_lab_outcomes_settled":0,"strategy_lab_outcomes_incomplete":0,"multi_asset_research_runs_recorded":0}
         history_ready_for_entries = False
         history_evidence_gaps = ["ACCOUNT_HISTORY_NOT_CHECKED"]
         api_permissions_ready = False
@@ -500,6 +500,7 @@ class TraderRuntime:
         history_metadata_untrusted = False
         history_window_unknown = False
         closed_history_snapshot_allowed = False
+        multi_asset_research_summary: dict[str, Any] = {"status": "NOT_RUN", "release_gate_eligible": False}
         wallet_reconciliation: dict[str, Any] | None = None
         order_reconciliation: dict[str, Any] | None = None
         position_reconciliation: dict[str, Any] | None = None
@@ -1133,6 +1134,8 @@ class TraderRuntime:
                 recovered_transient_public_network_breaker=recovered_transient_public_network_breaker,
                 breakers=active_breaker_diagnostics,
             )
+            portfolio_histories: dict[str, list[dict[str, Any]]] = {}
+            portfolio_market_costs: dict[str, dict[str, Any]] = {}
             for instrument in candidates:
                 failure_stage = f"MARKET_SCAN:{instrument.pair_id}"
                 if account is not None:
@@ -1248,6 +1251,14 @@ class TraderRuntime:
                     trend_efficiency_72h=signal.trend_efficiency_72h,trend_strength_score=signal.score,
                     score_is_calibrated_probability=False,spread_bps=ticker.spread_bps)
                 fee=taker_fee_from_trade_volume(trade_volume,(instrument.pair_id,instrument.altname,instrument.wsname))
+                if self.settings.shadow_strategy_lab_enabled and bars:
+                    portfolio_histories[instrument.wsname] = bars
+                    portfolio_market_costs[instrument.wsname] = {
+                        "taker_fee_bps": str(fee) if fee is not None else None,
+                        "spread_bps": str(ticker.spread_bps),
+                        "margin_buy_supported": any(level >= 2 for level in instrument.leverage_buy),
+                        "margin_sell_supported": any(level >= 2 for level in instrument.leverage_sell),
+                    }
                 if bars and signal.reason not in {"INSUFFICIENT_HISTORY", "INVALID_PRICE_HISTORY"}:
                     decision_ts = int(time.time())
                     latest_bar_ts = int(bars[-1]["ts"])
@@ -1788,6 +1799,84 @@ class TraderRuntime:
                         state="SHADOW_ONLY",
                         **intent,
                     )
+            failure_stage = "FINALIZE_MULTI_ASSET_STRATEGY_RESEARCH"
+            if self.settings.shadow_strategy_lab_enabled:
+                try:
+                    nonempty_histories = [
+                        rows for rows in portfolio_histories.values() if rows
+                    ]
+                    candidate_bar_ts = (
+                        min(int(rows[-1]["ts"]) for rows in nonempty_histories)
+                        if len(nonempty_histories) >= 2 else None
+                    )
+                    latest_bar_is_common = (
+                        candidate_bar_ts is not None
+                        and all(
+                            any(int(bar["ts"]) == candidate_bar_ts for bar in rows)
+                            for rows in nonempty_histories
+                        )
+                    )
+                    if (
+                        latest_bar_is_common
+                        and candidate_bar_ts is not None
+                        and self.persistence.multi_asset_research_bar_exists(candidate_bar_ts)
+                    ):
+                        multi_asset_research_summary = {
+                            "status": "ALREADY_RECORDED_FOR_COMMON_BAR",
+                            "as_of_bar_ts": candidate_bar_ts,
+                            "snapshot_persisted": True,
+                            "release_gate_eligible": False,
+                            "order_creation_allowed": False,
+                        }
+                    else:
+                        from app.portfolio_strategies import run_multi_asset_strategy_research
+
+                        multi_asset_research_summary = run_multi_asset_strategy_research(
+                            portfolio_histories,
+                            portfolio_market_costs,
+                            now_epoch=int(time.time()),
+                        )
+                        multi_asset_research_summary["snapshot_persisted"] = False
+                        if (
+                            multi_asset_research_summary.get("status") == "RESEARCH_COMPLETE"
+                            and multi_asset_research_summary.get("as_of_bar_freshness") == "FRESH"
+                        ):
+                            saved = self.persistence.record_multi_asset_research_run(
+                                multi_asset_research_summary
+                            )
+                            multi_asset_research_summary["snapshot_persisted"] = saved
+                            if saved:
+                                counts["multi_asset_research_runs_recorded"] += 1
+                                self.persistence.record_event(
+                                    "MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY",
+                                    multi_asset_research_summary,
+                                )
+                                self.audit.emit(
+                                    "MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY",
+                                    **multi_asset_research_summary,
+                                )
+                            else:
+                                multi_asset_research_summary["duplicate_snapshot"] = True
+                except Exception as exc:
+                    multi_asset_research_summary = {
+                        "status": "RESEARCH_FAILED",
+                        "exception_type": type(exc).__name__,
+                        "release_gate_eligible": False,
+                        "order_creation_allowed": False,
+                    }
+                    self.audit.emit(
+                        "MULTI_ASSET_STRATEGY_RESEARCH_ERROR",
+                        cycle_id=cycle_id,
+                        exception_type=type(exc).__name__,
+                        no_order_created=True,
+                        release_gate_eligible=False,
+                    )
+            else:
+                multi_asset_research_summary = {
+                    "status": "DISABLED_BY_CONFIGURATION",
+                    "release_gate_eligible": False,
+                    "order_creation_allowed": False,
+                }
             failure_stage = "FINALIZE_TARGET_OPEN_BACKFILL"
             try:
                 target_open_backfill = backfill_target_open_outcomes(self.persistence)
@@ -1846,6 +1935,22 @@ class TraderRuntime:
                 "shadow_strategy_lab_candidate_count": strategy_lab_summary["candidate_count"],
                 "shadow_strategy_lab_status": strategy_lab_summary["status"],
                 "shadow_strategy_lab_release_gate_eligible": strategy_lab_summary["release_gate_eligible"],
+                "multi_asset_research_status": multi_asset_research_summary.get("status"),
+                "multi_asset_research_key": multi_asset_research_summary.get("research_key"),
+                "multi_asset_research_symbols": multi_asset_research_summary.get("symbols", []),
+                "multi_asset_research_runs_recorded": counts["multi_asset_research_runs_recorded"],
+                "multi_asset_variant_a_status": (
+                    multi_asset_research_summary.get("variant_a_volatility_harvesting", {}).get("status")
+                    if isinstance(multi_asset_research_summary.get("variant_a_volatility_harvesting"), dict)
+                    else None
+                ),
+                "multi_asset_variant_b_status": (
+                    multi_asset_research_summary.get("variant_b_relative_value_pairs", {}).get("status")
+                    if isinstance(multi_asset_research_summary.get("variant_b_relative_value_pairs"), dict)
+                    else None
+                ),
+                "multi_asset_release_gate_eligible": False,
+                "multi_asset_order_creation_allowed": False,
                 "note": (
                     "Real order submission also requires the internal release gate; "
                     "INTERNAL_LIVE_EXECUTION_RELEASED is false in this version. "

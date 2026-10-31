@@ -1,10 +1,21 @@
-## Hotfix-Status — 0.1.50
+## Aktueller Status — 0.1.51
+
+**Version 0.1.51 ergänzt zwei voneinander getrennte Multi-Asset-Research-Module.** Variante A untersucht dynamisches Rebalancing von negativ korrelierten USD-Krypto-Assets und vergleicht es mit periodischem Equal-Weight-Rebalancing und Buy-and-Hold. Variante B untersucht Relative-Value-/Mean-Reversion-Pairs mit Hedge-Ratio, Spread-Z-Score, hypothetischen Long-/Short-Spread-Trades sowie Spread- und Zeit-Exit.
+
+Die Berechnung nutzt synchronisierte, lückenlose geschlossene H1-Kerzen aus dem beobachteten Kraken-USD-Universum. Je frischem gemeinsamen Stundenbalken wird höchstens ein unveränderlicher Snapshot in `multi_asset_research_runs` gespeichert. Gebühren, aktueller Spread und Slippage werden nur als historische Spot-Kosten-Proxys verwendet; unbekannte Werte werden nicht als null angenommen.
+
+Variante B zeigt die erforderlichen BUY-/SELL-Margin-Richtungen je Leg anhand der Instrument-Metadaten. Formale Cointegrationstests, Mehrfachtestkorrektur, echte historische Orderbuchkosten, Margin-Eröffnungs-/Rollover-Finanzierung und eine gemeinsame Portfolio-Simulation über mehrere parallele Pairs bleiben offen. Die Resultate sind deshalb Kandidaten-Research, keine nachgewiesene Nettorendite.
+
+Beide Varianten erzeugen keine Orders oder Order-Intents, verändern nicht die produktive TSM-Strategie und wählen keine Kandidaten automatisch aus. Wir vergleichen sie zunächst prospektiv mit den bestehenden Kandidaten und wählen erst nach belastbarer OOS-/Forward-Auswertung Strategien für eine separat zu prüfende Live-Freigabe aus. `INTERNAL_LIVE_EXECUTION_RELEASED` bleibt `False`.
+
+Siehe [Multi-Asset-Research](docs/MULTI_ASSET_STRATEGY_RESEARCH.md) und [Strategie-Research](docs/STRATEGY_RESEARCH.md).
+## Vorversion — 0.1.50
 
 Version 0.1.50 ergänzt persistente Sortierindizes für beide Research-Zusammenfassungen. Die TSM- und Strategy-Lab-Abfragen können dadurch ihre Ergebnisreihenfolge über den vorhandenen Index lesen, statt eine temporäre SQLite-Sortierstruktur anzulegen. Bei SQLITE_CANTOPEN protokolliert die Runtime zusätzlich begrenzte Statusdaten zu Datenbankdatei, WAL/SHM, Verzeichnis, Prozessrechten und SQLite-Temp-Einstellungen.
 
 Dies ist eine gezielte Stabilitäts- und Diagnoseänderung. Sie beseitigt die unnötige temporäre Sortierdatei in den beiden Summary-Abfragen; ob dies auch die konkrete SQLITE_CANTOPEN-Ursache behebt, muss der nächste Kontrollzyklus zeigen. Die vorhandene Datenbank und alle gespeicherten Beobachtungen bleiben erhalten.
 
-## Aktueller Status — 0.1.50
+## Vorheriger Status — 0.1.50
 
 **Version 0.1.50 baut auf dem in 0.1.48 eingeführten parallelen Forward-Shadow-Research auf und stabilisiert die abschließenden Research-Abfragen.** Die App beobachtet bei abgeschlossenen Stundenkerzen drei Kandidaten: die bestehende TSM-Regel (als unveränderte Referenz), eine feste Mean-Reversion-Regel und eine einfache logistische Walk-Forward-Prognose. Signale und spätere Ergebnisse werden in einer separaten SQLite-Tabelle gespeichert, getrennt ausgewertet und auch bei Nicht-Signalen protokolliert. Alle Kandidaten sind reine Forschung und erzeugen keine Order-Intents.
 

@@ -491,3 +491,52 @@ def test_storage_diagnostics_report_database_and_temp_directory_state(tmp_path):
     assert diagnostics["sqlite_temp_store"] in {"0", "1", "2"}
     assert diagnostics["sqlite_journal_mode"].lower() == "wal"
     db.close()
+
+
+def test_multi_asset_research_runs_are_immutable_idempotent_and_reviewable():
+    db = Persistence(":memory:")
+    report = {
+        "research_key": "snapshot-20261031",
+        "research_version": "parrondo-multi-asset-v0.1",
+        "as_of_bar_ts": 1793462400,
+        "symbols": ["XBT/USD", "ETH/USD"],
+        "release_gate_eligible": False,
+        "order_creation_allowed": False,
+    }
+
+    assert db.record_multi_asset_research_run(report) is True
+    assert db.record_multi_asset_research_run(report) is False
+    assert db.multi_asset_research_runs(limit=10) == [report]
+    schema_version = db.connection.execute(
+        "SELECT value FROM schema_meta WHERE key='schema_version'"
+    ).fetchone()["value"]
+    assert schema_version == "11"
+    db.close()
+
+
+def test_multi_asset_research_runs_reject_incomplete_identity():
+    db = Persistence(":memory:")
+    with pytest.raises(ValueError, match="REQUIRED_FIELD_MISSING"):
+        db.record_multi_asset_research_run({"research_key": "missing-fields"})
+    with pytest.raises(ValueError, match="IDENTITY_INVALID"):
+        db.record_multi_asset_research_run({
+            "research_key": "bad-symbol-list",
+            "research_version": "parrondo-multi-asset-v0.1",
+            "as_of_bar_ts": 1793462400,
+            "symbols": ["XBT/USD", ""],
+        })
+    db.close()
+
+
+def test_multi_asset_research_bar_lookup_skips_repeated_five_minute_cycles():
+    db = Persistence(":memory:")
+    first = {
+        "research_key": "bar-one-universe-a",
+        "research_version": "parrondo-multi-asset-v0.1",
+        "as_of_bar_ts": 1793462400,
+        "symbols": ["XBT/USD", "ETH/USD"],
+    }
+    assert db.multi_asset_research_bar_exists(first["as_of_bar_ts"]) is False
+    assert db.record_multi_asset_research_run(first) is True
+    assert db.multi_asset_research_bar_exists(first["as_of_bar_ts"]) is True
+    db.close()
