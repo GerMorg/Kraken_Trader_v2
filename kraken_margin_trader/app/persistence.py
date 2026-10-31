@@ -212,6 +212,16 @@ class Persistence:
                     ON strategy_candidate_observations(pair,interval_minutes,bar_ts);
                 CREATE INDEX IF NOT EXISTS strategy_candidate_decision_order_idx
                     ON strategy_candidate_observations(decision_ts DESC,candidate_id DESC);
+                CREATE TABLE IF NOT EXISTS multi_asset_research_runs(
+                    research_key TEXT PRIMARY KEY,
+                    as_of_bar_ts INTEGER NOT NULL,
+                    research_version TEXT NOT NULL,
+                    symbols_json TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS multi_asset_research_asof_idx
+                    ON multi_asset_research_runs(as_of_bar_ts DESC,research_key DESC);
             """)
             research_columns = {
                 str(row["name"]) for row in self.connection.execute("PRAGMA table_info(research_observations)")
@@ -248,7 +258,7 @@ class Persistence:
                     "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','10') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','11') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
@@ -803,6 +813,61 @@ class Persistence:
             except (json.JSONDecodeError, TypeError, ValueError):
                 row["features"] = {}
         return result
+
+    def record_multi_asset_research_run(self, report: dict[str, Any]) -> bool:
+        """Persist one immutable multi-asset research report per common closed-bar snapshot."""
+        required = ("research_key", "as_of_bar_ts", "research_version", "symbols")
+        if any(key not in report for key in required):
+            raise ValueError("MULTI_ASSET_RESEARCH_REQUIRED_FIELD_MISSING")
+        research_key = str(report["research_key"]).strip()
+        research_version = str(report["research_version"]).strip()
+        symbols = report["symbols"]
+        if (
+            not research_key or not research_version
+            or not isinstance(symbols, list) or len(symbols) < 2
+            or any(not isinstance(symbol, str) or not symbol.strip() for symbol in symbols)
+        ):
+            raise ValueError("MULTI_ASSET_RESEARCH_IDENTITY_INVALID")
+        try:
+            as_of_bar_ts = int(report["as_of_bar_ts"])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("MULTI_ASSET_RESEARCH_TIMESTAMP_INVALID") from exc
+        if as_of_bar_ts <= 0:
+            raise ValueError("MULTI_ASSET_RESEARCH_TIMESTAMP_INVALID")
+        now = _now()
+        with self.lock:
+            cursor = self.connection.execute(
+                "INSERT OR IGNORE INTO multi_asset_research_runs("
+                "research_key,as_of_bar_ts,research_version,symbols_json,payload_json,created_at"
+                ") VALUES(?,?,?,?,?,?)",
+                (
+                    research_key,
+                    as_of_bar_ts,
+                    research_version,
+                    _json(symbols),
+                    _json(report),
+                    now,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def multi_asset_research_runs(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return the newest immutable multi-asset research reports for review."""
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT payload_json FROM multi_asset_research_runs "
+                "ORDER BY as_of_bar_ts DESC,research_key DESC LIMIT ?",
+                (max(1, min(int(limit), 1000)),),
+            ).fetchall()
+        reports: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                report = json.loads(str(row["payload_json"]))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if isinstance(report, dict):
+                reports.append(report)
+        return reports
 
     def create_intent(self, intent: dict[str, Any], *, initial_state: str = "INTENT_CREATED") -> bool:
         required = ("intent_id", "decision_id", "client_order_id", "pair", "action", "side", "volume")
