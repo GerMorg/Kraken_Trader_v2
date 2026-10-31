@@ -389,9 +389,10 @@ def _pair_trade_return(
     exit_b: float,
     beta: float,
 ) -> tuple[float, float, float]:
-    beta_notional = beta * entry_b / entry_a
-    weight_a = 1.0 / (1.0 + beta_notional)
-    weight_b = 1.0 - weight_a
+    # Dollar-notional hedge: d(log A) ~= beta * d(log B), so B notional
+    # is beta times A notional; price levels must not be applied a second time.
+    weight_a = 1.0 / (1.0 + beta)
+    weight_b = beta / (1.0 + beta)
     sign_a = 1.0 if direction == "LONG_SPREAD" else -1.0
     sign_b = -sign_a
     pnl = (
