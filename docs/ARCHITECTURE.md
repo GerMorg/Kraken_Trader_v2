@@ -19,6 +19,8 @@
 - `app/backtest.py`: eingeschränkter OHLCV-Szenario-Simulator.
 - `app/strategy_lab.py`: isoliertes Research-Modul für streng validierten Kraken-Historienimport und den Vergleich von TSM, Mean Reversion und logistischer Regression. Die historischen CLI-Analysen bleiben offline; die kleine Signalberechnung für parallele Kandidaten wird im Runtime-Zyklus nur als SHADOW-Messung aufgerufen.
 - `strategy_candidate_observations` in SQLite: eigenständige, idempotente Research-Tabelle mit allen Kandidaten-Signalen einschließlich NONE, Modell-/Feature-Metadaten und späteren Forward-Labels. Sie ist getrennt von `intents`, `fills` und der bisherigen TSM-Research-Tabelle.
+- `app/portfolio_strategies.py`: unabhängiger SHADOW-Research-Baustein für negatives Korrelations-Rebalancing und relative-Value-/Mean-Reversion-Pairs; synchronisiert geschlossene H1-Kerzen ohne Auffüllen von Lücken, berechnet Benchmarks, Kosten-Proxys, Long-/Short-Spread-Signale und chronologische Kennzahlen. Kein Zugriff auf Order Authority.
+- `multi_asset_research_runs` in SQLite: unveränderliche, idempotente Snapshots pro gemeinsamem H1-Zeitpunkt und Research-Version; additive Schema-Migration, bestehende Research-/Handelsdaten bleiben unangetastet.
 - `app/tax.py`: Jahres-Export JSON/CSV/Markdown mit Datenlücken- und manuellen Prüfhinweisen.
 - `app/runtime.py`, `app/main.py`: Zyklussteuerung, Startdiagnose und kontrolliertes Stoppen.
 
@@ -29,6 +31,12 @@
 Der erste Schritt ist ein fester chronologischer Holdout, kein vollständiger Portfolio- oder Orderbuchsimulator und keine expanding-window Walk-Forward-Schätzung. Der Report ist immer als Research-only markiert und kann kein Laufzeit-Gate ändern.
 
 Ab Version 0.1.48 erzeugt der laufende SHADOW-Zyklus zusätzlich drei idempotente Parallelbeobachtungen auf jeder frischen H1-Kerze. Das Walk-Forward-ML trainiert nur auf Zielkerzen, die vor dem Entscheidungsbalken liegen. Kandidatensignale werden nicht in die Entry-Logik übertragen; das bestehende TSM-Research bleibt davon getrennt. Die neue Zusammenfassung lautet `SHADOW_STRATEGY_LAB_SUMMARY` und kann keine Order oder Release-Freigabe auslösen.
+
+## Multi-Asset-Research ab Version 0.1.51
+
+Der Runtime-Zyklus sammelt die bereits abgerufenen geschlossenen H1-Balken der beobachteten USD-Kryptomärkte. Nach dem Marktscan wird `app.portfolio_strategies` nur lesend aufgerufen. Variante A bewertet dynamisch ausgewählte, disjunkte negativ korrelierte Paare und vergleicht die Rebalancing-Kurve mit periodischem Equal-Weight und Buy-and-Hold. Variante B prüft relative Preis-Spreads auf Hedge-Ratio, Renditekorrelation und AR(1)-Halbwertszeit und berechnet getrennte hypothetische Long-/Short-Spread-Kandidaten.
+
+Die Ergebnisse werden bei frischem gemeinsamen Kerzenzeitpunkt einmalig in `multi_asset_research_runs` persistiert und mit `MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY` protokolliert. Unvollständige/gappige Synchronisierung wird nicht aufgefüllt; unbekannte Kosten werden nicht als null angesetzt. Der neue Pfad wird nicht in die operative Entry-Auswahl eingespeist, erzeugt keine Intents und kann keinen Live-Gate ändern. Formale Cointegrationstests, Mehrfachtestkorrektur und portfolio-weite Simulation gleichzeitig offener Pairs sind noch offene Research-Schritte.
 
 ## Kontrollfluss
 
