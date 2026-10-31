@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.51 — Multi-Asset-Research für Rebalancing und Relative-Value-Pairs
+
+- Ergänzt zwei getrennte Research-Varianten: dynamisches Rebalancing negativ korrelierter USD-Krypto-Assets (Volatility Harvesting) und rollierendes Relative-Value-/Mean-Reversion-Pairs-Trading mit hypothetischen Long-/Short-Spread-Signalen.
+- Verwendet synchronisierte, lückenlose geschlossene H1-Kerzen; fehlende Balken werden nie synthetisch aufgefüllt. Die Ergebnisse umfassen chronologische 60/20/20-Splits, Buy-and-Hold-/periodische Rebalancing-Benchmarks, Turnover, Drawdown und ausdrücklich gekennzeichnete Spot-Kosten-Proxys.
+- Variante B ergänzt Hedge-Ratio, Spread-Z-Score, Residual-AR(1)-Halbwertszeit, Spread-Stop und zeitbasierten Exit. Das ist ausdrücklich noch kein formaler Cointegrationstest; Mehrfachtestkorrektur und gleichzeitige Portfolioausführung mehrerer Paare fehlen.
+- Aktuelle BUY-/SELL-Margin-Verfügbarkeit wird je Pair-Leg aus Instrument-Metadaten ausgewiesen. Kontomargin, Borrow-/Open-/Rollover-Kosten und Liquidationsrisiko sind nicht als belegt modelliert.
+- Persistiert unveränderliche, idempotente Multi-Asset-Snapshots in einer additiven SQLite-Tabelle (Schema 11). Vorhandene Research-, Handels- und Kontodaten bleiben erhalten.
+- Kein neues Orderrouting, keine Intents, keine angenommenen Fills und keine automatische Strategieauswahl. `INTERNAL_LIVE_EXECUTION_RELEASED` bleibt `False`.
+
 ## 0.1.50 — SQLite-Research-Finalisierung und CANTOPEN-Diagnostik
 
 - Ergänzt Sortierindizes für die TSM-Research- und Strategy-Lab-Zusammenfassungen. Beide Abfragen können ihre chronologische Reihenfolge indexgestützt lesen, ohne eine temporäre B-Tree-Sortierstruktur anzulegen.
