@@ -24,6 +24,8 @@ options:
   kill_switch: true
   validate_shadow_orders: false
   shadow_strategy_lab_enabled: true
+  microstructure_enabled: true
+  microstructure_max_symbols: 12
   cycle_interval_seconds: 300
   max_market_candidates: 12
   market_max_age_seconds: 120
@@ -52,6 +54,8 @@ schema:
   kill_switch: bool
   validate_shadow_orders: bool
   shadow_strategy_lab_enabled: bool
+  microstructure_enabled: bool
+  microstructure_max_symbols: int(1,20)
   cycle_interval_seconds: int(60,3600)
   max_market_candidates: int(1,30)
   market_max_age_seconds: int(15,600)
