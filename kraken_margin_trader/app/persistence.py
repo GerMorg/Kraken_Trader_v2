@@ -1707,16 +1707,20 @@ class Persistence:
         name: str,
         expected_reason: str,
         detail: dict[str, Any] | None = None,
+        *,
+        expected_detail: dict[str, Any] | None = None,
     ) -> bool:
-        """Resolve a breaker only if its active reason is exactly the expected one.
+        """Resolve a matching active breaker and retain its recovery audit event.
 
-        The row is retained for audit history. Resolution never deletes a breaker and
-        will not clear a breaker that has changed to a different reason in the meantime.
+        When supplied, expected_detail is a partial signature of the stored
+        failure. Nested dictionaries are compared by their supplied keys, preventing
+        a stale recovery attempt from clearing a newer incident with the same
+        breaker name and reason.
         """
         recovery_detail = detail or {}
         with self.lock:
             row = self.connection.execute(
-                "SELECT active, reason FROM circuit_breakers WHERE name = ?",
+                "SELECT active, reason, detail_json FROM circuit_breakers WHERE name = ?",
                 (name,),
             ).fetchone()
             if (
@@ -1725,6 +1729,23 @@ class Persistence:
                 or str(row["reason"]) != expected_reason
             ):
                 return False
+            if expected_detail is not None:
+                try:
+                    stored_detail = json.loads(row["detail_json"])
+                except (TypeError, ValueError):
+                    return False
+                if not isinstance(stored_detail, dict):
+                    return False
+                for key, expected_value in expected_detail.items():
+                    actual_value = stored_detail.get(key)
+                    if isinstance(expected_value, dict):
+                        if not isinstance(actual_value, dict) or any(
+                            actual_value.get(nested_key) != nested_value
+                            for nested_key, nested_value in expected_value.items()
+                        ):
+                            return False
+                    elif actual_value != expected_value:
+                        return False
             updated = self.connection.execute(
                 "UPDATE circuit_breakers SET active = 0 "
                 "WHERE name = ? AND active = 1 AND reason = ?",
