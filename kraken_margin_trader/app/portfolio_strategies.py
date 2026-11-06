@@ -8,6 +8,7 @@ from statistics import fmean, median, pstdev
 from typing import Any, Mapping, Sequence
 from decimal import Decimal
 
+from app.regime_divergence import run_regime_divergence_research
 from app.orderbook_simulator import (
     BookLevel,
     OrderBookSnapshot,
@@ -1402,7 +1403,7 @@ def run_multi_asset_strategy_research(
     now_epoch: int | None = None,
     depth_history: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    """Run independent historical and current-shadow research for variants A, B and C.
+    """Run independent historical and current-shadow research for variants A, B, C and D.
 
     No live trading, portfolio allocation approval, or order creation is performed.
     Costed results use current account fee/spread observations as historical proxies;
@@ -1576,6 +1577,9 @@ def run_multi_asset_strategy_research(
         }
         for assumed_slippage in SLIPPAGE_SENSITIVITY_BPS_PER_SIDE
     ]
+    variant_d_regime_divergence = run_regime_divergence_research(
+        market, market_costs
+    )
     if now_epoch is None:
         current_bar_freshness = "NOT_CHECKED"
     else:
@@ -1676,6 +1680,12 @@ def run_multi_asset_strategy_research(
             ),
             "slippage_sensitivity": variant_c_slippage_sensitivity,
             "portfolio_simulation": True,
+            "actual_fills": False,
+            "portfolio_pnl": False,
+        },
+        "variant_d_regime_conditioned_residual_recoil": {
+            **variant_d_regime_divergence,
+            "portfolio_simulation": False,
             "actual_fills": False,
             "portfolio_pnl": False,
         },
