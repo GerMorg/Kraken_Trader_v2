@@ -97,6 +97,83 @@ def test_circuit_breaker_diagnostics_expose_safe_sqlite_failure_context():
     assert "api_secret" not in str(diagnostics)
 
 
+
+def test_circuit_breaker_diagnostics_expose_persisted_cantopen_storage_snapshot_only():
+    storage_snapshot = {
+        "process_uid": 10001,
+        "process_gid": 10001,
+        "database_path": "/data/state/kraken_trader.sqlite3",
+        "database_parent": {
+            "exists": True, "is_directory": True, "mode": "0o700",
+            "uid": 10001, "gid": 10001, "readable": True, "writable": True,
+            "searchable": True, "unexpected_secret": "must-not-be-emitted",
+        },
+        "database": {
+            "exists": True, "is_directory": False, "mode": "0o600",
+            "uid": 10001, "gid": 10001, "size_bytes": 8192,
+            "readable": True, "writable": True, "searchable": None,
+        },
+        "temporary_directory": "/tmp",
+        "temporary_directory_state": {
+            "exists": True, "is_directory": True, "mode": "0o1777",
+            "uid": 0, "gid": 0, "readable": True, "writable": True,
+            "searchable": True,
+        },
+        "sqlite_temp_store": "0",
+        "sqlite_journal_mode": "wal",
+        "api_secret": "must-not-be-emitted",
+    }
+    diagnostics = _circuit_breaker_diagnostics([{
+        "name": "UNHANDLED_RUNTIME",
+        "reason": "CYCLE_EXCEPTION",
+        "ts": "2026-10-30T18:35:08.285234+00:00",
+        "detail": {
+            "sqlite_error_code": 14,
+            "sqlite_error_name": "SQLITE_CANTOPEN",
+            "sqlite_storage_diagnostics": storage_snapshot,
+            "api_secret": "must-not-be-emitted",
+        },
+    }])
+
+    assert diagnostics[0]["sqlite_storage_diagnostics"] == {
+        "process_uid": 10001,
+        "process_gid": 10001,
+        "database_path": "/data/state/kraken_trader.sqlite3",
+        "database_parent": {
+            "exists": True, "is_directory": True, "mode": "0o700",
+            "uid": 10001, "gid": 10001, "readable": True, "writable": True,
+            "searchable": True,
+        },
+        "database": {
+            "exists": True, "is_directory": False, "mode": "0o600",
+            "uid": 10001, "gid": 10001, "size_bytes": 8192,
+            "readable": True, "writable": True,
+        },
+        "temporary_directory": "/tmp",
+        "temporary_directory_state": {
+            "exists": True, "is_directory": True, "mode": "0o1777",
+            "uid": 0, "gid": 0, "readable": True, "writable": True,
+            "searchable": True,
+        },
+        "sqlite_temp_store": "0",
+        "sqlite_journal_mode": "wal",
+    }
+    assert "must-not-be-emitted" not in str(diagnostics)
+    assert "unexpected_secret" not in str(diagnostics)
+
+    unrelated_error = _circuit_breaker_diagnostics([{
+        "name": "UNHANDLED_RUNTIME",
+        "reason": "CYCLE_EXCEPTION",
+        "ts": "2026-10-30T18:35:08.285234+00:00",
+        "detail": {
+            "sqlite_error_code": 10,
+            "sqlite_error_name": "SQLITE_IOERR",
+            "sqlite_storage_diagnostics": storage_snapshot,
+        },
+    }])
+    assert "sqlite_storage_diagnostics" not in unrelated_error[0]
+
+
 def test_circuit_breaker_diagnostics_identify_wallet_mismatch_assets():
     diagnostics = _circuit_breaker_diagnostics([{
         "name": "WALLET_BALANCE_RECONCILIATION",
