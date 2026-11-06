@@ -356,6 +356,57 @@ def _circuit_breaker_diagnostics(rows: list[dict[str, Any]]) -> list[dict[str, A
         sqlite_error_message = detail.get("sqlite_error_message")
         if isinstance(sqlite_error_message, str):
             item["sqlite_error_message"] = sqlite_error_message[:240]
+
+        # Older CANTOPEN breakers may already contain the filesystem snapshot
+        # captured when the failure occurred. Expose only its known safe fields;
+        # never forward arbitrary nested persisted data.
+        sqlite_error_code = detail.get("sqlite_error_code")
+        is_sqlite_cantopen = (
+            detail.get("sqlite_error_name") == "SQLITE_CANTOPEN"
+            or (
+                isinstance(sqlite_error_code, int)
+                and not isinstance(sqlite_error_code, bool)
+                and (sqlite_error_code & 0xFF) == sqlite3.SQLITE_CANTOPEN
+            )
+        )
+        storage = detail.get("sqlite_storage_diagnostics")
+        if is_sqlite_cantopen and isinstance(storage, dict):
+            safe_storage: dict[str, Any] = {}
+            for key in ("database_path", "temporary_directory", "sqlite_temp_store", "sqlite_journal_mode"):
+                value = storage.get(key)
+                if isinstance(value, str):
+                    safe_storage[key] = value[:240]
+            for key in ("process_uid", "process_gid"):
+                value = storage.get(key)
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    safe_storage[key] = value
+            state_fields = (
+                "database", "database_parent", "database_wal", "database_shm",
+                "database_journal", "temporary_directory_state",
+            )
+            bool_fields = ("exists", "is_directory", "readable", "writable", "searchable")
+            int_fields = ("stat_errno", "uid", "gid", "size_bytes")
+            for state_key in state_fields:
+                state = storage.get(state_key)
+                if not isinstance(state, dict):
+                    continue
+                safe_state: dict[str, Any] = {}
+                for key in bool_fields:
+                    value = state.get(key)
+                    if isinstance(value, bool):
+                        safe_state[key] = value
+                for key in int_fields:
+                    value = state.get(key)
+                    if isinstance(value, int) and not isinstance(value, bool):
+                        safe_state[key] = value
+                mode = state.get("mode")
+                if isinstance(mode, str):
+                    safe_state["mode"] = mode[:16]
+                if safe_state:
+                    safe_storage[state_key] = safe_state
+            if safe_storage:
+                item["sqlite_storage_diagnostics"] = safe_storage
+
         asset_results = detail.get("asset_results")
         if isinstance(asset_results, list):
             item["asset_result_count"] = len(asset_results)
