@@ -1934,10 +1934,15 @@ class TraderRuntime:
 
                         from app.portfolio_strategies import run_multi_asset_strategy_research
 
+                        historical_depth_by_symbol = {
+                            symbol: self.persistence.market_depth_snapshots(symbol, limit=720)
+                            for symbol in portfolio_histories
+                        }
                         multi_asset_research_summary = run_multi_asset_strategy_research(
                             portfolio_histories,
                             portfolio_market_costs,
                             now_epoch=int(time.time()),
+                            depth_history=historical_depth_by_symbol,
                         )
                         multi_asset_research_summary["current_order_book_observation_summary"] = {
                             "source": "KRAKEN_PUBLIC_DEPTH",
@@ -1949,11 +1954,23 @@ class TraderRuntime:
                             "actual_fills": False,
                         }
                         multi_asset_research_summary["snapshot_persisted"] = False
+                        depth_cost_diagnostics = (
+                            multi_asset_research_summary.get("cost_assumptions", {}).get(
+                                "time_separated_l2_cost_diagnostics", {}
+                            )
+                            if isinstance(multi_asset_research_summary.get("cost_assumptions"), dict)
+                            else {}
+                        )
                         multi_asset_research_summary["historical_depth_evidence"] = {
                             "persisted_snapshot_count": self.persistence.market_depth_snapshot_count(),
                             "snapshots_recorded_this_cycle": counts["market_depth_snapshots_recorded"],
                             "pair_snapshots_are_time_separated_for_future_calibration": True,
-                            "historical_round_trip_cost_available": False,
+                            "historical_round_trip_cost_available": bool(
+                                depth_cost_diagnostics.get("completed_round_trip_simulation_count", 0)
+                            ),
+                            "time_separated_cost_status": depth_cost_diagnostics.get(
+                                "status", "NOT_AVAILABLE"
+                            ),
                             "actual_fills": False,
                         }
                         multi_asset_research_summary["fee_schedule_evidence"] = {

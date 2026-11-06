@@ -11,6 +11,7 @@ from app.orderbook_simulator import (
     BookLevel,
     OrderBookSnapshot,
     simulate_order_book_execution,
+    simulate_order_book_round_trip,
 )
 
 D_MIN = 1e-12
@@ -1110,6 +1111,188 @@ def _rank_pair_correlations(
     ]
 
 
+def _time_separated_l2_cost_diagnostics(
+    depth_history: Mapping[str, Sequence[Mapping[str, Any]]] | None,
+) -> dict[str, Any]:
+    """Estimate round-trip execution costs from distinct historical public L2 books.
+
+    These are book-walk simulations, not actual fills. Entry and exit snapshots
+    are separated in time; each observation uses the account taker fee stored
+    with each snapshot, visible depth, and a fixed per-level participation cap.
+    """
+    source = depth_history or {}
+    horizons = (1, 4, 24)
+    notional_values = ORDER_BOOK_NOTIONAL_USD
+    grouped: dict[tuple[int, float, str], dict[str, list[float]]] = {}
+    for horizon in horizons:
+        for notional in notional_values:
+            for direction in ("LONG", "SHORT"):
+                grouped[(horizon, notional, direction)] = {
+                    "total": [], "fee": [], "spread": [], "slippage": []
+                }
+
+    total_snapshots = 0
+    paired_snapshot_count = {horizon: 0 for horizon in horizons}
+    insufficient_depth_count = 0
+    missing_fee_count = 0
+    invalid_snapshot_count = 0
+    symbol_counts: dict[str, int] = {}
+
+    for symbol, raw_snapshots in sorted(source.items()):
+        parsed: list[tuple[OrderBookSnapshot, Decimal | None]] = []
+        for raw in raw_snapshots:
+            try:
+                bids = tuple(
+                    BookLevel(Decimal(str(row[0])), Decimal(str(row[1])))
+                    for row in raw["bids"]
+                )
+                asks = tuple(
+                    BookLevel(Decimal(str(row[0])), Decimal(str(row[1])))
+                    for row in raw["asks"]
+                )
+                book = OrderBookSnapshot(
+                    timestamp=int(raw["snapshot_ts"]),
+                    bids=bids,
+                    asks=asks,
+                )
+                raw_fee = raw.get("taker_fee_bps")
+                fee = Decimal(str(raw_fee)) if raw_fee is not None else None
+                if fee is not None and (not fee.is_finite() or fee < 0):
+                    fee = None
+                parsed.append((book, fee))
+            except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError):
+                invalid_snapshot_count += 1
+        parsed.sort(key=lambda item: item[0].timestamp)
+        total_snapshots += len(parsed)
+        symbol_counts[str(symbol)] = len(parsed)
+        if len(parsed) < 2:
+            continue
+
+        for horizon in horizons:
+            target_seconds = horizon * 3600
+            minimum_seconds = int(target_seconds * 0.75)
+            maximum_seconds = int(target_seconds * 1.25)
+            for entry_index, (entry_book, entry_fee) in enumerate(parsed[:-1]):
+                later = [
+                    item for item in parsed[entry_index + 1:]
+                    if minimum_seconds <= item[0].timestamp - entry_book.timestamp <= maximum_seconds
+                ]
+                if not later:
+                    continue
+                exit_book, exit_fee = min(
+                    later,
+                    key=lambda item: (
+                        abs(item[0].timestamp - entry_book.timestamp - target_seconds),
+                        item[0].timestamp,
+                    ),
+                )
+                paired_snapshot_count[horizon] += 1
+                if entry_fee is None or exit_fee is None:
+                    missing_fee_count += 1
+                    continue
+                for notional in notional_values:
+                    for direction in ("LONG", "SHORT"):
+                        try:
+                            result = simulate_order_book_round_trip(
+                                entry_book,
+                                exit_book,
+                                direction=direction,
+                                requested_notional_quote=Decimal(str(notional)),
+                                entry_fee_bps=entry_fee,
+                                exit_fee_bps=exit_fee,
+                                quote_currency="USD",
+                                is_margin=False,
+                                max_level_participation=Decimal("0.25"),
+                            )
+                        except (ArithmeticError, TypeError, ValueError, OverflowError):
+                            invalid_snapshot_count += 1
+                            continue
+                        if (
+                            result.position_status != "CLOSED"
+                            or not result.entry_target_filled
+                            or result.spread_slippage_cost_quote is None
+                            or result.spread_cost_quote is None
+                            or result.slippage_impact_quote is None
+                            or result.trading_fees_quote is None
+                        ):
+                            insufficient_depth_count += 1
+                            continue
+                        denominator = Decimal(str(notional))
+                        costs = {
+                            "total": (
+                                result.spread_slippage_cost_quote
+                                + result.trading_fees_quote
+                            ) / denominator * Decimal(10000),
+                            "fee": result.trading_fees_quote / denominator * Decimal(10000),
+                            "spread": result.spread_cost_quote / denominator * Decimal(10000),
+                            "slippage": result.slippage_impact_quote / denominator * Decimal(10000),
+                        }
+                        key = (horizon, notional, direction)
+                        for component, amount in costs.items():
+                            if amount.is_finite() and amount >= 0:
+                                grouped[key][component].append(float(amount))
+
+    def percentile(values: list[float], fraction: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        position = max(0, min(len(ordered) - 1, math.ceil(fraction * len(ordered)) - 1))
+        return round(ordered[position], 6)
+
+    by_horizon: list[dict[str, Any]] = []
+    total_completed_samples = 0
+    for horizon in horizons:
+        scenarios: list[dict[str, Any]] = []
+        for notional in notional_values:
+            for direction in ("LONG", "SHORT"):
+                values = grouped[(horizon, notional, direction)]
+                count = len(values["total"])
+                total_completed_samples += count
+                scenarios.append({
+                    "notional_usd": notional,
+                    "direction": direction,
+                    "sample_count": count,
+                    "round_trip_cost_bps": {
+                        "median": percentile(values["total"], 0.50),
+                        "p90": percentile(values["total"], 0.90),
+                        "minimum": round(min(values["total"]), 6) if values["total"] else None,
+                        "maximum": round(max(values["total"]), 6) if values["total"] else None,
+                    },
+                    "components_bps_median": {
+                        "trading_fees": percentile(values["fee"], 0.50),
+                        "spread": percentile(values["spread"], 0.50),
+                        "visible_depth_slippage": percentile(values["slippage"], 0.50),
+                    },
+                })
+        by_horizon.append({
+            "target_horizon_hours": horizon,
+            "pair_observation_count": paired_snapshot_count[horizon],
+            "scenarios": scenarios,
+        })
+
+    return {
+        "status": (
+            "TIME_SEPARATED_L2_COST_SAMPLES_AVAILABLE"
+            if total_completed_samples else "INSUFFICIENT_TIME_SEPARATED_L2_COST_EVIDENCE"
+        ),
+        "source": "PERSISTED_KRAKEN_PUBLIC_DEPTH_SNAPSHOTS",
+        "snapshot_count": total_snapshots,
+        "symbols_with_snapshots": symbol_counts,
+        "completed_round_trip_simulation_count": total_completed_samples,
+        "pair_observations_are_independent": False,
+        "matching": "NEAREST_FUTURE_SNAPSHOT_WITHIN_PLUS_MINUS_25_PERCENT_OF_TARGET_HORIZON",
+        "horizons": by_horizon,
+        "insufficient_visible_depth_count": insufficient_depth_count,
+        "missing_fee_snapshot_count": missing_fee_count,
+        "invalid_snapshot_or_simulation_count": invalid_snapshot_count,
+        "maximum_level_participation": 0.25,
+        "margin_financing_included": False,
+        "maker_fills_assumed": False,
+        "actual_fills": False,
+        "portfolio_pnl": False,
+    }
+
+
 def _current_order_book_cost_diagnostics(
     market_costs: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -1207,8 +1390,9 @@ def run_multi_asset_strategy_research(
     market_costs: Mapping[str, Mapping[str, Any]],
     *,
     now_epoch: int | None = None,
+    depth_history: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    """Run independent historical and current-shadow research for variants A and B.
+    """Run independent historical and current-shadow research for variants A, B and C.
 
     No live trading, portfolio allocation approval, or order creation is performed.
     Costed results use current account fee/spread observations as historical proxies;
@@ -1498,6 +1682,9 @@ def run_multi_asset_strategy_research(
             "historical_cost_accuracy": "NOT_VERIFIED_HISTORICAL_QUOTES_OR_FILLS",
             "current_l2_order_book_cost_diagnostics": _current_order_book_cost_diagnostics(
                 market_costs
+            ),
+            "time_separated_l2_cost_diagnostics": _time_separated_l2_cost_diagnostics(
+                depth_history
             ),
             "time_separated_l2_snapshots_persisted_by_runtime": True,
         },
