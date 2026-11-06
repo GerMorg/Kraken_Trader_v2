@@ -334,9 +334,28 @@ def _circuit_breaker_diagnostics(rows: list[dict[str, Any]]) -> list[dict[str, A
         }
         for key in (
             "cycle_id", "status", "code", "exception_type", "snapshot_id", "evidence_gaps",
+            "failure_stage", "sqlite_error_code", "sqlite_error_name",
         ):
             if key in detail:
                 item[key] = detail[key]
+        for key in ("failure_stage", "sqlite_error_message"):
+            if key in item and isinstance(item[key], str):
+                item[key] = item[key][:240]
+        failure_location = detail.get("failure_location")
+        if isinstance(failure_location, dict):
+            safe_location: dict[str, Any] = {}
+            for key in ("file", "function"):
+                value = failure_location.get(key)
+                if isinstance(value, str):
+                    safe_location[key] = value[:100]
+            line = failure_location.get("line")
+            if isinstance(line, int) and not isinstance(line, bool) and line > 0:
+                safe_location["line"] = line
+            if safe_location:
+                item["failure_location"] = safe_location
+        sqlite_error_message = detail.get("sqlite_error_message")
+        if isinstance(sqlite_error_message, str):
+            item["sqlite_error_message"] = sqlite_error_message[:240]
         asset_results = detail.get("asset_results")
         if isinstance(asset_results, list):
             item["asset_result_count"] = len(asset_results)
@@ -354,7 +373,9 @@ def _circuit_breaker_diagnostics(rows: list[dict[str, Any]]) -> list[dict[str, A
                 item["mismatched_assets"] = mismatches[:20]
         if not any(key in item for key in (
             "cycle_id", "status", "code", "exception_type", "snapshot_id",
-            "evidence_gaps", "asset_result_count",
+            "evidence_gaps", "failure_stage", "failure_location",
+            "sqlite_error_code", "sqlite_error_name", "sqlite_error_message",
+            "asset_result_count",
         )) and detail:
             item["detail_keys"] = sorted(str(key) for key in detail)[:20]
         diagnostics.append(item)
