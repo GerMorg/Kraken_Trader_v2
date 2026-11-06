@@ -1846,18 +1846,18 @@ class TraderRuntime:
                             and -60 <= research_bar_age <= 3900
                         ):
                             for symbol in sorted(portfolio_histories):
-                                instrument = portfolio_instruments.get(symbol)
-                                if instrument is None:
+                                depth_instrument = portfolio_instruments.get(symbol)
+                                if depth_instrument is None:
                                     depth_unavailable_symbols.append(symbol)
                                     continue
                                 try:
                                     depth_result = self.client.public(
-                                        "Depth", {"pair": instrument.altname, "count": 10}
+                                        "Depth", {"pair": depth_instrument.altname, "count": 10}
                                     )
                                     depth_book = (
-                                        depth_result.get(instrument.pair_id)
-                                        or depth_result.get(instrument.altname)
-                                        or depth_result.get(instrument.wsname)
+                                        depth_result.get(depth_instrument.pair_id)
+                                        or depth_result.get(depth_instrument.altname)
+                                        or depth_result.get(depth_instrument.wsname)
                                     )
                                     if not isinstance(depth_book, dict) and len(depth_result) == 1:
                                         only_value = next(iter(depth_result.values()))
