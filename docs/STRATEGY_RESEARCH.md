@@ -16,8 +16,9 @@ Dies ist eine zu falsifizierende Research-Hypothese, keine Behauptung einer neu 
 4. Das Residual ist Asset-Rendite minus Beta mal Markt-Faktor-Rendite.
 5. Der kumulierte 6-Stunden-Residualschock wird gegenüber den vorherigen 72 rollierenden 6-Stunden-Residualfenstern standardisiert.
 6. Ein LONG-Kandidat erfordert einen Residual-Z-Score von höchstens -1,5 und eine positive Residualbewegung der letzten zwei Stunden. Ein SHORT-Kandidat erfordert mindestens +1,5 und eine negative Residualbewegung der letzten zwei Stunden.
-7. Das Signal entsteht erst nach Kerzenschluss. Der hypothetische Einstieg erfolgt am nächsten H1-Open; der Exit erfolgt am Open nach 12 vollständigen Stunden.
-8. Trades desselben Assets überlappen nicht. Trades, deren Haltedauer eine Train-/Validation-/Test-Grenze überschreitet, werden für den jeweiligen Split ausgeschlossen.
+7. Ein Marktregime-Filter lässt Signale nur zu, wenn die 24-Stunden-realisierte Marktvolatilität höchstens das 1,5-Fache des Medians der vorherigen 72 24-Stunden-Volatilitätsfenster beträgt.
+8. Das Signal entsteht erst nach Kerzenschluss. Der hypothetische Einstieg erfolgt am nächsten H1-Open; der Exit erfolgt am Open nach 12 vollständigen Stunden.
+9. Trades desselben Assets überlappen nicht. Trades, deren Haltedauer eine Train-/Validation-/Test-Grenze überschreitet, werden für den jeweiligen Split ausgeschlossen.
 
 ## Kosten und Aussagekraft
 
