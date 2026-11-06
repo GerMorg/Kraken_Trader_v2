@@ -1208,3 +1208,25 @@ def test_resolve_circuit_breaker_can_require_a_matching_persisted_detail_signatu
     ) is False
     assert db.circuit_breakers()[0]["active"] is True
     db.close()
+
+
+
+def test_sqlite_cantopen_recovery_defers_when_storage_probe_raises(tmp_path, monkeypatch):
+    db = Persistence(str(tmp_path / "state.sqlite3"))
+    audit = AuditLogger(str(tmp_path / "audit.jsonl"), stream=io.StringIO())
+    db.trip_circuit_breaker(
+        "UNHANDLED_RUNTIME", "CYCLE_EXCEPTION", _historical_sqlite_cantopen_detail()
+    )
+
+    def fail_probe():
+        raise OSError("filesystem probe unavailable")
+
+    monkeypatch.setattr(db, "storage_diagnostics", fail_probe)
+    assert _recover_transient_sqlite_cantopen_research_read_breaker(
+        db, audit, cycle_id="storage-probe-error", research_observation_count=0
+    ) is False
+    assert db.circuit_breakers()[0]["active"] is True
+    assert "OSError" in audit.stream.getvalue()
+    assert "filesystem probe unavailable" not in audit.stream.getvalue()
+    audit.close()
+    db.close()
