@@ -50,6 +50,9 @@ def test_regime_divergence_research_is_isolated_and_cost_aware():
     assert set(result["chronological_splits"]) == {"train", "validation", "test"}
     assert len(result["slippage_sensitivity"]) == 5
     assert result["method"]["future_data_used_for_signal"] is False
+    assert result["method"]["market_volatility_window_bars"] == 24
+    assert result["method"]["market_volatility_reference_windows"] == 72
+    assert "market_regime_filter_excluded_count" in result
 
 
 def test_regime_divergence_requires_synchronized_history():
