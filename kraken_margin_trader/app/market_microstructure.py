@@ -568,7 +568,10 @@ class MarketMicrostructureCollector:
         while not self._stop.is_set():
             symbols = self.desired_symbols()
             if not symbols:
-                self._stop.wait(2.0)
+                self._symbols_changed.wait(2.0)
+                continue
+            self._symbols_changed.clear()
+            if self.desired_symbols() != symbols:
                 continue
             try:
                 from websockets.sync.client import connect
@@ -580,6 +583,7 @@ class MarketMicrostructureCollector:
                     ping_interval=20,
                     ping_timeout=20,
                     max_size=4_194_304,
+                    proxy=None,
                 ) as websocket:
                     websocket.send(json.dumps({
                         "method": "subscribe",
@@ -632,7 +636,7 @@ class MarketMicrostructureCollector:
                     self._mark_connection_gap()
                 self.flush_due()
             if not self._stop.is_set() and not self._symbols_changed.is_set():
-                self._stop.wait(backoff)
+                self._symbols_changed.wait(backoff)
                 backoff = min(backoff * 2, 30.0)
         self.flush_due()
         with self._lock:
