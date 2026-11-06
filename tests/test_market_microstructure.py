@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+import pytest
+
 from app.market_microstructure import (
     MarketMicrostructureCollector,
     calculate_book_checksum,
@@ -86,6 +88,7 @@ def test_book_updates_trade_aggregation_and_minute_persistence():
     assert bar["sell_notional_usd"] == "50.20"
     assert bar["signed_trade_notional_usd"] == "50.30"
     assert bar["trade_id_gaps"] == 1
+    assert "TRADE_ID_BASELINE_UNAVAILABLE" in bar["quality_flags"]
     assert bar["checksum_checks"] == 2
     assert bar["checksum_failures"] == 0
     assert bar["book_update_count"] == 1
@@ -136,8 +139,6 @@ def test_microstructure_observer_rejects_non_usd_pairs_and_bad_timestamps():
     assert db.record_microstructure_bar(with_value) is True
     assert db.record_microstructure_bar(with_value) is False
     assert db.microstructure_bar_count() == 1
-    import pytest
-
     with pytest.raises(ValueError, match="MICROSTRUCTURE_IDENTITY_INVALID"):
         db.record_microstructure_bar({**with_value, "pair": "EUR/USD"})
     with pytest.raises(ValueError, match="MICROSTRUCTURE_IDENTITY_INVALID"):
