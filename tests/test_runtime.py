@@ -55,6 +55,48 @@ def test_circuit_breaker_diagnostics_include_reason_and_safe_context_only():
     assert "api_secret" not in str(diagnostics)
 
 
+def test_circuit_breaker_diagnostics_expose_safe_sqlite_failure_context():
+    diagnostics = _circuit_breaker_diagnostics([{
+        "name": "UNHANDLED_RUNTIME",
+        "reason": "CYCLE_EXCEPTION",
+        "ts": "2026-10-30T18:35:08.285234+00:00",
+        "detail": {
+            "cycle_id": "failed-cycle",
+            "exception_type": "OperationalError",
+            "failure_stage": "FINALIZE_CYCLE_SUMMARY_WRITE",
+            "failure_location": {
+                "file": "persistence.py",
+                "line": 842,
+                "function": "record_event",
+                "api_secret": "must-not-be-emitted",
+            },
+            "sqlite_error_code": 10,
+            "sqlite_error_name": "SQLITE_IOERR",
+            "sqlite_error_message": "disk I/O error",
+            "api_secret": "must-not-be-emitted",
+        },
+    }])
+
+    assert diagnostics == [{
+        "name": "UNHANDLED_RUNTIME",
+        "reason": "CYCLE_EXCEPTION",
+        "ts": "2026-10-30T18:35:08.285234+00:00",
+        "cycle_id": "failed-cycle",
+        "exception_type": "OperationalError",
+        "failure_stage": "FINALIZE_CYCLE_SUMMARY_WRITE",
+        "sqlite_error_code": 10,
+        "sqlite_error_name": "SQLITE_IOERR",
+        "failure_location": {
+            "file": "persistence.py",
+            "function": "record_event",
+            "line": 842,
+        },
+        "sqlite_error_message": "disk I/O error",
+    }]
+    assert "must-not-be-emitted" not in str(diagnostics)
+    assert "api_secret" not in str(diagnostics)
+
+
 def test_circuit_breaker_diagnostics_identify_wallet_mismatch_assets():
     diagnostics = _circuit_breaker_diagnostics([{
         "name": "WALLET_BALANCE_RECONCILIATION",
