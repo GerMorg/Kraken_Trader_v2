@@ -596,7 +596,7 @@ def test_market_depth_snapshot_rejects_crossed_or_unsorted_books():
 
 
 def test_additive_depth_migration_preserves_existing_multi_asset_rows(tmp_path):
-    path = str(tmp_path / "legacy_v11.sqlite3")
+    path = str(tmp_path / "legacy_v12.sqlite3")
     db = Persistence(path)
     old_report = {
         "research_key": "legacy-report",
@@ -607,7 +607,7 @@ def test_additive_depth_migration_preserves_existing_multi_asset_rows(tmp_path):
     }
     assert db.record_multi_asset_research_run(old_report) is True
     db.connection.execute(
-        "UPDATE schema_meta SET value='11' WHERE key='schema_version'"
+        "UPDATE schema_meta SET value='12' WHERE key='schema_version'"
     )
     db.close()
 
@@ -617,5 +617,5 @@ def test_additive_depth_migration_preserves_existing_multi_asset_rows(tmp_path):
     schema_version = migrated.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
-    assert schema_version == "12"
+    assert schema_version == "13"
     migrated.close()
