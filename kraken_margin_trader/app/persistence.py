@@ -993,6 +993,91 @@ class Persistence:
             result.append(item)
         return result
 
+    def record_microstructure_bar(self, bar: dict[str, Any]) -> bool:
+        """Persist one immutable, quality-labelled Kraken WS v2 minute aggregate."""
+        required = ("pair", "minute_ts", "source", "quality_status")
+        if not isinstance(bar, dict) or any(key not in bar for key in required):
+            raise ValueError("MICROSTRUCTURE_REQUIRED_FIELD_MISSING")
+        pair = str(bar["pair"]).strip().upper()
+        source = str(bar["source"]).strip()
+        quality_status = str(bar["quality_status"]).strip().upper()
+        pair_parts = pair.rsplit("/", 1)
+        fiat_base_assets = {"USD", "EUR", "GBP", "CAD", "AUD", "CHF", "JPY"}
+        try:
+            minute_ts = int(bar["minute_ts"])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("MICROSTRUCTURE_TIMESTAMP_INVALID") from exc
+        if (
+            len(pair_parts) != 2 or not pair_parts[0]
+            or pair_parts[0] in fiat_base_assets or pair_parts[1] != "USD"
+            or minute_ts <= 0 or minute_ts % 60 != 0
+            or source != "KRAKEN_SPOT_WS_V2"
+            or quality_status not in {"VALID", "PARTIAL"}
+        ):
+            raise ValueError("MICROSTRUCTURE_IDENTITY_INVALID")
+
+        numeric_fields = (
+            "buy_notional_usd", "sell_notional_usd", "signed_trade_notional_usd",
+            "trade_imbalance", "ofi_l1_base", "ofi_l1_imbalance", "spread_bps",
+            "depth_imbalance", "microprice_deviation_bps", "bid_depth_usd",
+            "ask_depth_usd",
+        )
+        for field in numeric_fields:
+            value = bar.get(field)
+            if value is None:
+                continue
+            try:
+                parsed = Decimal(str(value))
+            except (ArithmeticError, TypeError, ValueError) as exc:
+                raise ValueError("MICROSTRUCTURE_VALUE_INVALID:" + field) from exc
+            if not parsed.is_finite():
+                raise ValueError("MICROSTRUCTURE_VALUE_INVALID:" + field)
+        for field in (
+            "trade_count", "book_update_count", "checksum_checks",
+            "checksum_failures", "trade_id_gaps", "connection_gap_count",
+        ):
+            try:
+                value = int(bar.get(field, 0))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("MICROSTRUCTURE_COUNT_INVALID:" + field) from exc
+            if value < 0:
+                raise ValueError("MICROSTRUCTURE_COUNT_INVALID:" + field)
+        now = _now()
+        with self.lock:
+            cursor = self.connection.execute(
+                "INSERT OR IGNORE INTO microstructure_bars("
+                "pair,minute_ts,quality_status,payload_json,created_at"
+                ") VALUES(?,?,?,?,?)",
+                (pair, minute_ts, quality_status, _json(bar), now),
+            )
+            return cursor.rowcount == 1
+
+    def microstructure_bar_count(self, pair: str | None = None) -> int:
+        """Count persisted one-minute WS v2 feature aggregates."""
+        with self.lock:
+            if pair is None:
+                row = self.connection.execute(
+                    "SELECT COUNT(*) AS n FROM microstructure_bars"
+                ).fetchone()
+            else:
+                row = self.connection.execute(
+                    "SELECT COUNT(*) AS n FROM microstructure_bars WHERE pair=?",
+                    (str(pair).strip().upper(),),
+                ).fetchone()
+        return int(row["n"]) if row is not None else 0
+
+    def microstructure_bars(
+        self, pair: str, *, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        """Return immutable minute aggregates in ascending timestamp order."""
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT payload_json FROM microstructure_bars WHERE pair=? "
+                "ORDER BY minute_ts DESC LIMIT ?",
+                (str(pair).strip().upper(), max(1, min(int(limit), 10000))),
+            ).fetchall()
+        return [json.loads(str(row["payload_json"])) for row in reversed(rows)]
+
     def multi_asset_research_bar_exists(self, as_of_bar_ts: int) -> bool:
         """Check whether a multi-asset snapshot already exists for this common H1 bar."""
         with self.lock:
