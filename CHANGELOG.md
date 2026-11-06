@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.52 — Kostenkalibrierung und Multi-Asset-Portfolio-Research
+
+- Ergänzt eine Slippage-Sensitivität von 0/1/2/5/10 bp je Seite für TSM-Forward-Labels und Strategy-Lab-Kandidaten sowie Break-even-Slippage. Die Primärannahme von 5 bp bleibt unverändert; die Szenarien sind keine tatsächlichen historischen Ausführungskosten.
+- Erweitert Variante A um vorab definierte Korrelationsschwellen (-0,25/-0,15/-0,05/0,0) und eine Rangliste aktueller Paar-Korrelationen. Keine automatische Parameterpromotion.
+- Korrigiert Variante B: Ein Exit-Signal wird nach Kerzenschluss erkannt und frühestens zum Open der nächsten H1-Kerze ausgeführt; der bisherige Same-Close-Exit entfällt.
+- Ergänzt eine gemeinsame stündliche Pair-Portfolio-Simulation mit maximal vier parallelen Pairs, jeweils 25 % des anfänglichen Equity, höchstens 100 % kombiniertem Brutto-Notional und ohne gleichzeitige Wiederverwendung eines Assets.
+- Erfasst je neuem gemeinsamen H1-Forschungsstand öffentliche Kraken-Depth-Snapshots und simuliert aktuelle Round-Trip-Kosten für 250/500/1.000/2.500 USD bei 25 % sichtbarer Level-Partizipation. Keine historischen Quotes/Fills.
+- Alle Erweiterungen bleiben Research-only. Unbekannte Margin-Finanzierungskosten bleiben offen; interne Live-Freigabe bleibt `False`. Datenbankbestand wird nicht gelöscht oder zurückgesetzt.
+
 ## 0.1.51 — Multi-Asset-Research für Rebalancing und Relative-Value-Pairs
 
 - Ergänzt zwei getrennte Research-Varianten: dynamisches Rebalancing negativ korrelierter USD-Krypto-Assets (Volatility Harvesting) und rollierendes Relative-Value-/Mean-Reversion-Pairs-Trading mit hypothetischen Long-/Short-Spread-Signalen.

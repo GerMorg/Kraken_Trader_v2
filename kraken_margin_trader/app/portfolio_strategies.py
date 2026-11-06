@@ -5,9 +5,16 @@ import hashlib
 import math
 from statistics import fmean, median, pstdev
 from typing import Any, Mapping, Sequence
+from decimal import Decimal
+
+from app.orderbook_simulator import (
+    BookLevel,
+    OrderBookSnapshot,
+    simulate_order_book_execution,
+)
 
 D_MIN = 1e-12
-PORTFOLIO_RESEARCH_VERSION = "parrondo-multi-asset-v0.1"
+PORTFOLIO_RESEARCH_VERSION = "parrondo-multi-asset-v0.2"
 CORRELATION_LOOKBACK_BARS = 168
 PAIR_REGRESSION_LOOKBACK_BARS = 168
 MIN_SYNCHRONIZED_BARS = 240
@@ -20,6 +27,11 @@ PAIR_MAX_HOLDING_BARS = 48
 REBALANCE_INTERVAL_BARS = 24
 REBALANCE_DRIFT_THRESHOLD = 0.05
 SLIPPAGE_BPS_PER_SIDE = 5.0
+SLIPPAGE_SENSITIVITY_BPS_PER_SIDE = (0.0, 1.0, 2.0, 5.0, 10.0)
+CORRELATION_SENSITIVITY_THRESHOLDS = (-0.25, -0.15, -0.05, 0.0)
+MAX_CONCURRENT_PAIR_POSITIONS = 4
+PAIR_SLOT_EQUITY_FRACTION = 0.25
+ORDER_BOOK_NOTIONAL_USD = (250.0, 500.0, 1000.0, 2500.0)
 
 
 def _finite_float(value: Any) -> float | None:
@@ -144,13 +156,33 @@ def _select_negative_pairs(
     return selected
 
 
-def _side_cost_bps(symbol: str, market_costs: Mapping[str, Mapping[str, Any]]) -> float | None:
+def _side_cost_components(
+    symbol: str,
+    market_costs: Mapping[str, Mapping[str, Any]],
+    *,
+    slippage_bps_per_side: float = SLIPPAGE_BPS_PER_SIDE,
+) -> tuple[float, float, float] | None:
     raw = market_costs.get(symbol, {})
     fee = _finite_float(raw.get("taker_fee_bps"))
     spread = _finite_float(raw.get("spread_bps"))
-    if fee is None or spread is None or fee < 0 or spread < 0:
+    if (
+        fee is None or spread is None or fee < 0 or spread < 0
+        or not math.isfinite(slippage_bps_per_side) or slippage_bps_per_side < 0
+    ):
         return None
-    return fee + spread / 2.0 + SLIPPAGE_BPS_PER_SIDE
+    return fee, spread / 2.0, slippage_bps_per_side
+
+
+def _side_cost_bps(
+    symbol: str,
+    market_costs: Mapping[str, Mapping[str, Any]],
+    *,
+    slippage_bps_per_side: float = SLIPPAGE_BPS_PER_SIDE,
+) -> float | None:
+    components = _side_cost_components(
+        symbol, market_costs, slippage_bps_per_side=slippage_bps_per_side
+    )
+    return sum(components) if components is not None else None
 
 
 def _curve_metrics(returns: Sequence[float]) -> dict[str, Any]:
@@ -200,11 +232,18 @@ def _simulate_rebalancing(
     *,
     strategy: str,
     lookback: int = CORRELATION_LOOKBACK_BARS,
+    correlation_threshold: float = NEGATIVE_CORRELATION_THRESHOLD,
+    slippage_bps_per_side: float = SLIPPAGE_BPS_PER_SIDE,
 ) -> dict[str, Any]:
     symbols = market["symbols"]
     closes = market["closes"]
     count = len(market["timestamps"])
-    costs = {symbol: _side_cost_bps(symbol, market_costs) for symbol in symbols}
+    costs = {
+        symbol: _side_cost_bps(
+            symbol, market_costs, slippage_bps_per_side=slippage_bps_per_side
+        )
+        for symbol in symbols
+    }
     costs_complete = all(value is not None for value in costs.values())
     weights = {symbol: 0.0 for symbol in symbols}
     cash_weight = 1.0
@@ -242,7 +281,9 @@ def _simulate_rebalancing(
             continue
 
         if strategy == "negative_correlation_threshold_rebalance":
-            pairs = _select_negative_pairs(closes, index=index, lookback=lookback)
+            pairs = _select_negative_pairs(
+                closes, index=index, lookback=lookback, threshold=correlation_threshold
+            )
             selected = {symbol for left, right, _ in pairs for symbol in (left, right)}
             target = (
                 {symbol: (1.0 / len(selected) if symbol in selected else 0.0) for symbol in symbols}
@@ -297,6 +338,9 @@ def _simulate_rebalancing(
     boundaries = (train_end, validation_end, start, count)
     return {
         "strategy": strategy,
+        "correlation_threshold": correlation_threshold
+        if strategy == "negative_correlation_threshold_rebalance" else None,
+        "slippage_bps_per_side": slippage_bps_per_side,
         "gross": _curve_metrics(gross_returns[start:]),
         "gross_chronological_splits": _split_returns(gross_returns, boundaries),
         "spot_net": _curve_metrics(net_returns[start:]) if costs_complete else None,
@@ -433,8 +477,8 @@ def _backtest_pair(
     trades: list[dict[str, Any]] = []
     pending = 0
     index = PAIR_REGRESSION_LOOKBACK_BARS - 1
-    side_cost_a = _side_cost_bps(symbol_a, market_costs)
-    side_cost_b = _side_cost_bps(symbol_b, market_costs)
+    cost_a = _side_cost_components(symbol_a, market_costs)
+    cost_b = _side_cost_components(symbol_b, market_costs)
     while index < count - 1:
         model = _pair_model(closes[symbol_a], closes[symbol_b], end_index=index)
         if model is None or abs(model["z_score"]) < PAIR_ENTRY_Z:
@@ -447,8 +491,9 @@ def _backtest_pair(
         exit_index: int | None = None
         exit_a = exit_b = 0.0
         exit_reason: str | None = None
+        exit_trigger_index: int | None = None
         scheduled_max_exit = entry_index + PAIR_MAX_HOLDING_BARS - 1
-        if scheduled_max_exit >= count:
+        if scheduled_max_exit + 1 >= count:
             pending += 1
             break
         for future_index in range(entry_index, scheduled_max_exit + 1):
@@ -462,14 +507,21 @@ def _backtest_pair(
             stop_triggered = abs(z_score) >= PAIR_STOP_Z
             mean_reverted = abs(z_score) <= PAIR_EXIT_Z
             if stop_triggered or mean_reverted or max_holding_reached:
-                exit_index = future_index
+                # The close signal is known only after this candle; exit no earlier
+                # than the following hourly open to avoid same-close look-ahead.
+                execution_index = future_index + 1
+                if execution_index >= count:
+                    exit_trigger_index = future_index
+                    break
+                exit_trigger_index = future_index
+                exit_index = execution_index
                 exit_reason = (
                     "SPREAD_ZSCORE_STOP" if stop_triggered else
                     "MEAN_REVERSION_EXIT" if mean_reverted else
                     "MAX_HOLDING_PERIOD_EXIT"
                 )
-                exit_a = closes[symbol_a][future_index]
-                exit_b = closes[symbol_b][future_index]
+                exit_a = opens[symbol_a][execution_index]
+                exit_b = opens[symbol_b][execution_index]
                 break
         if exit_index is None:
             pending += 1
@@ -482,10 +534,16 @@ def _backtest_pair(
             exit_b=exit_b,
             beta=model["beta"],
         )
+        fee_per_side: float | None = None
+        half_spread_per_side: float | None = None
+        cost_per_side: float | None = None
         cost_bps: float | None = None
         net_bps: float | None = None
-        if side_cost_a is not None and side_cost_b is not None:
-            cost_bps = 2.0 * (weight_a * side_cost_a + weight_b * side_cost_b)
+        if cost_a is not None and cost_b is not None:
+            fee_per_side = weight_a * cost_a[0] + weight_b * cost_b[0]
+            half_spread_per_side = weight_a * cost_a[1] + weight_b * cost_b[1]
+            cost_per_side = fee_per_side + half_spread_per_side + SLIPPAGE_BPS_PER_SIDE
+            cost_bps = 2.0 * cost_per_side
             net_bps = gross_bps - cost_bps
         split = (
             "train" if exit_index < train_end and index < train_end else
@@ -498,19 +556,29 @@ def _backtest_pair(
             "direction": direction,
             "decision_index": index,
             "entry_index": entry_index,
+            "exit_trigger_index": exit_trigger_index,
             "exit_index": exit_index,
-            "holding_bars": exit_index - entry_index + 1,
+            "entry_price_a": entry_a,
+            "entry_price_b": entry_b,
+            "exit_price_a": exit_a,
+            "exit_price_b": exit_b,
+            "leg_weight_a": weight_a,
+            "leg_weight_b": weight_b,
+            "holding_bars": exit_index - entry_index,
             "exit_reason": exit_reason,
+            "exit_execution_reference": "NEXT_H1_OPEN_AFTER_CLOSE_SIGNAL",
             "entry_z_score": model["z_score"],
             "return_correlation": model["return_correlation"],
             "half_life_bars": model["half_life_bars"],
             "hedge_ratio_beta": model["beta"],
             "gross_return_bps": gross_bps,
+            "fee_per_side_bps": fee_per_side,
+            "half_spread_per_side_bps": half_spread_per_side,
             "spot_round_trip_cost_bps": cost_bps,
             "net_return_bps": net_bps,
             "split": split,
         })
-        index = exit_index + 1
+        index = exit_index
     by_split = {
         name: _pair_trade_summary([item for item in trades if item["split"] == name])
         for name in ("train", "validation", "test")
@@ -579,6 +647,289 @@ def _latest_pair_signals(
     return signals[:10], eligible_count
 
 
+def _pair_portfolio_simulation(
+    trades: Sequence[Mapping[str, Any]],
+    opens: Mapping[str, Sequence[float]],
+    closes: Mapping[str, Sequence[float]],
+    *,
+    bar_count: int,
+    train_end: int,
+    validation_end: int,
+    slippage_bps_per_side: float,
+) -> dict[str, Any]:
+    """Research portfolio with fixed slots, asset de-duplication and mark-to-market."""
+    candidates = sorted(
+        (
+            item for item in trades
+            if item.get("split") != "purged_at_split_boundary"
+            and int(item.get("exit_index", -1)) > int(item.get("entry_index", -1))
+        ),
+        key=lambda item: (
+            int(item["entry_index"]),
+            -abs(float(item.get("entry_z_score", 0.0))),
+            str(item.get("symbol_a", "")),
+            str(item.get("symbol_b", "")),
+        ),
+    )
+    accepted: list[Mapping[str, Any]] = []
+    skipped_slot_limit = 0
+    skipped_asset_overlap = 0
+    for candidate in candidates:
+        entry_index = int(candidate["entry_index"])
+        active = [item for item in accepted if int(item["exit_index"]) > entry_index]
+        if len(active) >= MAX_CONCURRENT_PAIR_POSITIONS:
+            skipped_slot_limit += 1
+            continue
+        candidate_assets = {str(candidate["symbol_a"]), str(candidate["symbol_b"])}
+        active_assets = {
+            str(item["symbol_a"]) for item in active
+        } | {
+            str(item["symbol_b"]) for item in active
+        }
+        if candidate_assets & active_assets:
+            skipped_asset_overlap += 1
+            continue
+        accepted.append(candidate)
+
+    gross_pnl_fraction = [0.0] * bar_count
+    cost_pnl_fraction = [0.0] * bar_count
+    costs_complete = bool(accepted) and all(
+        item.get("fee_per_side_bps") is not None
+        and item.get("half_spread_per_side_bps") is not None
+        for item in accepted
+    )
+    turnover_fraction = 0.0
+    for item in accepted:
+        entry_index = int(item["entry_index"])
+        exit_index = int(item["exit_index"])
+        symbol_a = str(item["symbol_a"])
+        symbol_b = str(item["symbol_b"])
+        weight_a = float(item["leg_weight_a"])
+        weight_b = float(item["leg_weight_b"])
+        long_a = 1.0 if item["direction"] == "LONG_SPREAD" else -1.0
+        long_b = -long_a
+        entry_a = float(item["entry_price_a"])
+        entry_b = float(item["entry_price_b"])
+        slot = PAIR_SLOT_EQUITY_FRACTION
+        turnover_fraction += 2.0 * slot
+        for bar_index in range(entry_index, exit_index + 1):
+            if bar_index == exit_index:
+                previous_a = float(closes[symbol_a][bar_index - 1])
+                previous_b = float(closes[symbol_b][bar_index - 1])
+                current_a = float(opens[symbol_a][bar_index])
+                current_b = float(opens[symbol_b][bar_index])
+            elif bar_index == entry_index:
+                previous_a = entry_a
+                previous_b = entry_b
+                current_a = float(closes[symbol_a][bar_index])
+                current_b = float(closes[symbol_b][bar_index])
+            else:
+                previous_a = float(closes[symbol_a][bar_index - 1])
+                previous_b = float(closes[symbol_b][bar_index - 1])
+                current_a = float(closes[symbol_a][bar_index])
+                current_b = float(closes[symbol_b][bar_index])
+            period_return = (
+                long_a * weight_a * (current_a / previous_a - 1.0)
+                + long_b * weight_b * (current_b / previous_b - 1.0)
+            )
+            gross_pnl_fraction[bar_index] += slot * period_return
+
+        if costs_complete:
+            cost_side = (
+                float(item["fee_per_side_bps"])
+                + float(item["half_spread_per_side_bps"])
+                + slippage_bps_per_side
+            )
+            cost_fraction = slot * cost_side / 10000.0
+            cost_pnl_fraction[entry_index] -= cost_fraction
+            cost_pnl_fraction[exit_index] -= cost_fraction
+
+    def equity_curve(period_pnl: Sequence[float]) -> tuple[list[float], list[float]]:
+        equity = 1.0
+        returns: list[float] = [0.0] * bar_count
+        curve: list[float] = [equity] * bar_count
+        for index, delta in enumerate(period_pnl):
+            if not math.isfinite(delta):
+                raise ValueError("PAIR_PORTFOLIO_PNL_NON_FINITE")
+            if equity + delta <= 0.0:
+                returns[index] = -1.0
+                equity = 0.0
+            else:
+                returns[index] = delta / equity
+                equity += delta
+            curve[index] = equity
+            if equity <= 0:
+                for rest in range(index + 1, bar_count):
+                    curve[rest] = 0.0
+                    returns[rest] = 0.0
+                break
+        return returns, curve
+
+    gross_returns, _gross_curve = equity_curve(gross_pnl_fraction)
+    gross_metrics = _curve_metrics(gross_returns[PAIR_REGRESSION_LOOKBACK_BARS:])
+    gross_splits = _split_returns(
+        gross_returns,
+        (train_end, validation_end, PAIR_REGRESSION_LOOKBACK_BARS, bar_count),
+    )
+    net_metrics = None
+    net_splits = None
+    if costs_complete:
+        net_pnl_fraction = [
+            gross_pnl_fraction[index] + cost_pnl_fraction[index]
+            for index in range(bar_count)
+        ]
+        net_returns, _net_curve = equity_curve(net_pnl_fraction)
+        net_metrics = _curve_metrics(net_returns[PAIR_REGRESSION_LOOKBACK_BARS:])
+        net_splits = _split_returns(
+            net_returns,
+            (train_end, validation_end, PAIR_REGRESSION_LOOKBACK_BARS, bar_count),
+        )
+    active_counts = [
+        sum(
+            int(item["entry_index"]) <= index < int(item["exit_index"])
+            for item in accepted
+        )
+        for index in range(bar_count)
+    ]
+    return {
+        "simulation": "CONCURRENT_PAIR_PORTFOLIO_HOURLY_MARK_TO_MARKET",
+        "capital_basis": "FIXED_INITIAL_EQUITY",
+        "pair_slot_fraction_of_initial_equity": PAIR_SLOT_EQUITY_FRACTION,
+        "maximum_concurrent_pairs": MAX_CONCURRENT_PAIR_POSITIONS,
+        "observed_max_concurrent_pairs": max(active_counts, default=0),
+        "maximum_combined_gross_notional_pct_of_initial_equity": (
+            MAX_CONCURRENT_PAIR_POSITIONS * PAIR_SLOT_EQUITY_FRACTION * 100.0
+        ),
+        "leverage_used": False,
+        "short_leg_requires_margin": True,
+        "margin_execution_simulated": False,
+        "margin_financing_costs_included": False,
+        "selected_trade_count": len(accepted),
+        "candidate_trade_count": len(candidates),
+        "skipped_max_concurrent_pairs": skipped_slot_limit,
+        "skipped_due_to_asset_overlap": skipped_asset_overlap,
+        "turnover_pct_of_initial_equity": round(turnover_fraction * 100.0, 6),
+        "gross_portfolio": gross_metrics,
+        "gross_chronological_splits": gross_splits,
+        "spot_net_portfolio": net_metrics,
+        "spot_net_chronological_splits": net_splits,
+        "slippage_bps_per_side": slippage_bps_per_side,
+        "net_cost_quality": (
+            "CURRENT_FEE_AND_SPREAD_PROXY_PLUS_ASSUMED_SLIPPAGE"
+            if costs_complete else "INCOMPLETE_FEE_OR_SPREAD_INPUTS"
+        ),
+        "actual_fills": False,
+        "portfolio_pnl": False,
+    }
+
+
+def _rank_pair_correlations(
+    closes: Mapping[str, Sequence[float]],
+    *,
+    index: int,
+    lookback: int = CORRELATION_LOOKBACK_BARS,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    if index < lookback:
+        return []
+    ranked: list[tuple[str, str, float]] = []
+    for left, right in combinations(sorted(closes), 2):
+        left_returns = _returns(closes[left][index - lookback : index + 1])
+        right_returns = _returns(closes[right][index - lookback : index + 1])
+        correlation = _correlation(left_returns, right_returns)
+        if correlation is not None:
+            ranked.append((left, right, correlation))
+    ranked.sort(key=lambda item: (item[2], item[0], item[1]))
+    return [
+        {"symbol_a": left, "symbol_b": right, "return_correlation": round(value, 6)}
+        for left, right, value in ranked[:limit]
+    ]
+
+
+def _current_order_book_cost_diagnostics(
+    market_costs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Current visible-book estimate at standard USD sizes; never historic fills."""
+    by_symbol: dict[str, Any] = {}
+    for symbol, raw in sorted(market_costs.items()):
+        book_data = raw.get("order_book_l2")
+        fee = _finite_float(raw.get("taker_fee_bps"))
+        if not isinstance(book_data, Mapping) or fee is None or fee < 0:
+            continue
+        try:
+            bids = tuple(
+                BookLevel(Decimal(str(row[0])), Decimal(str(row[1])))
+                for row in book_data["bids"]
+            )
+            asks = tuple(
+                BookLevel(Decimal(str(row[0])), Decimal(str(row[1])))
+                for row in book_data["asks"]
+            )
+            snapshot = OrderBookSnapshot(
+                timestamp=int(book_data["snapshot_ts"]),
+                bids=bids,
+                asks=asks,
+            )
+        except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError):
+            by_symbol[symbol] = {"status": "INVALID_ORDER_BOOK_SNAPSHOT"}
+            continue
+        mid = (snapshot.bids[0].price + snapshot.asks[0].price) / Decimal(2)
+        notionals: list[dict[str, Any]] = []
+        for notional in ORDER_BOOK_NOTIONAL_USD:
+            quantity = Decimal(str(notional)) / mid
+            buy = simulate_order_book_execution(
+                snapshot,
+                side="BUY",
+                quantity=quantity,
+                fee_bps=Decimal(str(fee)),
+                max_level_participation=Decimal("0.25"),
+            )
+            sell = simulate_order_book_execution(
+                snapshot,
+                side="SELL",
+                quantity=quantity,
+                fee_bps=Decimal(str(fee)),
+                max_level_participation=Decimal("0.25"),
+            )
+            complete = buy.complete and sell.complete
+            notionals.append({
+                "notional_usd": notional,
+                "status": "VISIBLE_DEPTH_FILLED" if complete else "VISIBLE_DEPTH_INSUFFICIENT",
+                "buy_slippage_bps": (
+                    str(buy.slippage_bps) if buy.slippage_bps is not None else None
+                ),
+                "sell_slippage_bps": (
+                    str(sell.slippage_bps) if sell.slippage_bps is not None else None
+                ),
+                "spread_bps": str(buy.spread_bps),
+                "round_trip_taker_fee_bps": str(Decimal(2) * Decimal(str(fee))),
+                "round_trip_execution_cost_bps": (
+                    str(
+                        Decimal(2) * Decimal(str(fee)) + buy.spread_bps
+                        + (buy.slippage_bps or Decimal(0))
+                        + (sell.slippage_bps or Decimal(0))
+                    )
+                    if complete else None
+                ),
+            })
+        by_symbol[symbol] = {
+            "status": "CURRENT_L2_COST_ESTIMATE",
+            "snapshot_ts": snapshot.timestamp,
+            "level_count_bids": len(snapshot.bids),
+            "level_count_asks": len(snapshot.asks),
+            "max_level_participation": 0.25,
+            "round_trip_assumption": "SAME_SNAPSHOT_BUY_AND_SELL; NOT_A_FILL",
+            "notional_scenarios": notionals,
+        }
+    return {
+        "source": "KRAKEN_PUBLIC_DEPTH_CURRENT_SNAPSHOT",
+        "instrument_count": len(by_symbol),
+        "by_symbol": by_symbol,
+        "historical_cost_evidence": False,
+        "actual_fills": False,
+    }
+
+
 def run_multi_asset_strategy_research(
     histories: Mapping[str, Sequence[Mapping[str, Any]]],
     market_costs: Mapping[str, Mapping[str, Any]],
@@ -617,6 +968,7 @@ def run_multi_asset_strategy_research(
         {"symbol_a": left, "symbol_b": right, "return_correlation": round(correlation, 6)}
         for left, right, correlation in negative_pairs
     ]
+    ranked_correlations = _rank_pair_correlations(closes, index=count - 1)
 
     strategy_a = {
         "parrondo_negative_correlation_rebalancing": _simulate_rebalancing(
@@ -629,6 +981,38 @@ def run_multi_asset_strategy_research(
             market, market_costs, strategy="buy_and_hold_equal_weight"
         ),
     }
+    correlation_threshold_sensitivity = []
+    for threshold in CORRELATION_SENSITIVITY_THRESHOLDS:
+        candidate = _simulate_rebalancing(
+            market,
+            market_costs,
+            strategy="negative_correlation_threshold_rebalance",
+            correlation_threshold=threshold,
+        )
+        correlation_threshold_sensitivity.append({
+            "threshold": threshold,
+            "selected_pair_count_sum": candidate["selected_negative_correlation_pair_count_sum"],
+            "rebalance_count": candidate["rebalance_count"],
+            "mean_cash_weight_pct": candidate["mean_cash_weight_pct"],
+            "gross": candidate["gross"],
+            "spot_net": candidate["spot_net"],
+            "spot_net_chronological_splits": candidate["spot_net_chronological_splits"],
+            "status": "EXPLORATORY_PREDECLARED_THRESHOLD_SENSITIVITY_NOT_PROMOTED",
+        })
+    variant_a_slippage_sensitivity = []
+    for assumed_slippage in SLIPPAGE_SENSITIVITY_BPS_PER_SIDE:
+        scenario = _simulate_rebalancing(
+            market,
+            market_costs,
+            strategy="negative_correlation_threshold_rebalance",
+            slippage_bps_per_side=assumed_slippage,
+        )
+        variant_a_slippage_sensitivity.append({
+            "slippage_bps_per_side": assumed_slippage,
+            "spot_net": scenario["spot_net"],
+            "spot_net_chronological_splits": scenario["spot_net_chronological_splits"],
+            "status": "COST_ASSUMPTION_SENSITIVITY_NOT_HISTORICAL_EXECUTION",
+        })
 
     pair_results: list[dict[str, Any]] = []
     all_trades: list[dict[str, Any]] = []
@@ -656,6 +1040,32 @@ def run_multi_asset_strategy_research(
         split: _pair_trade_summary([item for item in all_trades if item["split"] == split])
         for split in ("train", "validation", "test")
     }
+    pair_portfolio = _pair_portfolio_simulation(
+        all_trades,
+        opens,
+        closes,
+        bar_count=count,
+        train_end=train_end,
+        validation_end=validation_end,
+        slippage_bps_per_side=SLIPPAGE_BPS_PER_SIDE,
+    )
+    pair_portfolio_slippage_sensitivity = []
+    for assumed_slippage in SLIPPAGE_SENSITIVITY_BPS_PER_SIDE:
+        scenario = _pair_portfolio_simulation(
+            all_trades,
+            opens,
+            closes,
+            bar_count=count,
+            train_end=train_end,
+            validation_end=validation_end,
+            slippage_bps_per_side=assumed_slippage,
+        )
+        pair_portfolio_slippage_sensitivity.append({
+            "slippage_bps_per_side": assumed_slippage,
+            "spot_net_portfolio": scenario["spot_net_portfolio"],
+            "spot_net_chronological_splits": scenario["spot_net_chronological_splits"],
+            "status": "COST_ASSUMPTION_SENSITIVITY_NOT_HISTORICAL_EXECUTION",
+        })
     current_pair_signals, current_pair_eligible_count = _latest_pair_signals(
         symbols, closes, market_costs
     )
@@ -687,6 +1097,7 @@ def run_multi_asset_strategy_research(
                 "pair_selection": "GREEDY_DISJOINT_PAIR_MATCHING_ON_ROLLING_RETURN_CORRELATION",
                 "correlation_lookback_bars": CORRELATION_LOOKBACK_BARS,
                 "negative_correlation_threshold": NEGATIVE_CORRELATION_THRESHOLD,
+                "threshold_sensitivity_values": list(CORRELATION_SENSITIVITY_THRESHOLDS),
                 "pair_selection_interval_bars": REBALANCE_INTERVAL_BARS,
                 "rebalance_weight_drift_threshold": REBALANCE_DRIFT_THRESHOLD,
                 "target_weights": "EQUAL_WEIGHT_ACROSS_SELECTED_PAIR_ASSETS",
@@ -695,6 +1106,9 @@ def run_multi_asset_strategy_research(
                 "future_data_used_for_selection": False,
             },
             "latest_selected_pairs": negative_pair_report,
+            "latest_pair_correlation_ranking": ranked_correlations,
+            "negative_correlation_threshold_sensitivity": correlation_threshold_sensitivity,
+            "primary_threshold_slippage_sensitivity": variant_a_slippage_sensitivity,
             "candidates": list(strategy_a.values()),
             "candidate_names": list(strategy_a.keys()),
             "portfolio_simulation": True,
@@ -716,9 +1130,10 @@ def run_multi_asset_strategy_research(
                 "adverse_spread_stop_abs_z_score": PAIR_STOP_Z,
                 "maximum_holding_bars": PAIR_MAX_HOLDING_BARS,
                 "hedge_ratio_frozen_at_entry": True,
-                "entry_at_next_bar_open_exit_at_bar_close": True,
+                "entry_at_next_bar_open": True,
+                "exit_after_close_signal_at_next_bar_open": True,
                 "candidate_trades_non_overlapping_per_pair": True,
-                "cross_pair_portfolio_overlap_simulated": False,
+                "cross_pair_portfolio_overlap_simulated": True,
                 "pair_selection_survivorship_and_multiple_testing_risk": "NOT_FULLY_CORRECTED_RESEARCH_ONLY",
                 "future_data_used_for_signal": False,
             },
@@ -734,7 +1149,9 @@ def run_multi_asset_strategy_research(
                 bool(item["margin_execution_eligible_from_instrument_metadata"])
                 for item in current_pair_signals
             ),
-            "portfolio_simulation": False,
+            "concurrent_portfolio": pair_portfolio,
+            "concurrent_portfolio_slippage_sensitivity": pair_portfolio_slippage_sensitivity,
+            "portfolio_simulation": True,
             "actual_fills": False,
             "portfolio_pnl": False,
         },
@@ -742,9 +1159,13 @@ def run_multi_asset_strategy_research(
             "taker_fee_source": "CURRENT_KRAKEN_TRADE_VOLUME_WHEN_AVAILABLE",
             "spread_source": "CURRENT_TICKER_SPREAD_APPLIED_AS_HISTORICAL_PROXY",
             "slippage_bps_per_side": SLIPPAGE_BPS_PER_SIDE,
+            "slippage_sensitivity_bps_per_side": list(SLIPPAGE_SENSITIVITY_BPS_PER_SIDE),
             "unknown_fees_are_not_assumed_zero": True,
             "margin_opening_and_rollover_costs_included": False,
             "historical_cost_accuracy": "NOT_VERIFIED_HISTORICAL_QUOTES_OR_FILLS",
+            "current_l2_order_book_cost_diagnostics": _current_order_book_cost_diagnostics(
+                market_costs
+            ),
         },
         "release_gate_eligible": False,
         "actual_fills": False,

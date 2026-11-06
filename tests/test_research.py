@@ -7,6 +7,7 @@ from app.research import (
     observation_id,
     settle_due_observations,
     summarize_shadow_research,
+    _spot_cost_sensitivity,
 )
 
 
@@ -74,6 +75,25 @@ def test_forward_outcome_calculates_cost_proxy_and_margin_break_even_not_margin_
     assert outcome["spot_net_return_bps"] == D("83")
     assert outcome["margin_cost_break_even_bps"] == D("83")
     assert "MARGIN_FEES_UNKNOWN" in outcome["cost_quality"]
+
+
+def test_spot_cost_sensitivity_reprices_same_gross_labels_without_promoting_slippage():
+    rows = [{
+        "gross_return_bps": "30",
+        "taker_fee_bps": "5",
+        "entry_spread_bps": "4",
+        "exit_spread_bps": "6",
+    }]
+
+    result = _spot_cost_sensitivity(rows)
+
+    assert result["cost_component_sample_count"] == 1
+    assert result["break_even_slippage_bps_per_side"]["mean"] == "7.5"
+    assert [item["metrics"]["mean_net_return_bps"] for item in result["scenarios"]] == [
+        "15", "13", "11", "5", "-5"
+    ]
+    assert result["uses_actual_fills"] is False
+    assert result["promotes_parameters"] is False
 
 
 def test_forward_outcome_handles_short_direction_and_unknown_taker_fee():

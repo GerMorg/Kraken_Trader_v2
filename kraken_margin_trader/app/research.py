@@ -493,6 +493,98 @@ def _non_overlapping_costed_rows(
     return selected, overlap_excluded, invalid_timing
 
 
+def _spot_cost_sensitivity(
+    rows: Sequence[dict[str, Any]],
+    *,
+    slippage_scenarios_bps_per_side: Sequence[Decimal] = (
+        D("0"), D("1"), D("2"), D("5"), D("10")
+    ),
+) -> dict[str, Any]:
+    """Reprice the same settled gross labels without changing their signals.
+
+    The grid is a sensitivity analysis over an explicit slippage assumption. It
+    does not infer actual historical execution costs or select/promote parameters.
+    """
+    scenario_results: list[dict[str, Any]] = []
+    break_even_slippage: list[Decimal] = []
+    valid_components = 0
+    for row in rows:
+        try:
+            gross = D(str(row["gross_return_bps"]))
+            fee = D(str(row["taker_fee_bps"]))
+            entry_spread = D(str(row["entry_spread_bps"]))
+            exit_spread = D(str(row["exit_spread_bps"]))
+        except (ArithmeticError, KeyError, TypeError, ValueError):
+            continue
+        components = (gross, fee, entry_spread, exit_spread)
+        if (
+            any(not value.is_finite() for value in components)
+            or fee < 0 or entry_spread < 0 or exit_spread < 0
+        ):
+            continue
+        valid_components += 1
+        spread_round_trip = (entry_spread + exit_spread) / D(2)
+        break_even_slippage.append(
+            (gross - D(2) * fee - spread_round_trip) / D(2)
+        )
+
+    for assumed_slippage in slippage_scenarios_bps_per_side:
+        if not assumed_slippage.is_finite() or assumed_slippage < 0:
+            continue
+        scenario_rows: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                gross = D(str(row["gross_return_bps"]))
+                fee = D(str(row["taker_fee_bps"]))
+                entry_spread = D(str(row["entry_spread_bps"]))
+                exit_spread = D(str(row["exit_spread_bps"]))
+            except (ArithmeticError, KeyError, TypeError, ValueError):
+                continue
+            if (
+                any(not value.is_finite() for value in (gross, fee, entry_spread, exit_spread))
+                or fee < 0 or entry_spread < 0 or exit_spread < 0
+            ):
+                continue
+            spread_round_trip = (entry_spread + exit_spread) / D(2)
+            cost = (
+                D(2) * fee + spread_round_trip
+                + D(2) * assumed_slippage
+            )
+            scenario_rows.append({
+                "sensitivity_net_return_bps": gross - cost,
+            })
+        scenario_results.append({
+            "assumed_slippage_bps_per_side": str(assumed_slippage),
+            "metrics": _metrics_for_field(
+                scenario_rows, "sensitivity_net_return_bps", "net"
+            ),
+            "status": "ASSUMPTION_SENSITIVITY_NOT_ACTUAL_EXECUTION",
+        })
+
+    return {
+        "scenario_count": len(scenario_results),
+        "cost_component_sample_count": valid_components,
+        "break_even_slippage_bps_per_side": {
+            "mean": (
+                str(sum(break_even_slippage, D(0)) / D(len(break_even_slippage)))
+                if break_even_slippage else None
+            ),
+            "median": (
+                str(D(str(median(break_even_slippage))))
+                if break_even_slippage else None
+            ),
+            "interpretation": (
+                "Maximum additional slippage per side before each label's estimated "
+                "net return reaches zero; not a future execution forecast."
+            ),
+        },
+        "scenarios": scenario_results,
+        "uses_actual_fills": False,
+        "uses_historical_order_book": False,
+        "promotes_parameters": False,
+    }
+
+
 def summarize_shadow_research(
     observations: Sequence[dict[str, Any]],
     *,
@@ -674,6 +766,7 @@ def summarize_shadow_research(
         "incomplete_directional_observations": incomplete,
         "settled_without_taker_fee": no_fee_settled,
         "spot_cost_proxy_all": _metrics(costed),
+        "spot_cost_sensitivity": _spot_cost_sensitivity(costed),
         "spot_cost_proxy_by_direction": {
             direction: _metrics([row for row in costed if row.get("direction") == direction])
             for direction in ("LONG", "SHORT")
@@ -1175,6 +1268,7 @@ def summarize_strategy_candidate_research(
             "incomplete_directional_count": len(incomplete),
             "gross_outcomes": _metrics_for_field(gross_rows, "gross_return_bps", "gross"),
             "spot_net_cost_proxy": _metrics_for_field(costed, "spot_net_return_bps", "net"),
+            "spot_net_cost_sensitivity": _spot_cost_sensitivity(costed),
             "spot_net_cost_proxy_by_direction": {
                 direction: _metrics_for_field(
                     [row for row in costed if str(row.get("direction", "")).upper() == direction],
@@ -1221,6 +1315,7 @@ def summarize_strategy_candidate_research(
             "spot_fee_basis": "KRAKEN_TRADE_VOLUME_TAKER_FEE_WHEN_AVAILABLE",
             "spread_basis": "ENTRY_SPREAD_AND_CURRENT_EXIT_SPREAD_ESTIMATE",
             "slippage_bps_per_side": str(RESEARCH_SLIPPAGE_BPS_PER_SIDE),
+            "slippage_sensitivity_bps_per_side": ["0", "1", "2", "5", "10"],
             "margin_net_returns_calculated": False,
             "margin_open_and_rollover_costs_confirmed": False,
         },
