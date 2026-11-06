@@ -76,6 +76,7 @@ class _Minute:
     book_update_count: int = 0
     ofi_l1_base: Decimal = D(0)
     checksum_checks: int = 0
+    ofi_l1_denominator_base: Decimal = D(0)
     checksum_failures: int = 0
     trade_id_gaps: int = 0
     connection_gap_count: int = 0
@@ -86,6 +87,7 @@ class _Minute:
     microprice_deviation_bps: Decimal | None = None
     last_event_ts: int = 0
     book_verified: bool = False
+    book_event_ts: int = 0
     quality_flags: set[str] = field(default_factory=set)
 
 
@@ -187,7 +189,10 @@ class MarketMicrostructureCollector:
     def process_message(self, raw: str | bytes | dict[str, Any]) -> bool:
         """Process one server message. False means reconnect for a clean snapshot."""
         if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
+            try:
+                raw = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                return True
         try:
             message = (
                 raw if isinstance(raw, dict)
@@ -279,7 +284,8 @@ class MarketMicrostructureCollector:
                     book.valid = False
                     current_minute.quality_flags.add("INVALID_BOOK_SNAPSHOT")
                     return True
-                book.bids, book.asks = bids, asks
+                book.bids = self._trim(bids, bids=True)
+                book.asks = self._trim(asks, bids=False)
             elif message_type == "update":
                 if not book.valid:
                     current_minute.quality_flags.add("UPDATE_WITHOUT_VALID_SNAPSHOT")
@@ -333,6 +339,7 @@ class MarketMicrostructureCollector:
             if actual_checksum != expected_checksum:
                 book.valid = False
                 current_minute.checksum_failures += 1
+                current_minute.book_verified = False
                 current_minute.quality_flags.add("BOOK_CHECKSUM_MISMATCH")
                 self._metrics["checksum_failures"] += 1
                 self._metrics["last_error_type"] = "BOOK_CHECKSUM_MISMATCH"
@@ -342,6 +349,7 @@ class MarketMicrostructureCollector:
             book.last_event_epoch = timestamp
             book.checksum = actual_checksum
             current_minute.book_verified = True
+            current_minute.book_event_ts = timestamp
             current_minute.last_event_ts = max(current_minute.last_event_ts, timestamp)
             if is_snapshot:
                 self._metrics["book_snapshots"] += 1
@@ -352,16 +360,19 @@ class MarketMicrostructureCollector:
                     new_bid_qty = book.bids.get(best_bid, D(0))
                     new_ask_qty = book.asks.get(best_ask, D(0))
                     bid_flow = (
-                        new_bid_qty if best_bid >= previous_bid
+                        new_bid_qty if best_bid > previous_bid
                         else -previous_bid_qty if best_bid < previous_bid
                         else new_bid_qty - previous_bid_qty
                     )
                     ask_flow = (
-                        -new_ask_qty if best_ask <= previous_ask
+                        -new_ask_qty if best_ask < previous_ask
                         else previous_ask_qty if best_ask > previous_ask
-                        else -(new_ask_qty - previous_ask_qty)
+                        else previous_ask_qty - new_ask_qty
                     )
                     current_minute.ofi_l1_base += bid_flow + ask_flow
+                    current_minute.ofi_l1_denominator_base += (
+                        previous_bid_qty + previous_ask_qty
+                    )
 
             bid_depth = sum((price * quantity for price, quantity in book.bids.items()), D(0))
             ask_depth = sum((price * quantity for price, quantity in book.asks.items()), D(0))
@@ -459,11 +470,15 @@ class MarketMicrostructureCollector:
                 (aggregate.bid_depth_usd or D(0)) + (aggregate.ask_depth_usd or D(0))
             )
             ofi_imbalance = (
-                aggregate.ofi_l1_base / total_top_depth
-                if total_top_depth > 0 else None
+                aggregate.ofi_l1_base / aggregate.ofi_l1_denominator_base
+                if aggregate.ofi_l1_denominator_base > 0 else None
+            )
+            book_fresh = (
+                aggregate.book_event_ts > 0
+                and aggregate.minute_ts + 60 - aggregate.book_event_ts <= 120
             )
             quality_status = (
-                "VALID" if aggregate.book_verified
+                "VALID" if aggregate.book_verified and book_fresh
                 and aggregate.checksum_checks > 0
                 and aggregate.checksum_failures == 0
                 and aggregate.trade_id_gaps == 0
@@ -498,6 +513,7 @@ class MarketMicrostructureCollector:
                 "trade_id_gaps": aggregate.trade_id_gaps,
                 "connection_gap_count": aggregate.connection_gap_count,
                 "last_event_ts": aggregate.last_event_ts,
+                "book_event_ts": aggregate.book_event_ts,
                 "quality_status": quality_status,
                 "quality_flags": sorted(aggregate.quality_flags),
                 "actual_fills": False,
@@ -588,7 +604,7 @@ class MarketMicrostructureCollector:
             if not self._stop.is_set() and not self._symbols_changed.is_set():
                 self._stop.wait(backoff)
                 backoff = min(backoff * 2, 30.0)
-        self.flush_due(int(time.time()) + 60)
+        self.flush_due()
         with self._lock:
             self._metrics["connected"] = False
             self._metrics["connection_state"] = "STOPPED"
@@ -597,4 +613,4 @@ class MarketMicrostructureCollector:
         self._stop.set()
         self._symbols_changed.set()
         if self._thread is not None:
-            self._thread.join(timeout=8.0)
+            self._thread.join(timeout=15.0)
