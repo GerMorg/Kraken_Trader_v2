@@ -25,6 +25,7 @@ from app.execution import LiveExecutionBlocked, OrderAuthority, OrderIntent, sig
 from app.entry_guards import entry_pair_exposure
 from app.history_sync import history_sources_ready, reconcile_trade_ledger_coverage, sync_history_source
 from app.market import closed_bar_is_fresh, executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
+from app.market_microstructure import MarketMicrostructureCollector
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.position_management import evaluate_position_exits
@@ -366,6 +367,13 @@ class TraderRuntime:
         self.client=KrakenClient(settings.api_key,settings.api_secret,persistence.next_nonce)
         self.tax_reports=AustrianTaxReports()
         self._last_tax_report_signature: dict[int, tuple[str, ...]] = {}
+        self.microstructure = MarketMicrostructureCollector(
+            persistence, enabled=settings.microstructure_enabled
+        )
+
+    def close(self) -> None:
+        """Stop the public market-data observer before SQLite is closed."""
+        self.microstructure.close()
 
     @staticmethod
     def _order_intent_from_mapping(intent: dict[str, Any]) -> OrderIntent:
@@ -534,6 +542,11 @@ class TraderRuntime:
             ranked=sorted((i for i in instruments if i.pair_id in tickers),
                 key=lambda i:tickers[i.pair_id].volume_quote_24h,reverse=True)
             candidates=ranked[:self.settings.max_market_candidates]; counts["candidates"]=len(candidates)
+            if self.settings.microstructure_enabled:
+                self.microstructure.update_symbols([
+                    instrument.wsname
+                    for instrument in ranked[:self.settings.microstructure_max_symbols]
+                ])
             account=None; snapshot=None; trade_volume={}
             if self.settings.credentials_present:
                 # GetApiKeyInfo is explicitly permissioned for none of the data scopes.
@@ -2061,6 +2074,8 @@ class TraderRuntime:
             failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_WRITE"
             self.persistence.record_event("SHADOW_STRATEGY_LAB_SUMMARY", strategy_lab_summary)
             self.audit.emit("SHADOW_STRATEGY_LAB_SUMMARY", **strategy_lab_summary)
+            self.microstructure.flush_due()
+            microstructure_status = self.microstructure.status()
             final_breaker_rows = self.persistence.circuit_breakers()
             final_breaker_diagnostics = _circuit_breaker_diagnostics(final_breaker_rows)
             result = {
@@ -2088,6 +2103,24 @@ class TraderRuntime:
                 "multi_asset_research_key": multi_asset_research_summary.get("research_key"),
                 "multi_asset_research_symbols": multi_asset_research_summary.get("symbols", []),
                 "multi_asset_research_runs_recorded": counts["multi_asset_research_runs_recorded"],
+                "microstructure_enabled": microstructure_status["enabled"],
+                "microstructure_connection_state": microstructure_status["connection_state"],
+                "microstructure_connected": microstructure_status["connected"],
+                "microstructure_subscribed_symbol_count": microstructure_status["subscribed_symbol_count"],
+                "microstructure_subscribed_symbols": microstructure_status["subscribed_symbols"],
+                "microstructure_messages": microstructure_status["messages"],
+                "microstructure_parse_errors": microstructure_status["parse_errors"],
+                "microstructure_book_snapshots": microstructure_status["book_snapshots"],
+                "microstructure_book_updates": microstructure_status["book_updates"],
+                "microstructure_trades": microstructure_status["trades"],
+                "microstructure_minute_bars_saved_total": microstructure_status["minute_bars_saved"],
+                "microstructure_persisted_minute_bars": self.persistence.microstructure_bar_count(),
+                "microstructure_checksum_failures": microstructure_status["checksum_failures"],
+                "microstructure_trade_id_gaps": microstructure_status["trade_id_gaps"],
+                "microstructure_connection_gaps": microstructure_status["connection_gaps"],
+                "microstructure_reconnects": microstructure_status["reconnects"],
+                "microstructure_last_message_epoch": microstructure_status["last_message_epoch"],
+                "microstructure_last_error_type": microstructure_status["last_error_type"],
                 "multi_asset_variant_a_status": (
                     multi_asset_research_summary.get("variant_a_volatility_harvesting", {}).get("status")
                     if isinstance(multi_asset_research_summary.get("variant_a_volatility_harvesting"), dict)

@@ -7,6 +7,7 @@
 - `app/kraken.py`: Kraken Spot Public-/Private-REST, Signatur, persistente Nonce-Schnittstelle, Mehrdeutigkeit nach Submit-Timeout und History-Endpunkte `TradesHistory`/`Ledgers`.
 - `app/history_sync.py`: persistente offsetbasierte, paginierte und idempotente Erst- und Folgesynchronisierung von Trades und Ledger, mit festem Zeitfenster, begrenztem Seitenbudget je Zyklus und Fail-Closed bei ungültigen Ergebnissen.
 - `app/market.py`: aktuelle Instrument-Metadaten; nur explizite reguläre `currency`-Basisklassen mit Online-USD-Quote; sichere Ticker-/OHLC-Validierung und konservative Lot-Rundung.
+- `app/market_microstructure.py`: isolierter öffentlicher Kraken-WebSocket-v2-Worker für book/trade, CRC32-geprüfte L2-Bücher, Trade-ID-Kontinuität und UTC-Minutenaggregation. Er läuft außerhalb des H1-Research-Blocks, hat keinen Zugriff auf Order Authority und wird vor dem Schließen von SQLite beendet.
 - `app/strategy.py`: deterministische H1-Time-Series-Momentum-/Trend-Hypothese, Stop-Distanz-Proxys, Teilgewinnmengen-Helfer.
 - `app/position_management.py`: deterministischer, pro Exchange-Positions-ID arbeitender Shadow-Exit-Planer für Teilgewinn und Stop-Risikoreduktion; keinerlei eigenständige Orderübermittlung.
 - `app/backtest.py`: chronologischer OHLCV-Szenario-Simulator mit realistischen Grenzen klar benannt, konservativer voller Margin-Kostenbasis, konto-gewichteter Equitykurve und Drawdown-/Tail-/Kostenkennzahlen.
@@ -24,6 +25,12 @@
 - `multi_asset_research_runs` in SQLite: unveränderliche, idempotente Snapshots pro gemeinsamem H1-Zeitpunkt und Research-Version; additive Schema-Migration, bestehende Research-/Handelsdaten bleiben unangetastet.
 - `app/tax.py`: Jahres-Export JSON/CSV/Markdown mit Datenlücken- und manuellen Prüfhinweisen.
 - `app/runtime.py`, `app/main.py`: Zyklussteuerung, Startdiagnose und kontrolliertes Stoppen.
+
+## Variante E — Market Microstructure ab 0.1.55
+
+Der kontinuierliche Collector ist vom normalen 5-Minuten-/H1-Handelszyklus entkoppelt. Das H1-Research kann einen bereits gespeicherten gemeinsamen Stundenbalken überspringen, während der WebSocket-Worker währenddessen weiterhin Book- und Trade-Updates beobachtet. Er abonniert nur das dynamisch nach 24h-Quote-Volumen ausgewählte USD-Krypto-Universum (konfigurierbar 1–20 Paare).
+
+Es werden nur verifizierte Book-Snapshots/Updates als gültiger Orderbuchzustand behandelt. Pro Minute werden Trade-Notionals, Trade-ID-Lücken, L1-OFI-Proxy, Spread, Tiefe und Microprice-Metriken gespeichert. Die vollständige Datenqualität und Grenzen sind in Market Microstructure Research beschrieben. Der Collector liefert keine Live-Strategieentscheidung und keine Orderdaten.
 
 ## Research-Pfade ab Version 0.1.47/0.1.48
 

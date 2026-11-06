@@ -1,1 +1,2 @@
-# Runtime uses only Python 3.12 standard library; no third-party runtime packages.
+# Runtime dependency for Kraken public WebSocket v2 market data.
+websockets>=15,<17

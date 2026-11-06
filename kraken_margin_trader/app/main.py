@@ -57,6 +57,7 @@ def main() -> int:
             while running and remaining>0:
                 interval=min(1.0,remaining); time.sleep(interval); remaining-=interval
     finally:
+        runtime.close()
         audit.emit("SHUTDOWN_COMPLETE")
         audit.close(); db.close()
     return 0

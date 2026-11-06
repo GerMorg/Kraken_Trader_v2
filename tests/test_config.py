@@ -26,6 +26,16 @@ def test_parallel_strategy_research_defaults_on_and_can_be_disabled():
     assert Settings.from_mapping({"shadow_strategy_lab_enabled": False}).shadow_strategy_lab_enabled is False
 
 
+def test_microstructure_observer_defaults_on_and_symbol_cap_is_bounded():
+    config = Settings()
+    assert config.microstructure_enabled is True
+    assert config.microstructure_max_symbols == 12
+    disabled = Settings.from_mapping({"microstructure_enabled": False})
+    assert disabled.microstructure_enabled is False
+    assert Settings.from_mapping({"microstructure_max_symbols": 99}).microstructure_max_symbols == 20
+    assert Settings.from_mapping({"microstructure_max_symbols": 0}).microstructure_max_symbols == 1
+
+
 def test_unknown_mode_falls_back_to_shadow():
     assert Settings.from_mapping({"mode": "unexpected"}).mode == "SHADOW"
 

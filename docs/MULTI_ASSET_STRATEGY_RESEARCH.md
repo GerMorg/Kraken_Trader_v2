@@ -158,3 +158,10 @@ Ein einzelnes öffentliches L2-Buch bleibt nur eine Momentaufnahme sichtbarer Li
 Wenn genügend Snapshots vorhanden sind, verbindet die Research-Auswertung für dieselbe USD-Paarung zeitlich getrennte Bücher im Abstand von 1, 4 und 24 Stunden (jeweils ±25 % Toleranz). Für 250/500/1.000/2.500 USD werden Long- und Short-Roundtrips separat mit dem Orderbuch-Simulator und der zum jeweiligen Snapshot gespeicherten Taker-Gebühr wiedergegeben. Ausgewiesen werden Median/P90 der Modellkosten sowie Gebühren, Spread und sichtbare-Tiefe-Slippage getrennt.
 
 Es werden nur vollständig durch die sichtbaren Levels gefüllte Modell-Roundtrips in die Verteilung aufgenommen. Die Beobachtungen können zeitlich überlappen und sind korreliert. Sie sind keine tatsächlichen Fills, keine historischen PnL-Beobachtungen und enthalten keine Margin-Finanzierungskosten. Bis genügend zeitlich getrennte Snapshotpaare vorhanden sind, bleibt der Status ausdrücklich `INSUFFICIENT_TIME_SEPARATED_L2_COST_EVIDENCE`.
+
+## Abgrenzung zu Variante E (ab App 0.1.55)
+
+Die hier beschriebene REST-L2-Aufnahme bleibt eine stündliche Kostenmomentaufnahme für die Varianten A–D. Sie wird nicht mit dem kontinuierlichen WebSocket-Stream vermischt. Variante E läuft in einem separaten Collector, der unabhängig davon Book-Deltas und Trades erfasst und Minutenfeatures in microstructure_bars persistiert. Dadurch hängt die Orderflow-Erfassung nicht davon ab, ob für den aktuellen H1-Balken bereits ein Multi-Asset-Research-Snapshot existiert.
+
+Variante E ist zunächst reine Dateninfrastruktur. Sie erzeugt weder Orders noch Signale und ändert keine Parameter der Produktionsstrategie. Methodik, Qualitätsstatus und weitere Forschungsgrenzen stehen in MARKET_MICROSTRUCTURE_RESEARCH.md.
+
