@@ -1,5 +1,39 @@
 # Strategie- und Research-Hypothese
 
+# Regime-Conditioned Residual Recoil (RCR) — Variante D ab 0.1.54
+
+## Hypothese
+
+RCR untersucht keine absolute Trendfortsetzung und keine unbedingte Rückkehr eines Preises zu seinem Mittelwert. Es trennt zunächst die gleichgerichtete Bewegung des beobachteten USD-Krypto-Universums von der asset-spezifischen Rendite. Ein extremer idiosynkratischer Residualschock wird nur dann als Kandidat gewertet, wenn sich das Residual bereits in Gegenrichtung bewegt. Die Hypothese lautet: Ein Teil extremer asset-spezifischer Preisbewegungen wird durch kurzfristigen Liquiditätsdruck bzw. vorübergehende Nachfrageungleichgewichte verursacht und kann nach sichtbarer Abschwächung des Drucks teilweise zurücklaufen.
+
+Dies ist eine zu falsifizierende Research-Hypothese, keine Behauptung einer neu entdeckten oder profitablen Marktineffizienz.
+
+## Fest vorab definierte Regeln
+
+1. Alle Assets werden auf identische, lückenlose, geschlossene H1-Kerzen synchronisiert; es werden keine fehlenden Balken aufgefüllt.
+2. Der Markt-Faktor ist der gleichgewichtete Mittelwert der synchronisierten stündlichen Asset-Renditen.
+3. Für jedes Asset wird ein Beta zum Markt-Faktor aus den letzten 72 abgeschlossenen Renditen geschätzt.
+4. Das Residual ist Asset-Rendite minus Beta mal Markt-Faktor-Rendite.
+5. Der kumulierte 6-Stunden-Residualschock wird gegenüber den vorherigen 72 rollierenden 6-Stunden-Residualfenstern standardisiert.
+6. Ein LONG-Kandidat erfordert einen Residual-Z-Score von höchstens -1,5 und eine positive Residualbewegung der letzten zwei Stunden. Ein SHORT-Kandidat erfordert mindestens +1,5 und eine negative Residualbewegung der letzten zwei Stunden.
+7. Das Signal entsteht erst nach Kerzenschluss. Der hypothetische Einstieg erfolgt am nächsten H1-Open; der Exit erfolgt am Open nach 12 vollständigen Stunden.
+8. Trades desselben Assets überlappen nicht. Trades, deren Haltedauer eine Train-/Validation-/Test-Grenze überschreitet, werden für den jeweiligen Split ausgeschlossen.
+
+## Kosten und Aussagekraft
+
+Die Netto-Proxys verwenden die aktuelle paarbezogene Kraken-Taker-Gebühr, den aktuellen Spread als historischen Proxy und 5 bp Slippage je Seite. Die Sensitivität wird mit 0/1/2/5/10 bp je Seite ausgegeben. Fehlt eine Gebühr oder ein Spread, wird die Beobachtung nicht als kostenbereinigt gezählt. Unbekannte Werte sind niemals null.
+
+Der Bericht ist ein Signal-Label-Diagnostikpfad. Er modelliert keine simultane Portfolioallokation, keine Cross-Asset-Korrelation der Trades, keine Orderbuch-Queue, keine realen Fills, keine Margin-Eröffnungs-/Rollover-Gebühren und keine Liquidation. Daher sind Kennzahlen weder Portfolio-PnL noch eine Ausführungsprognose.
+
+## Ablehnungskriterien
+
+RCR wird nicht promotet, wenn der Test-Split nach Kosten negativ ist, Profit Factor höchstens 1 beträgt, die Stichprobe zu klein ist oder das Ergebnis bei kleinen Slippage-/Spread-Abweichungen zusammenbricht. Ein positives Ergebnis in nur einem Split reicht nicht. Schwellenwerte dürfen nicht anhand des Test-Splits optimiert werden. Eine spätere Prüfung benötigt zusätzlich purged/embargoed Walk-Forward-Auswertung, portfolio-weite Korrelation und realistische historische Ausführungskosten.
+
+RCR bleibt vollständig von produktiven Entry-Signalen und der Order Authority getrennt. Keine automatische Strategieauswahl, Parameterpromotion, Order-Intent-Erstellung oder Live-Freigabe.
+
+---
+
+
 ## Zusätzliche Multi-Asset-Kandidaten ab Version 0.1.52
 
 Neben TSM, Mean Reversion und dem logistischen Basismodell werden zwei eigene Multi-Asset-Verfahren beobachtet:
