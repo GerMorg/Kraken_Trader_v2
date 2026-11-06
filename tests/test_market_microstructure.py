@@ -217,3 +217,75 @@ def test_rejected_subscription_is_reported_without_reconnect_loop():
     assert status["last_subscription_error"] == "Currency pair not supported BTC/USD"
     assert status["last_subscription_symbol"] == "BTC/USD"
     db.close()
+
+
+def test_minute_bar_persists_trade_ohlcv_midprice_and_verified_l2_snapshot():
+    db = Persistence(":memory:")
+    collector = MarketMicrostructureCollector(db, enabled=False)
+    bids = {Decimal("100"): Decimal("2"), Decimal("99.5"): Decimal("3")}
+    asks = {Decimal("101"): Decimal("4"), Decimal("101.5"): Decimal("5")}
+    snapshot = {
+        "channel": "book", "type": "snapshot",
+        "data": [{
+            "symbol": "ETH/USD", "timestamp": "2027-01-15T08:00:01.000000Z",
+            "bids": [{"price": "100", "qty": "2"}, {"price": "99.5", "qty": "3"}],
+            "asks": [{"price": "101", "qty": "4"}, {"price": "101.5", "qty": "5"}],
+            "checksum": calculate_book_checksum(bids, asks),
+        }],
+    }
+    assert collector.process_message(snapshot) is True
+    updated_bids = {Decimal("100"): Decimal("3"), Decimal("99.5"): Decimal("3")}
+    update = {
+        "channel": "book", "type": "update",
+        "data": [{
+            "symbol": "ETH/USD", "timestamp": "2027-01-15T08:00:20.000000Z",
+            "bids": [{"price": "100", "qty": "3"}], "asks": [],
+            "checksum": calculate_book_checksum(updated_bids, asks),
+        }],
+    }
+    assert collector.process_message(update) is True
+    trades = {
+        "channel": "trade", "type": "update",
+        "data": [
+            {"symbol": "ETH/USD", "side": "buy", "price": "100.5", "qty": "2",
+             "trade_id": 1, "timestamp": "2027-01-15T08:00:22.000000Z"},
+            {"symbol": "ETH/USD", "side": "sell", "price": "99.5", "qty": "1",
+             "trade_id": 2, "timestamp": "2027-01-15T08:00:40.000000Z"},
+        ],
+    }
+    assert collector.process_message(trades) is True
+    assert collector.flush_due(1_800_000_100) == 1
+    bar = db.microstructure_bars("ETH/USD")[0]
+    assert bar["trade_open_usd"] == "100.5"
+    assert bar["trade_high_usd"] == "100.5"
+    assert bar["trade_low_usd"] == "99.5"
+    assert bar["trade_close_usd"] == "99.5"
+    assert bar["trade_base_volume"] == "3"
+    assert bar["midprice_usd"] == "100.5"
+    assert bar["book_sample_count"] == 2
+    assert bar["first_book_event_ts"] < bar["last_book_event_ts"]
+    assert bar["top10_bids"] == [{"price": "100", "qty": "3"}, {"price": "99.5", "qty": "3"}]
+    assert bar["top10_asks"] == [{"price": "101", "qty": "4"}, {"price": "101.5", "qty": "5"}]
+    assert bar["actual_fills"] is False
+    assert bar["order_creation_allowed"] is False
+    db.close()
+
+
+def test_minute_bar_is_partial_without_minimum_book_coverage():
+    db = Persistence(":memory:")
+    collector = MarketMicrostructureCollector(db, enabled=False)
+    bids = {Decimal("100"): Decimal("2")}
+    asks = {Decimal("101"): Decimal("3")}
+    snapshot = {
+        "channel": "book", "type": "snapshot",
+        "data": [{
+            "symbol": "ETH/USD", "timestamp": "2027-01-15T08:00:01.000000Z",
+            "bids": [{"price": "100", "qty": "2"}],
+            "asks": [{"price": "101", "qty": "3"}],
+            "checksum": calculate_book_checksum(bids, asks),
+        }],
+    }
+    assert collector.process_message(snapshot) is True
+    assert collector.flush_due(1_800_000_100) == 1
+    assert db.microstructure_bars("ETH/USD")[0]["quality_status"] == "PARTIAL"
+    db.close()
