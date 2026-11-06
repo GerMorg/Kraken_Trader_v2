@@ -510,7 +510,7 @@ def test_multi_asset_research_runs_are_immutable_idempotent_and_reviewable():
     schema_version = db.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
-    assert schema_version == "12"
+    assert schema_version == "13"
     db.close()
 
 
