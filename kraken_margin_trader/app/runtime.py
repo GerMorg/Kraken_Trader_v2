@@ -399,7 +399,19 @@ def _recover_transient_sqlite_cantopen_research_read_breaker(
 
     # The exact failed query and summary have already completed in this cycle.
     # Require an independent current filesystem/SQLite check before resolving.
-    snapshot = persistence.storage_diagnostics()
+    try:
+        snapshot = persistence.storage_diagnostics()
+    except Exception as exc:
+        audit.emit(
+            "CIRCUIT_BREAKER_RECOVERY_DEFERRED",
+            cycle_id=cycle_id,
+            name="UNHANDLED_RUNTIME",
+            previous_reason="CYCLE_EXCEPTION",
+            recovery_method="EXACT_RESEARCH_READ_AND_STORAGE_VALIDATION",
+            storage_probe_exception_type=type(exc).__name__,
+            historical_failure_stage="FINALIZE_TSM_RESEARCH_SUMMARY_READ",
+        )
+        return False
     storage_healthy, failed_checks = _sqlite_storage_diagnostics_are_healthy(snapshot)
     if not storage_healthy:
         audit.emit(
