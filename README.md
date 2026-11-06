@@ -1,4 +1,4 @@
-## Aktueller Status — 0.1.55
+## Aktueller Status — 0.1.56
 
 **Version 0.1.55 ergänzt Variante E — Orderflow & Market Microstructure.** Ein separater öffentlicher Kraken-WebSocket-v2-Worker beobachtet für standardmäßig zwölf der liquidesten ausgewählten USD-Kryptopaare kontinuierliche L2-Book-Updates und einzelne Trades. Das Book wird mit dem Kraken-CRC32-Checksum geprüft; Trades werden anhand ihrer Trade-ID auf erkennbare Feed-Lücken kontrolliert. Aus den Ereignissen entstehen append-only gespeicherte Ein-Minuten-Aggregate mit L1-Orderflow-Imbalance, taker-signed Trade-Notional, Spread, sichtbarer Tiefe, Depth-Imbalance und Microprice-Abweichung.
 
