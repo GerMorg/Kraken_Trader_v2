@@ -239,6 +239,16 @@ class Persistence:
                 );
                 CREATE INDEX IF NOT EXISTS market_depth_pair_ts_idx
                     ON market_depth_snapshots(pair,snapshot_ts DESC);
+                CREATE TABLE IF NOT EXISTS microstructure_bars(
+                    pair TEXT NOT NULL,
+                    minute_ts INTEGER NOT NULL,
+                    quality_status TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(pair,minute_ts)
+                );
+                CREATE INDEX IF NOT EXISTS microstructure_pair_minute_idx
+                    ON microstructure_bars(pair,minute_ts DESC);
             """)
             research_columns = {
                 str(row["name"]) for row in self.connection.execute("PRAGMA table_info(research_observations)")
