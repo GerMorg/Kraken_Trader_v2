@@ -2,10 +2,11 @@
 
 ## Zweck und Abgrenzung
 
-Ab App-Version 0.1.52 untersucht der bestehende SHADOW-Zyklus zwei weitere, strikt getrennte Research-Ansätze:
+Ab App-Version 0.1.53 untersucht der bestehende SHADOW-Zyklus drei weitere, strikt getrennte Research-Ansätze:
 
 - **Variante A — Volatility Harvesting / Parrondo-inspiriertes Rebalancing:** Ein Portfolio aus aktuell stark negativ korrelierten USD-Krypto-Paaren wird dynamisch ausgewählt und bei Bedarf auf Zielgewichte zurückgesetzt.
 - **Variante B — Relative-Value-/Mean-Reversion-Pairs:** Zwei positiv gemeinsam bewegte Assets werden anhand eines rollierenden logarithmischen Preis-Spreads untersucht. Bei einer großen Abweichung wird ein hypothetischer Long-Spread oder Short-Spread bewertet.
+- **Variante C — Cross-Sectional Momentum Long/Short:** USD-Krypto-Assets werden anhand eines festen 24-/72-H1-Momentum-Scores gerankt. Die stärksten drei positiven Assets werden long, die schwächsten drei negativen Assets short gehalten.
 
 Das ist eine Research-Erweiterung, keine automatische Strategieauswahl und keine Freigabe für autonomen Echtgeldhandel. Beide Ansätze sind vom produktiven TSM-Einstiegspfad und von der Order Authority getrennt. Es werden aus diesem Modul keine Order-Intents, Orders oder Fills erzeugt.
 
@@ -125,3 +126,35 @@ Eine Strategie wird nicht allein wegen einer positiven Durchschnittsrendite ausg
 7. Ist das kombinierte Portfolio überlappender Strategien mit Positionsgrößen, Korrelationen, Gesamt-Exposure und Stressphasen gemeinsam simuliert?
 
 Die App promotet keine Parameter und wählt keine Strategie automatisch. Eine spätere Auswahl und Freigabe ist ein separater Entwicklungs- und Prüfentscheid. `INTERNAL_LIVE_EXECUTION_RELEASED` bleibt unverändert `False`.
+
+
+## Variante C — Cross-Sectional Momentum Long/Short (0.1.53)
+
+Die dritte Hypothese ist unabhängig von der TSM-Einzelmarkt-Trendregel und den Pair-Spread-Ansätzen. Sie ordnet das synchronisierte USD-Universum nach einer vorab festgelegten Kombination aus 24- und 72-Stunden-Rendite:
+
+- Score = 40 % der 24-H1-Rendite + 60 % der 72-H1-Rendite.
+- Die drei stärksten Assets mit positivem Score bilden das Long-Portfolio; die drei schwächsten mit negativem Score das Short-Portfolio.
+- 40 % des Anfangskapitals je Seite; die Gesamt-Bruttoexponierung beträgt 80 %, die Nettoexponierung 0 %, 20 % bleiben Cash.
+- Ein einzelnes Asset erhält höchstens 13,34 % Anfangskapital an Bruttoexponierung.
+- Neuauswahl alle sechs Stunden. Scores verwenden nur geschlossene Balken bis zum Entscheidungszeitpunkt; hypothetische Ausführung erfolgt am nächsten H1-Open. Die PnL-Messung läuft vom Ausführungs-Open bis zum folgenden Open.
+- Werden nicht mindestens drei positive und drei negative Kandidaten gefunden, bleibt das Portfolio vollständig in USD-Cash.
+- Die Baseline verwendet Taker-Gebühren, aktuellen Spread-Proxy und 5 bp Slippage je Seite; die Sensitivität 0/1/2/5/10 bp bleibt separat.
+- Ein alternatives Maker-Gebührenszenario ist nur eine Gebührenreferenz. Es simuliert weder Queue-Position noch Fill-Wahrscheinlichkeit und ist keine Primärkennzahl.
+- Short-Legs benötigen Margin. Finanzierung, Borrow, Rollover, Liquidation und Kontomargin sind nicht enthalten. Das Modell nutzt keinen Hebel und erzeugt keine Orders.
+
+Die Schwellen, Gewichte und Regeln werden nicht automatisch aus dem Testsegment optimiert. Ein positiver Backtest allein ist keine Promotion oder Live-Freigabe.
+
+## Gebühren- und Orderbuch-Evidenz
+
+Ab 0.1.53 fragt die App `TradeVolume` mit `fee_schedule=true` ab und protokolliert die aktuell für das Konto/Paar zurückgegebenen Taker- und, sofern separat vorhanden, Maker-Gebühren. Die Taker-Gebühr bleibt die Baseline für marketable/sofort ausführbare Research-Szenarien. Die Maker-Gebühr wird getrennt als theoretischer Gebührenvergleich ausgewiesen; eine Limit-Order kann nicht als Maker-Fill angenommen werden.
+
+Öffentliche Kraken-Depth-Snapshots werden zusätzlich append-only in der bestehenden SQLite-Datenbank gespeichert (Tabelle `market_depth_snapshots`). Jede Aufnahme enthält Paar, Snapshotzeit, zugehörigen gemeinsamen H1-Balken, bis zu zehn Bid-/Ask-Levels und bekannte Gebühren-/Spreadfelder. Frühere Snapshots werden nicht überschrieben. Mit zeitlich getrennten Snapshots können spätere Entry-/Exit-Kostenanalysen entstehen. Die Migration ist additiv: Vorhandene Research-, Handels-, Order-, Fill- und Ledger-Daten bleiben erhalten.
+
+Ein einzelnes öffentliches L2-Buch bleibt nur eine Momentaufnahme sichtbarer Liquidität. Es belegt weder Queue-Position, versteckte Liquidität, Fill-Wahrscheinlichkeit, Markteinfluss bei späterer Ausführung noch einen echten Fill. Exakte realisierte Kosten können erst aus tatsächlichen Order-/Fill-Daten derselben Ausführung gemessen werden. Fehlende Werte werden daher nicht zu null oder zu Maker-Gebühren umgedeutet.
+
+
+### Zeitlich getrennte L2-Kostenkalibrierung
+
+Wenn genügend Snapshots vorhanden sind, verbindet die Research-Auswertung für dieselbe USD-Paarung zeitlich getrennte Bücher im Abstand von 1, 4 und 24 Stunden (jeweils ±25 % Toleranz). Für 250/500/1.000/2.500 USD werden Long- und Short-Roundtrips separat mit dem Orderbuch-Simulator und der zum jeweiligen Snapshot gespeicherten Taker-Gebühr wiedergegeben. Ausgewiesen werden Median/P90 der Modellkosten sowie Gebühren, Spread und sichtbare-Tiefe-Slippage getrennt.
+
+Es werden nur vollständig durch die sichtbaren Levels gefüllte Modell-Roundtrips in die Verteilung aufgenommen. Die Beobachtungen können zeitlich überlappen und sind korreliert. Sie sind keine tatsächlichen Fills, keine historischen PnL-Beobachtungen und enthalten keine Margin-Finanzierungskosten. Bis genügend zeitlich getrennte Snapshotpaare vorhanden sind, bleibt der Status ausdrücklich `INSUFFICIENT_TIME_SEPARATED_L2_COST_EVIDENCE`.

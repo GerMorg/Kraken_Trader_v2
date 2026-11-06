@@ -125,6 +125,21 @@ def taker_fee_from_trade_volume(result: dict[str,Any], instrument_keys: tuple[st
                 return rate
     return None
 
+def maker_fee_from_trade_volume(
+    result: dict[str, Any], instrument_keys: tuple[str, ...]
+) -> Decimal | None:
+    """Read a pair-specific maker rate only when Kraken explicitly returns it."""
+    fees_maker = result.get("fees_maker")
+    if not isinstance(fees_maker, dict):
+        return None
+    for key in instrument_keys:
+        entry = fees_maker.get(key)
+        if isinstance(entry, dict):
+            rate = percent_fee_to_bps(entry.get("fee"))
+            if rate is not None:
+                return rate
+    return None
+
 
 @dataclass(frozen=True)
 class CostedPlan:

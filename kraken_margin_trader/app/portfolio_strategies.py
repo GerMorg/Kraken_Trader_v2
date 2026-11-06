@@ -1,20 +1,23 @@
 from __future__ import annotations
 
+from bisect import bisect_left
 from itertools import combinations
 import hashlib
 import math
 from statistics import fmean, median, pstdev
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence, cast
 from decimal import Decimal
 
+from app.regime_divergence import run_regime_divergence_research
 from app.orderbook_simulator import (
     BookLevel,
     OrderBookSnapshot,
     simulate_order_book_execution,
+    simulate_order_book_round_trip,
 )
 
 D_MIN = 1e-12
-PORTFOLIO_RESEARCH_VERSION = "parrondo-multi-asset-v0.2"
+PORTFOLIO_RESEARCH_VERSION = "parrondo-multi-asset-v0.3"
 CORRELATION_LOOKBACK_BARS = 168
 PAIR_REGRESSION_LOOKBACK_BARS = 168
 MIN_SYNCHRONIZED_BARS = 240
@@ -32,6 +35,13 @@ CORRELATION_SENSITIVITY_THRESHOLDS = (-0.25, -0.15, -0.05, 0.0)
 MAX_CONCURRENT_PAIR_POSITIONS = 4
 PAIR_SLOT_EQUITY_FRACTION = 0.25
 ORDER_BOOK_NOTIONAL_USD = (250.0, 500.0, 1000.0, 2500.0)
+MOMENTUM_FAST_LOOKBACK_BARS = 24
+MOMENTUM_SLOW_LOOKBACK_BARS = 72
+MOMENTUM_REBALANCE_INTERVAL_BARS = 6
+MOMENTUM_SIDE_ASSET_COUNT = 3
+MOMENTUM_GROSS_WEIGHT_PER_SIDE = 0.40
+MOMENTUM_SCORE_FAST_WEIGHT = 0.40
+MOMENTUM_SCORE_SLOW_WEIGHT = 0.60
 
 
 def _finite_float(value: Any) -> float | None:
@@ -161,9 +171,16 @@ def _side_cost_components(
     market_costs: Mapping[str, Mapping[str, Any]],
     *,
     slippage_bps_per_side: float = SLIPPAGE_BPS_PER_SIDE,
+    fee_type: str = "taker",
 ) -> tuple[float, float, float] | None:
     raw = market_costs.get(symbol, {})
-    fee = _finite_float(raw.get("taker_fee_bps"))
+    fee_field = {
+        "taker": "taker_fee_bps",
+        "maker_reference": "maker_fee_bps",
+    }.get(fee_type)
+    if fee_field is None:
+        return None
+    fee = _finite_float(raw.get(fee_field))
     spread = _finite_float(raw.get("spread_bps"))
     if (
         fee is None or spread is None or fee < 0 or spread < 0
@@ -178,9 +195,11 @@ def _side_cost_bps(
     market_costs: Mapping[str, Mapping[str, Any]],
     *,
     slippage_bps_per_side: float = SLIPPAGE_BPS_PER_SIDE,
+    fee_type: str = "taker",
 ) -> float | None:
     components = _side_cost_components(
-        symbol, market_costs, slippage_bps_per_side=slippage_bps_per_side
+        symbol, market_costs, slippage_bps_per_side=slippage_bps_per_side,
+        fee_type=fee_type,
     )
     return sum(components) if components is not None else None
 
@@ -234,13 +253,15 @@ def _simulate_rebalancing(
     lookback: int = CORRELATION_LOOKBACK_BARS,
     correlation_threshold: float = NEGATIVE_CORRELATION_THRESHOLD,
     slippage_bps_per_side: float = SLIPPAGE_BPS_PER_SIDE,
+    fee_type: str = "taker",
 ) -> dict[str, Any]:
     symbols = market["symbols"]
     closes = market["closes"]
     count = len(market["timestamps"])
     costs = {
         symbol: _side_cost_bps(
-            symbol, market_costs, slippage_bps_per_side=slippage_bps_per_side
+            symbol, market_costs, slippage_bps_per_side=slippage_bps_per_side,
+            fee_type=fee_type,
         )
         for symbol in symbols
     }
@@ -341,6 +362,10 @@ def _simulate_rebalancing(
         "correlation_threshold": correlation_threshold
         if strategy == "negative_correlation_threshold_rebalance" else None,
         "slippage_bps_per_side": slippage_bps_per_side,
+        "fee_basis": (
+            "KRAKEN_TAKER_FEE" if fee_type == "taker"
+            else "HYPOTHETICAL_MAKER_FEE_REFERENCE_NO_FILL_ASSUMPTION"
+        ),
         "gross": _curve_metrics(gross_returns[start:]),
         "gross_chronological_splits": _split_returns(gross_returns, boundaries),
         "spot_net": _curve_metrics(net_returns[start:]) if costs_complete else None,
@@ -472,13 +497,14 @@ def _backtest_pair(
     *,
     train_end: int,
     validation_end: int,
+    fee_type: str = "taker",
 ) -> dict[str, Any]:
     count = len(closes[symbol_a])
     trades: list[dict[str, Any]] = []
     pending = 0
     index = PAIR_REGRESSION_LOOKBACK_BARS - 1
-    cost_a = _side_cost_components(symbol_a, market_costs)
-    cost_b = _side_cost_components(symbol_b, market_costs)
+    cost_a = _side_cost_components(symbol_a, market_costs, fee_type=fee_type)
+    cost_b = _side_cost_components(symbol_b, market_costs, fee_type=fee_type)
     while index < count - 1:
         model = _pair_model(closes[symbol_a], closes[symbol_b], end_index=index)
         if model is None or abs(model["z_score"]) < PAIR_ENTRY_Z:
@@ -573,6 +599,10 @@ def _backtest_pair(
             "hedge_ratio_beta": model["beta"],
             "gross_return_bps": gross_bps,
             "fee_per_side_bps": fee_per_side,
+            "fee_basis": (
+                "KRAKEN_TAKER_FEE" if fee_type == "taker"
+                else "HYPOTHETICAL_MAKER_FEE_REFERENCE_NO_FILL_ASSUMPTION"
+            ),
             "half_spread_per_side_bps": half_spread_per_side,
             "spot_round_trip_cost_bps": cost_bps,
             "net_return_bps": net_bps,
@@ -823,6 +853,243 @@ def _pair_portfolio_simulation(
     }
 
 
+def _simulate_cross_sectional_momentum(
+    market: Mapping[str, Any],
+    market_costs: Mapping[str, Mapping[str, Any]],
+    *,
+    slippage_bps_per_side: float = SLIPPAGE_BPS_PER_SIDE,
+    fee_type: str = "taker",
+) -> dict[str, Any]:
+    """Research a fixed long/short cross-sectional momentum portfolio.
+
+    Scores use only closed bars through the decision timestamp. Orders are
+    hypothetically executed at the following hourly open; PnL is marked from
+    that open to the next open. Dollar exposures stay fixed to initial equity.
+    """
+    symbols = list(market["symbols"])
+    opens = market["opens"]
+    closes = market["closes"]
+    count = len(market["timestamps"])
+    start = MOMENTUM_SLOW_LOOKBACK_BARS + 1
+    if count <= start + 1:
+        return {
+            "status": "INSUFFICIENT_SYNCHRONIZED_HISTORY",
+            "portfolio_simulation": True,
+            "actual_fills": False,
+            "portfolio_pnl": False,
+        }
+
+    weights = {symbol: 0.0 for symbol in symbols}
+    gross_pnl = [0.0] * count
+    cost_pnl = [0.0] * count
+    turnover = 0.0
+    cost_total_fraction = 0.0
+    rebalance_count = 0
+    invested_rebalance_count = 0
+    cash_rebalance_count = 0
+    selected_long_counts: list[int] = []
+    selected_short_counts: list[int] = []
+    cash_weights: list[float] = []
+    costs_complete = True
+
+    for execution_index in range(start, count - 1):
+        decision_index = execution_index - 1
+        if (
+            decision_index - MOMENTUM_SLOW_LOOKBACK_BARS
+        ) % MOMENTUM_REBALANCE_INTERVAL_BARS == 0:
+            ranked: list[tuple[str, float]] = []
+            for symbol in symbols:
+                fast_base = closes[symbol][decision_index - MOMENTUM_FAST_LOOKBACK_BARS]
+                slow_base = closes[symbol][decision_index - MOMENTUM_SLOW_LOOKBACK_BARS]
+                current = closes[symbol][decision_index]
+                if min(fast_base, slow_base, current) <= 0:
+                    continue
+                fast_return = current / fast_base - 1.0
+                slow_return = current / slow_base - 1.0
+                score = (
+                    MOMENTUM_SCORE_FAST_WEIGHT * fast_return
+                    + MOMENTUM_SCORE_SLOW_WEIGHT * slow_return
+                )
+                if math.isfinite(score):
+                    ranked.append((symbol, score))
+            ranked.sort(key=lambda item: (-item[1], item[0]))
+            positive = [item for item in ranked if item[1] > 0]
+            negative = [item for item in ranked if item[1] < 0]
+            long_symbols = [item[0] for item in positive[:MOMENTUM_SIDE_ASSET_COUNT]]
+            short_symbols = [
+                item[0] for item in sorted(
+                    negative, key=lambda item: (item[1], item[0])
+                )[:MOMENTUM_SIDE_ASSET_COUNT]
+            ]
+            target = {symbol: 0.0 for symbol in symbols}
+            if (
+                len(long_symbols) == MOMENTUM_SIDE_ASSET_COUNT
+                and len(short_symbols) == MOMENTUM_SIDE_ASSET_COUNT
+            ):
+                for symbol in long_symbols:
+                    target[symbol] = MOMENTUM_GROSS_WEIGHT_PER_SIDE / len(long_symbols)
+                for symbol in short_symbols:
+                    target[symbol] = -MOMENTUM_GROSS_WEIGHT_PER_SIDE / len(short_symbols)
+                invested_rebalance_count += 1
+            else:
+                long_symbols = []
+                short_symbols = []
+                cash_rebalance_count += 1
+            selected_long_counts.append(len(long_symbols))
+            selected_short_counts.append(len(short_symbols))
+            deltas = {
+                symbol: target[symbol] - weights[symbol]
+                for symbol in symbols
+            }
+            trade_cost = 0.0
+            for symbol, delta in deltas.items():
+                if abs(delta) <= 1e-15:
+                    continue
+                components = _side_cost_components(
+                    symbol,
+                    market_costs,
+                    slippage_bps_per_side=slippage_bps_per_side,
+                    fee_type=fee_type,
+                )
+                if components is None:
+                    costs_complete = False
+                    continue
+                side_cost_bps = sum(components)
+                trade_cost += abs(delta) * side_cost_bps / 10000.0
+            turnover += sum(abs(delta) for delta in deltas.values())
+            cost_total_fraction += trade_cost
+            cost_pnl[execution_index] -= trade_cost
+            weights = target
+            rebalance_count += 1
+            cash_weights.append(
+                max(0.0, 1.0 - sum(abs(value) for value in weights.values()))
+            )
+
+        # The decision uses the previous closed bar; execution/PnL starts at
+        # the next open and ends at the following open.
+        gross_pnl[execution_index] = sum(
+            weights[symbol] * (
+                opens[symbol][execution_index + 1] / opens[symbol][execution_index] - 1.0
+            )
+            for symbol in symbols
+        )
+
+    def return_series_from_fixed_equity_deltas(deltas: Sequence[float]) -> list[float]:
+        equity = 1.0
+        returns = [0.0] * count
+        for index, delta in enumerate(deltas):
+            if not math.isfinite(delta):
+                raise ValueError("CROSS_SECTIONAL_PNL_NON_FINITE")
+            if equity <= 0.0:
+                break
+            returns[index] = delta / equity
+            equity += delta
+        return returns
+
+    gross_returns = return_series_from_fixed_equity_deltas(gross_pnl)
+    net_returns = (
+        return_series_from_fixed_equity_deltas(
+            [gross_pnl[index] + cost_pnl[index] for index in range(count)]
+        )
+        if costs_complete else None
+    )
+    train_end = int(count * 0.60)
+    validation_end = int(count * 0.80)
+    boundaries = (train_end, validation_end, start, count - 1)
+
+    latest_index = count - 1
+    latest_scores: list[tuple[str, float]] = []
+    for symbol in symbols:
+        current = closes[symbol][latest_index]
+        fast_base = closes[symbol][latest_index - MOMENTUM_FAST_LOOKBACK_BARS]
+        slow_base = closes[symbol][latest_index - MOMENTUM_SLOW_LOOKBACK_BARS]
+        score = (
+            MOMENTUM_SCORE_FAST_WEIGHT * (current / fast_base - 1.0)
+            + MOMENTUM_SCORE_SLOW_WEIGHT * (current / slow_base - 1.0)
+        )
+        if math.isfinite(score):
+            latest_scores.append((symbol, score))
+    latest_scores.sort(key=lambda item: (-item[1], item[0]))
+    latest_long = [
+        item[0] for item in latest_scores if item[1] > 0
+    ][:MOMENTUM_SIDE_ASSET_COUNT]
+    latest_short = [
+        item[0] for item in sorted(
+            (item for item in latest_scores if item[1] < 0),
+            key=lambda item: (item[1], item[0]),
+        )[:MOMENTUM_SIDE_ASSET_COUNT]
+    ]
+
+    return {
+        "status": "CANDIDATE_RESEARCH",
+        "strategy": "CROSS_SECTIONAL_MOMENTUM_LONG_SHORT",
+        "method": {
+            "fast_lookback_bars": MOMENTUM_FAST_LOOKBACK_BARS,
+            "slow_lookback_bars": MOMENTUM_SLOW_LOOKBACK_BARS,
+            "fast_score_weight": MOMENTUM_SCORE_FAST_WEIGHT,
+            "slow_score_weight": MOMENTUM_SCORE_SLOW_WEIGHT,
+            "rebalance_interval_bars": MOMENTUM_REBALANCE_INTERVAL_BARS,
+            "long_assets": MOMENTUM_SIDE_ASSET_COUNT,
+            "short_assets": MOMENTUM_SIDE_ASSET_COUNT,
+            "gross_weight_per_side": MOMENTUM_GROSS_WEIGHT_PER_SIDE,
+            "gross_exposure_pct": 80.0,
+            "net_exposure_pct": 0.0,
+            "target_cash_weight_pct": 20.0,
+            "maximum_single_asset_weight_pct": round(
+                MOMENTUM_GROSS_WEIGHT_PER_SIDE / MOMENTUM_SIDE_ASSET_COUNT * 100.0, 6
+            ),
+            "selection_uses_only_closed_decision_bar": True,
+            "execution_reference": "NEXT_H1_OPEN_TO_NEXT_H1_OPEN",
+            "fixed_initial_equity_notional": True,
+            "leverage_used": False,
+        },
+        "fee_basis": (
+            "KRAKEN_TAKER_FEE" if fee_type == "taker"
+            else "HYPOTHETICAL_MAKER_FEE_REFERENCE_NO_FILL_ASSUMPTION"
+        ),
+        "slippage_bps_per_side": slippage_bps_per_side,
+        "gross": _curve_metrics(gross_returns[start:count - 1]),
+        "gross_chronological_splits": _split_returns(gross_returns, boundaries),
+        "costed_proxy": (
+            _curve_metrics(net_returns[start:count - 1]) if net_returns is not None else None
+        ),
+        "costed_proxy_chronological_splits": (
+            _split_returns(net_returns, boundaries) if net_returns is not None else None
+        ),
+        "cost_quality": (
+            "CURRENT_KRAKEN_FEE_AND_TICKER_SPREAD_PROXY_PLUS_ASSUMED_SLIPPAGE"
+            if costs_complete else "INCOMPLETE_FEE_OR_SPREAD_INPUTS"
+        ),
+        "turnover_pct_of_initial_equity": round(turnover * 100.0, 6),
+        "estimated_trading_cost_pct_of_initial_equity": (
+            round(cost_total_fraction * 100.0, 6) if costs_complete else None
+        ),
+        "rebalance_count": rebalance_count,
+        "invested_rebalance_count": invested_rebalance_count,
+        "cash_rebalance_count": cash_rebalance_count,
+        "mean_selected_long_assets": (
+            round(fmean(selected_long_counts), 6) if selected_long_counts else 0.0
+        ),
+        "mean_selected_short_assets": (
+            round(fmean(selected_short_counts), 6) if selected_short_counts else 0.0
+        ),
+        "mean_cash_weight_pct": (
+            round(fmean(cash_weights) * 100.0, 6) if cash_weights else 100.0
+        ),
+        "latest_long_candidates": latest_long,
+        "latest_short_candidates": latest_short,
+        "latest_rankings": [
+            {"symbol": symbol, "score": round(score, 8)}
+            for symbol, score in latest_scores[:12]
+        ],
+        "margin_shorting_required": True,
+        "margin_financing_costs_included": False,
+        "margin_net_returns_calculated": False,
+        "actual_fills": False,
+        "portfolio_pnl": False,
+    }
+
+
 def _rank_pair_correlations(
     closes: Mapping[str, Sequence[float]],
     *,
@@ -846,6 +1113,198 @@ def _rank_pair_correlations(
     ]
 
 
+def _time_separated_l2_cost_diagnostics(
+    depth_history: Mapping[str, Sequence[Mapping[str, Any]]] | None,
+) -> dict[str, Any]:
+    """Estimate round-trip execution costs from distinct historical public L2 books.
+
+    These are book-walk simulations, not actual fills. Entry and exit snapshots
+    are separated in time; each observation uses the account taker fee stored
+    with each snapshot, visible depth, and a fixed per-level participation cap.
+    """
+    source = depth_history or {}
+    horizons = (1, 4, 24)
+    notional_values = ORDER_BOOK_NOTIONAL_USD
+    grouped: dict[tuple[int, float, str], dict[str, list[float]]] = {}
+    for horizon in horizons:
+        for notional in notional_values:
+            for direction in ("LONG", "SHORT"):
+                grouped[(horizon, notional, direction)] = {
+                    "total": [], "fee": [], "spread": [], "slippage": []
+                }
+
+    total_snapshots = 0
+    paired_snapshot_count = {horizon: 0 for horizon in horizons}
+    insufficient_depth_count = 0
+    missing_fee_count = 0
+    invalid_snapshot_count = 0
+    symbol_counts: dict[str, int] = {}
+
+    for symbol, raw_snapshots in sorted(source.items()):
+        parsed: list[tuple[OrderBookSnapshot, Decimal | None]] = []
+        for raw in raw_snapshots:
+            try:
+                bids = tuple(
+                    BookLevel(Decimal(str(row[0])), Decimal(str(row[1])))
+                    for row in raw["bids"]
+                )
+                asks = tuple(
+                    BookLevel(Decimal(str(row[0])), Decimal(str(row[1])))
+                    for row in raw["asks"]
+                )
+                book = OrderBookSnapshot(
+                    timestamp=int(raw["snapshot_ts"]),
+                    bids=bids,
+                    asks=asks,
+                )
+                raw_fee = raw.get("taker_fee_bps")
+                fee = Decimal(str(raw_fee)) if raw_fee is not None else None
+                if fee is not None and (not fee.is_finite() or fee < 0):
+                    fee = None
+                parsed.append((book, fee))
+            except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError):
+                invalid_snapshot_count += 1
+        parsed.sort(key=lambda item: item[0].timestamp)
+        total_snapshots += len(parsed)
+        symbol_counts[str(symbol)] = len(parsed)
+        if len(parsed) < 2:
+            continue
+
+        snapshot_timestamps = [item[0].timestamp for item in parsed]
+        for horizon in horizons:
+            target_seconds = horizon * 3600
+            minimum_seconds = int(target_seconds * 0.75)
+            maximum_seconds = int(target_seconds * 1.25)
+            for entry_index, (entry_book, entry_fee) in enumerate(parsed[:-1]):
+                target_timestamp = entry_book.timestamp + target_seconds
+                insertion_index = bisect_left(snapshot_timestamps, target_timestamp)
+                candidate_indices = [
+                    candidate_index
+                    for candidate_index in (insertion_index - 1, insertion_index)
+                    if candidate_index > entry_index
+                    and 0 <= candidate_index < len(parsed)
+                    and minimum_seconds
+                    <= snapshot_timestamps[candidate_index] - entry_book.timestamp
+                    <= maximum_seconds
+                ]
+                if not candidate_indices:
+                    continue
+                exit_index = min(
+                    candidate_indices,
+                    key=lambda candidate_index: (
+                        abs(snapshot_timestamps[candidate_index] - target_timestamp),
+                        snapshot_timestamps[candidate_index],
+                    ),
+                )
+                exit_book, exit_fee = parsed[exit_index]
+                paired_snapshot_count[horizon] += 1
+                if entry_fee is None or exit_fee is None:
+                    missing_fee_count += 1
+                    continue
+                for notional in notional_values:
+                    for raw_direction in ("LONG", "SHORT"):
+                        direction = cast(Literal["LONG", "SHORT"], raw_direction)
+                        try:
+                            result = simulate_order_book_round_trip(
+                                entry_book,
+                                exit_book,
+                                direction=direction,
+                                requested_notional_quote=Decimal(str(notional)),
+                                entry_fee_bps=entry_fee,
+                                exit_fee_bps=exit_fee,
+                                quote_currency="USD",
+                                is_margin=False,
+                                max_level_participation=Decimal("0.25"),
+                            )
+                        except (ArithmeticError, TypeError, ValueError, OverflowError):
+                            invalid_snapshot_count += 1
+                            continue
+                        if (
+                            result.position_status != "CLOSED"
+                            or not result.entry_target_filled
+                            or result.spread_slippage_cost_quote is None
+                            or result.spread_cost_quote is None
+                            or result.slippage_impact_quote is None
+                            or result.trading_fees_quote is None
+                        ):
+                            insufficient_depth_count += 1
+                            continue
+                        denominator = Decimal(str(notional))
+                        costs = {
+                            "total": (
+                                result.spread_slippage_cost_quote
+                                + result.trading_fees_quote
+                            ) / denominator * Decimal(10000),
+                            "fee": result.trading_fees_quote / denominator * Decimal(10000),
+                            "spread": result.spread_cost_quote / denominator * Decimal(10000),
+                            "slippage": result.slippage_impact_quote / denominator * Decimal(10000),
+                        }
+                        key = (horizon, notional, direction)
+                        for component, amount in costs.items():
+                            if amount.is_finite() and amount >= 0:
+                                grouped[key][component].append(float(amount))
+
+    def percentile(values: list[float], fraction: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        position = max(0, min(len(ordered) - 1, math.ceil(fraction * len(ordered)) - 1))
+        return round(ordered[position], 6)
+
+    by_horizon: list[dict[str, Any]] = []
+    total_completed_samples = 0
+    for horizon in horizons:
+        scenarios: list[dict[str, Any]] = []
+        for notional in notional_values:
+            for direction in ("LONG", "SHORT"):
+                values = grouped[(horizon, notional, direction)]
+                count = len(values["total"])
+                total_completed_samples += count
+                scenarios.append({
+                    "notional_usd": notional,
+                    "direction": direction,
+                    "sample_count": count,
+                    "round_trip_cost_bps": {
+                        "median": percentile(values["total"], 0.50),
+                        "p90": percentile(values["total"], 0.90),
+                        "minimum": round(min(values["total"]), 6) if values["total"] else None,
+                        "maximum": round(max(values["total"]), 6) if values["total"] else None,
+                    },
+                    "components_bps_median": {
+                        "trading_fees": percentile(values["fee"], 0.50),
+                        "spread": percentile(values["spread"], 0.50),
+                        "visible_depth_slippage": percentile(values["slippage"], 0.50),
+                    },
+                })
+        by_horizon.append({
+            "target_horizon_hours": horizon,
+            "pair_observation_count": paired_snapshot_count[horizon],
+            "scenarios": scenarios,
+        })
+
+    return {
+        "status": (
+            "TIME_SEPARATED_L2_COST_SAMPLES_AVAILABLE"
+            if total_completed_samples else "INSUFFICIENT_TIME_SEPARATED_L2_COST_EVIDENCE"
+        ),
+        "source": "PERSISTED_KRAKEN_PUBLIC_DEPTH_SNAPSHOTS",
+        "snapshot_count": total_snapshots,
+        "symbols_with_snapshots": symbol_counts,
+        "completed_round_trip_simulation_count": total_completed_samples,
+        "pair_observations_are_independent": False,
+        "matching": "NEAREST_FUTURE_SNAPSHOT_WITHIN_PLUS_MINUS_25_PERCENT_OF_TARGET_HORIZON",
+        "horizons": by_horizon,
+        "insufficient_visible_depth_count": insufficient_depth_count,
+        "missing_fee_snapshot_count": missing_fee_count,
+        "invalid_snapshot_or_simulation_count": invalid_snapshot_count,
+        "maximum_level_participation": 0.25,
+        "margin_financing_included": False,
+        "maker_fills_assumed": False,
+        "actual_fills": False,
+        "portfolio_pnl": False,
+    }
+
+
 def _current_order_book_cost_diagnostics(
     market_costs: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -854,6 +1313,7 @@ def _current_order_book_cost_diagnostics(
     for symbol, raw in sorted(market_costs.items()):
         book_data = raw.get("order_book_l2")
         fee = _finite_float(raw.get("taker_fee_bps"))
+        maker_fee = _finite_float(raw.get("maker_fee_bps"))
         if not isinstance(book_data, Mapping) or fee is None or fee < 0:
             continue
         try:
@@ -903,6 +1363,11 @@ def _current_order_book_cost_diagnostics(
                 ),
                 "spread_bps": str(buy.spread_bps),
                 "round_trip_taker_fee_bps": str(Decimal(2) * Decimal(str(fee))),
+                "round_trip_maker_fee_reference_bps": (
+                    str(Decimal(2) * Decimal(str(maker_fee)))
+                    if maker_fee is not None else None
+                ),
+                "maker_fee_is_not_a_fill_assumption": True,
                 "round_trip_execution_cost_bps": (
                     str(
                         Decimal(2) * Decimal(str(fee)) + buy.spread_bps
@@ -919,6 +1384,8 @@ def _current_order_book_cost_diagnostics(
             "level_count_asks": len(snapshot.asks),
             "max_level_participation": 0.25,
             "round_trip_assumption": "SAME_SNAPSHOT_BUY_AND_SELL; NOT_A_FILL",
+            "fee_basis": "KRAKEN_TAKER_FEE",
+            "maker_fee_reference_is_not_an_execution_assumption": True,
             "notional_scenarios": notionals,
         }
     return {
@@ -935,8 +1402,9 @@ def run_multi_asset_strategy_research(
     market_costs: Mapping[str, Mapping[str, Any]],
     *,
     now_epoch: int | None = None,
+    depth_history: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    """Run independent historical and current-shadow research for variants A and B.
+    """Run independent historical and current-shadow research for variants A, B, C and D.
 
     No live trading, portfolio allocation approval, or order creation is performed.
     Costed results use current account fee/spread observations as historical proxies;
@@ -1016,6 +1484,7 @@ def run_multi_asset_strategy_research(
 
     pair_results: list[dict[str, Any]] = []
     all_trades: list[dict[str, Any]] = []
+    maker_reference_trades: list[dict[str, Any]] = []
     for symbol_a, symbol_b in combinations(symbols, 2):
         pair_result = _backtest_pair(
             symbol_a,
@@ -1025,9 +1494,21 @@ def run_multi_asset_strategy_research(
             market_costs,
             train_end=train_end,
             validation_end=validation_end,
+            fee_type="taker",
+        )
+        maker_reference_result = _backtest_pair(
+            symbol_a,
+            symbol_b,
+            opens,
+            closes,
+            market_costs,
+            train_end=train_end,
+            validation_end=validation_end,
+            fee_type="maker_reference",
         )
         if pair_result["trades"] or pair_result["pending_at_sample_end"]:
             all_trades.extend(pair_result["trades"])
+            maker_reference_trades.extend(maker_reference_result["trades"])
             pair_results.append({
                 "symbol_a": symbol_a,
                 "symbol_b": symbol_b,
@@ -1042,6 +1523,15 @@ def run_multi_asset_strategy_research(
     }
     pair_portfolio = _pair_portfolio_simulation(
         all_trades,
+        opens,
+        closes,
+        bar_count=count,
+        train_end=train_end,
+        validation_end=validation_end,
+        slippage_bps_per_side=SLIPPAGE_BPS_PER_SIDE,
+    )
+    maker_fee_reference_portfolio = _pair_portfolio_simulation(
+        maker_reference_trades,
         opens,
         closes,
         bar_count=count,
@@ -1068,6 +1558,28 @@ def run_multi_asset_strategy_research(
         })
     current_pair_signals, current_pair_eligible_count = _latest_pair_signals(
         symbols, closes, market_costs
+    )
+    variant_c_taker = _simulate_cross_sectional_momentum(
+        market, market_costs, fee_type="taker"
+    )
+    variant_c_maker_reference = _simulate_cross_sectional_momentum(
+        market, market_costs, fee_type="maker_reference"
+    )
+    variant_c_slippage_sensitivity = [
+        {
+            "slippage_bps_per_side": assumed_slippage,
+            "costed_proxy": _simulate_cross_sectional_momentum(
+                market,
+                market_costs,
+                slippage_bps_per_side=assumed_slippage,
+                fee_type="taker",
+            )["costed_proxy"],
+            "status": "COST_ASSUMPTION_SENSITIVITY_NOT_HISTORICAL_EXECUTION",
+        }
+        for assumed_slippage in SLIPPAGE_SENSITIVITY_BPS_PER_SIDE
+    ]
+    variant_d_regime_divergence = run_regime_divergence_research(
+        market, market_costs
     )
     if now_epoch is None:
         current_bar_freshness = "NOT_CHECKED"
@@ -1151,12 +1663,38 @@ def run_multi_asset_strategy_research(
             ),
             "concurrent_portfolio": pair_portfolio,
             "concurrent_portfolio_slippage_sensitivity": pair_portfolio_slippage_sensitivity,
+            "maker_fee_reference_portfolio": maker_fee_reference_portfolio,
+            "maker_fee_reference_status": (
+                "HYPOTHETICAL_LOWER_COST_REFERENCE_NOT_A_PASSIVE_FILL_MODEL"
+            ),
             "portfolio_simulation": True,
+            "actual_fills": False,
+            "portfolio_pnl": False,
+        },
+        "variant_c_cross_sectional_momentum": {
+            "status": variant_c_taker.get("status", "NOT_AVAILABLE"),
+            "method": variant_c_taker.get("method", {}),
+            "taker_fee_baseline": variant_c_taker,
+            "maker_fee_reference": variant_c_maker_reference,
+            "maker_fee_reference_caveat": (
+                "HYPOTHETICAL_FEE_ONLY; DOES_NOT_MODEL_QUEUE_POSITION_OR_MAKER_FILL_PROBABILITY"
+            ),
+            "slippage_sensitivity": variant_c_slippage_sensitivity,
+            "portfolio_simulation": True,
+            "actual_fills": False,
+            "portfolio_pnl": False,
+        },
+        "variant_d_regime_conditioned_residual_recoil": {
+            **variant_d_regime_divergence,
+            "portfolio_simulation": False,
             "actual_fills": False,
             "portfolio_pnl": False,
         },
         "cost_assumptions": {
             "taker_fee_source": "CURRENT_KRAKEN_TRADE_VOLUME_WHEN_AVAILABLE",
+            "maker_fee_source": "CURRENT_KRAKEN_TRADE_VOLUME_FEES_MAKER_WHEN_AVAILABLE",
+            "maker_fee_is_used_for_primary_results": False,
+            "fee_schedule_requested": True,
             "spread_source": "CURRENT_TICKER_SPREAD_APPLIED_AS_HISTORICAL_PROXY",
             "slippage_bps_per_side": SLIPPAGE_BPS_PER_SIDE,
             "slippage_sensitivity_bps_per_side": list(SLIPPAGE_SENSITIVITY_BPS_PER_SIDE),
@@ -1166,6 +1704,10 @@ def run_multi_asset_strategy_research(
             "current_l2_order_book_cost_diagnostics": _current_order_book_cost_diagnostics(
                 market_costs
             ),
+            "time_separated_l2_cost_diagnostics": _time_separated_l2_cost_diagnostics(
+                depth_history
+            ),
+            "time_separated_l2_snapshots_persisted_by_runtime": True,
         },
         "release_gate_eligible": False,
         "actual_fills": False,

@@ -709,3 +709,32 @@ def test_retrieve_export_uses_signed_private_request_and_returns_bounded_binary(
     assert request.get_header("Accept") == "application/octet-stream"
     assert request.get_header("Api-sign") == sign_spot("/0/private/RetrieveExport", body, secret)
 
+
+
+def test_trade_volume_requests_pair_fee_schedule_by_default():
+    from app.kraken import KrakenClient
+
+    client = KrakenClient("k", "s")
+    calls = []
+    client.private = lambda method, params=None: calls.append((method, params)) or {
+        "fees": {}, "fees_maker": {}, "schedules": {}
+    }
+
+    client.trade_volume(["XXBTZUSD", "XETHZUSD"])
+
+    assert calls == [(
+        "TradeVolume",
+        {"pair": "XXBTZUSD,XETHZUSD", "fee_schedule": True},
+    )]
+
+
+def test_trade_volume_can_skip_full_schedule_for_legacy_callers():
+    from app.kraken import KrakenClient
+
+    client = KrakenClient("k", "s")
+    calls = []
+    client.private = lambda method, params=None: calls.append((method, params)) or {}
+
+    client.trade_volume(["XXBTZUSD"], fee_schedule=False)
+
+    assert calls == [("TradeVolume", {"pair": "XXBTZUSD"})]

@@ -169,7 +169,7 @@ def test_pair_backtest_uses_non_overlapping_trades_and_does_not_force_end_exit()
         )
 
 
-def test_multi_asset_report_keeps_both_variants_research_only() -> None:
+def test_multi_asset_report_keeps_all_variants_research_only() -> None:
     prices_a, prices_b = _correlated_pair(720, final_shock=0.035)
     prices_c = [100.0]
     for index in range(1, len(prices_a)):
@@ -206,6 +206,14 @@ def test_multi_asset_report_keeps_both_variants_research_only() -> None:
     assert report["variant_b_relative_value_pairs"]["portfolio_simulation"] is True
     assert len(
         report["variant_b_relative_value_pairs"]["concurrent_portfolio_slippage_sensitivity"]
+    ) == 5
+    assert report["variant_c_cross_sectional_momentum"]["actual_fills"] is False
+    assert report["variant_c_cross_sectional_momentum"]["portfolio_pnl"] is False
+    assert report["cost_assumptions"]["time_separated_l2_cost_diagnostics"]["status"] == (
+        "INSUFFICIENT_TIME_SEPARATED_L2_COST_EVIDENCE"
+    )
+    assert len(
+        report["variant_c_cross_sectional_momentum"]["slippage_sensitivity"]
     ) == 5
     assert report["variant_b_relative_value_pairs"]["latest_pair_eligible_count"] >= 1
     assert all(
@@ -311,3 +319,116 @@ def test_pair_trade_return_uses_beta_as_dollar_notional_ratio() -> None:
     assert weight_b == 2.0 / 3.0
     # If r_A = beta * r_B the beta-hedged dollar spread cancels common movement.
     assert abs(common_move_bps) < 1e-8
+
+
+
+def test_cross_sectional_momentum_uses_lagged_close_and_balanced_long_short_book():
+    from app.portfolio_strategies import _simulate_cross_sectional_momentum
+
+    count = 120
+    trends = {
+        "A/USD": 0.0030,
+        "B/USD": 0.0020,
+        "C/USD": 0.0010,
+        "D/USD": -0.0010,
+        "E/USD": -0.0020,
+        "F/USD": -0.0030,
+    }
+    closes = {
+        symbol: [100.0 * math.exp(rate * index) for index in range(count)]
+        for symbol, rate in trends.items()
+    }
+    opens = {symbol: list(values) for symbol, values in closes.items()}
+    market = {
+        "symbols": sorted(closes),
+        "timestamps": [1_700_000_000 + index * 3600 for index in range(count)],
+        "opens": opens,
+        "closes": closes,
+    }
+    costs = {
+        symbol: {
+            "taker_fee_bps": "5",
+            "maker_fee_bps": "2",
+            "spread_bps": "4",
+        }
+        for symbol in closes
+    }
+
+    report = _simulate_cross_sectional_momentum(market, costs)
+
+    assert report["status"] == "CANDIDATE_RESEARCH"
+    assert report["method"]["selection_uses_only_closed_decision_bar"] is True
+    assert report["method"]["execution_reference"] == "NEXT_H1_OPEN_TO_NEXT_H1_OPEN"
+    assert report["method"]["gross_exposure_pct"] == 80.0
+    assert report["method"]["net_exposure_pct"] == 0.0
+    assert report["latest_long_candidates"] == ["A/USD", "B/USD", "C/USD"]
+    assert report["latest_short_candidates"] == ["F/USD", "E/USD", "D/USD"]
+    assert report["invested_rebalance_count"] > 0
+    assert report["gross"]["total_return_pct"] > 0
+    assert report["costed_proxy"] is not None
+    assert report["margin_shorting_required"] is True
+    assert report["margin_net_returns_calculated"] is False
+    assert report["actual_fills"] is False
+    assert report["portfolio_pnl"] is False
+
+
+def test_cross_sectional_momentum_maker_reference_is_separate_from_taker_baseline():
+    from app.portfolio_strategies import _simulate_cross_sectional_momentum
+
+    count = 100
+    trends = {
+        "A/USD": 0.003, "B/USD": 0.002, "C/USD": 0.001,
+        "D/USD": -0.001, "E/USD": -0.002, "F/USD": -0.003,
+    }
+    closes = {
+        symbol: [100.0 * math.exp(rate * index) for index in range(count)]
+        for symbol, rate in trends.items()
+    }
+    market = {
+        "symbols": sorted(closes),
+        "timestamps": [1_700_000_000 + index * 3600 for index in range(count)],
+        "opens": closes,
+        "closes": closes,
+    }
+    costs = {
+        symbol: {"taker_fee_bps": "10", "maker_fee_bps": "2", "spread_bps": "4"}
+        for symbol in closes
+    }
+    taker = _simulate_cross_sectional_momentum(market, costs, fee_type="taker")
+    maker = _simulate_cross_sectional_momentum(market, costs, fee_type="maker_reference")
+    assert taker["fee_basis"] == "KRAKEN_TAKER_FEE"
+    assert maker["fee_basis"] == "HYPOTHETICAL_MAKER_FEE_REFERENCE_NO_FILL_ASSUMPTION"
+    assert maker["costed_proxy"]["total_return_pct"] >= taker["costed_proxy"]["total_return_pct"]
+
+
+def test_time_separated_l2_cost_diagnostics_replays_distinct_entry_and_exit_books():
+    from app.portfolio_strategies import _time_separated_l2_cost_diagnostics
+
+    base_ts = 1_800_000_000
+    snapshots = []
+    for index in range(3):
+        mid = 100.0 + index
+        snapshots.append({
+            "snapshot_ts": base_ts + index * 3600,
+            "research_bar_ts": base_ts + index * 3600 - 3600,
+            "bids": [[str(mid - 0.1), "100"], [str(mid - 0.2), "100"]],
+            "asks": [[str(mid + 0.1), "100"], [str(mid + 0.2), "100"]],
+            "taker_fee_bps": "5",
+        })
+
+    report = _time_separated_l2_cost_diagnostics({"A/USD": snapshots})
+
+    assert report["status"] == "TIME_SEPARATED_L2_COST_SAMPLES_AVAILABLE"
+    assert report["snapshot_count"] == 3
+    assert report["horizons"][0]["target_horizon_hours"] == 1
+    assert report["horizons"][0]["pair_observation_count"] == 2
+    long_250 = next(
+        item for item in report["horizons"][0]["scenarios"]
+        if item["notional_usd"] == 250.0 and item["direction"] == "LONG"
+    )
+    assert long_250["sample_count"] == 2
+    assert 29.0 <= long_250["round_trip_cost_bps"]["median"] <= 31.0
+    assert long_250["components_bps_median"]["trading_fees"] > 0
+    assert long_250["components_bps_median"]["spread"] > 0
+    assert report["margin_financing_included"] is False
+    assert report["actual_fills"] is False

@@ -510,7 +510,7 @@ def test_multi_asset_research_runs_are_immutable_idempotent_and_reviewable():
     schema_version = db.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
-    assert schema_version == "11"
+    assert schema_version == "12"
     db.close()
 
 
@@ -540,3 +540,82 @@ def test_multi_asset_research_bar_lookup_skips_repeated_five_minute_cycles():
     assert db.record_multi_asset_research_run(first) is True
     assert db.multi_asset_research_bar_exists(first["as_of_bar_ts"]) is True
     db.close()
+
+
+def test_market_depth_snapshots_are_append_only_persistent_and_validated(tmp_path):
+    path = str(tmp_path / "depth.sqlite3")
+    db = Persistence(path)
+    snapshot = {
+        "pair": "XBT/USD",
+        "snapshot_ts": 1_800_000_000,
+        "research_bar_ts": 1_799_996_400,
+        "source": "KRAKEN_PUBLIC_DEPTH",
+        "bids": [["100.0", "2.0"], ["99.9", "3.0"]],
+        "asks": [["100.1", "2.0"], ["100.2", "3.0"]],
+        "taker_fee_bps": "26",
+        "maker_fee_bps": "16",
+        "spread_bps": "10",
+    }
+    assert db.record_market_depth_snapshot(snapshot) is True
+    assert db.record_market_depth_snapshot(snapshot) is False
+    assert db.market_depth_snapshot_count() == 1
+    assert db.market_depth_snapshot_count("XBT/USD") == 1
+    stored = db.market_depth_snapshots("XBT/USD")
+    assert len(stored) == 1
+    assert stored[0]["bids"] == snapshot["bids"]
+    assert stored[0]["asks"] == snapshot["asks"]
+    assert stored[0]["maker_fee_bps"] == "16"
+    db.close()
+
+    reopened = Persistence(path)
+    assert reopened.market_depth_snapshot_count("XBT/USD") == 1
+    assert reopened.record_market_depth_snapshot({
+        **snapshot, "snapshot_ts": 1_800_000_060
+    }) is True
+    assert reopened.market_depth_snapshot_count("XBT/USD") == 2
+    reopened.close()
+
+
+def test_market_depth_snapshot_rejects_crossed_or_unsorted_books():
+    db = Persistence(":memory:")
+    base = {
+        "pair": "ETH/USD",
+        "snapshot_ts": 1_800_000_000,
+        "research_bar_ts": 1_799_996_400,
+        "source": "KRAKEN_PUBLIC_DEPTH",
+        "bids": [["100", "1"], ["99", "2"]],
+        "asks": [["100.1", "1"], ["100.2", "2"]],
+    }
+    with pytest.raises(ValueError, match="MARKET_DEPTH_BOOK_CROSSED_OR_LOCKED"):
+        db.record_market_depth_snapshot({**base, "asks": [["99.9", "1"]]})
+    with pytest.raises(ValueError, match="MARKET_DEPTH_LEVEL_ORDER_INVALID"):
+        db.record_market_depth_snapshot({**base, "bids": [["99", "1"], ["100", "2"]]})
+    with pytest.raises(ValueError, match="MARKET_DEPTH_IDENTITY_INVALID"):
+        db.record_market_depth_snapshot({**base, "pair": "EUR/USD"})
+    db.close()
+
+
+def test_additive_depth_migration_preserves_existing_multi_asset_rows(tmp_path):
+    path = str(tmp_path / "legacy_v11.sqlite3")
+    db = Persistence(path)
+    old_report = {
+        "research_key": "legacy-report",
+        "research_version": "parrondo-multi-asset-v0.2",
+        "as_of_bar_ts": 1_799_996_400,
+        "symbols": ["XBT/USD", "ETH/USD"],
+        "actual_fills": False,
+    }
+    assert db.record_multi_asset_research_run(old_report) is True
+    db.connection.execute(
+        "UPDATE schema_meta SET value='11' WHERE key='schema_version'"
+    )
+    db.close()
+
+    migrated = Persistence(path)
+    assert migrated.multi_asset_research_runs(limit=5) == [old_report]
+    assert migrated.market_depth_snapshot_count() == 0
+    schema_version = migrated.connection.execute(
+        "SELECT value FROM schema_meta WHERE key='schema_version'"
+    ).fetchone()["value"]
+    assert schema_version == "12"
+    migrated.close()

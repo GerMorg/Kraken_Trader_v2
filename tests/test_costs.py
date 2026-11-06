@@ -146,3 +146,14 @@ def test_cost_diagnostic_keeps_known_trade_fees_visible_when_margin_fees_are_unk
     assert report["margin_rollover_fee_bps_per_event_on_extended_amount"] is None
     assert report["rollover_count"] == 2
     assert "MARGIN_OPEN_FEE_UNKNOWN" in report["reasons"]
+
+
+def test_maker_fee_parser_reads_only_pair_specific_maker_rates():
+    from app.costs import maker_fee_from_trade_volume
+
+    result = {
+        "fees": {"XXBTZUSD": {"fee": "0.40"}},
+        "fees_maker": {"XXBTZUSD": {"fee": "0.25"}},
+    }
+    assert maker_fee_from_trade_volume(result, ("XXBTZUSD",)) == D("25")
+    assert maker_fee_from_trade_volume({"fees": result["fees"]}, ("XXBTZUSD",)) is None
