@@ -466,9 +466,6 @@ class MarketMicrostructureCollector:
                 aggregate.signed_trade_notional_usd / total_trade_notional
                 if total_trade_notional > 0 else None
             )
-            total_top_depth = (
-                (aggregate.bid_depth_usd or D(0)) + (aggregate.ask_depth_usd or D(0))
-            )
             ofi_imbalance = (
                 aggregate.ofi_l1_base / aggregate.ofi_l1_denominator_base
                 if aggregate.ofi_l1_denominator_base > 0 else None
