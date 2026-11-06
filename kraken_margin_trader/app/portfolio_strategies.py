@@ -850,6 +850,243 @@ def _pair_portfolio_simulation(
     }
 
 
+def _simulate_cross_sectional_momentum(
+    market: Mapping[str, Any],
+    market_costs: Mapping[str, Mapping[str, Any]],
+    *,
+    slippage_bps_per_side: float = SLIPPAGE_BPS_PER_SIDE,
+    fee_type: str = "taker",
+) -> dict[str, Any]:
+    """Research a fixed long/short cross-sectional momentum portfolio.
+
+    Scores use only closed bars through the decision timestamp. Orders are
+    hypothetically executed at the following hourly open; PnL is marked from
+    that open to the next open. Dollar exposures stay fixed to initial equity.
+    """
+    symbols = list(market["symbols"])
+    opens = market["opens"]
+    closes = market["closes"]
+    count = len(market["timestamps"])
+    start = MOMENTUM_SLOW_LOOKBACK_BARS + 1
+    if count <= start + 1:
+        return {
+            "status": "INSUFFICIENT_SYNCHRONIZED_HISTORY",
+            "portfolio_simulation": True,
+            "actual_fills": False,
+            "portfolio_pnl": False,
+        }
+
+    weights = {symbol: 0.0 for symbol in symbols}
+    gross_pnl = [0.0] * count
+    cost_pnl = [0.0] * count
+    turnover = 0.0
+    cost_total_fraction = 0.0
+    rebalance_count = 0
+    invested_rebalance_count = 0
+    cash_rebalance_count = 0
+    selected_long_counts: list[int] = []
+    selected_short_counts: list[int] = []
+    cash_weights: list[float] = []
+    costs_complete = True
+
+    for execution_index in range(start, count - 1):
+        decision_index = execution_index - 1
+        if (
+            decision_index - MOMENTUM_SLOW_LOOKBACK_BARS
+        ) % MOMENTUM_REBALANCE_INTERVAL_BARS == 0:
+            ranked: list[tuple[str, float]] = []
+            for symbol in symbols:
+                fast_base = closes[symbol][decision_index - MOMENTUM_FAST_LOOKBACK_BARS]
+                slow_base = closes[symbol][decision_index - MOMENTUM_SLOW_LOOKBACK_BARS]
+                current = closes[symbol][decision_index]
+                if min(fast_base, slow_base, current) <= 0:
+                    continue
+                fast_return = current / fast_base - 1.0
+                slow_return = current / slow_base - 1.0
+                score = (
+                    MOMENTUM_SCORE_FAST_WEIGHT * fast_return
+                    + MOMENTUM_SCORE_SLOW_WEIGHT * slow_return
+                )
+                if math.isfinite(score):
+                    ranked.append((symbol, score))
+            ranked.sort(key=lambda item: (-item[1], item[0]))
+            positive = [item for item in ranked if item[1] > 0]
+            negative = [item for item in ranked if item[1] < 0]
+            long_symbols = [item[0] for item in positive[:MOMENTUM_SIDE_ASSET_COUNT]]
+            short_symbols = [
+                item[0] for item in sorted(
+                    negative, key=lambda item: (item[1], item[0])
+                )[:MOMENTUM_SIDE_ASSET_COUNT]
+            ]
+            target = {symbol: 0.0 for symbol in symbols}
+            if (
+                len(long_symbols) == MOMENTUM_SIDE_ASSET_COUNT
+                and len(short_symbols) == MOMENTUM_SIDE_ASSET_COUNT
+            ):
+                for symbol in long_symbols:
+                    target[symbol] = MOMENTUM_GROSS_WEIGHT_PER_SIDE / len(long_symbols)
+                for symbol in short_symbols:
+                    target[symbol] = -MOMENTUM_GROSS_WEIGHT_PER_SIDE / len(short_symbols)
+                invested_rebalance_count += 1
+            else:
+                long_symbols = []
+                short_symbols = []
+                cash_rebalance_count += 1
+            selected_long_counts.append(len(long_symbols))
+            selected_short_counts.append(len(short_symbols))
+            deltas = {
+                symbol: target[symbol] - weights[symbol]
+                for symbol in symbols
+            }
+            trade_cost = 0.0
+            for symbol, delta in deltas.items():
+                if abs(delta) <= 1e-15:
+                    continue
+                components = _side_cost_components(
+                    symbol,
+                    market_costs,
+                    slippage_bps_per_side=slippage_bps_per_side,
+                    fee_type=fee_type,
+                )
+                if components is None:
+                    costs_complete = False
+                    continue
+                side_cost_bps = sum(components)
+                trade_cost += abs(delta) * side_cost_bps / 10000.0
+            turnover += sum(abs(delta) for delta in deltas.values())
+            cost_total_fraction += trade_cost
+            cost_pnl[execution_index] -= trade_cost
+            weights = target
+            rebalance_count += 1
+            cash_weights.append(
+                max(0.0, 1.0 - sum(abs(value) for value in weights.values()))
+            )
+
+        # The decision uses the previous closed bar; execution/PnL starts at
+        # the next open and ends at the following open.
+        gross_pnl[execution_index] = sum(
+            weights[symbol] * (
+                opens[symbol][execution_index + 1] / opens[symbol][execution_index] - 1.0
+            )
+            for symbol in symbols
+        )
+
+    def return_series_from_fixed_equity_deltas(deltas: Sequence[float]) -> list[float]:
+        equity = 1.0
+        returns = [0.0] * count
+        for index, delta in enumerate(deltas):
+            if not math.isfinite(delta):
+                raise ValueError("CROSS_SECTIONAL_PNL_NON_FINITE")
+            if equity <= 0.0:
+                break
+            returns[index] = delta / equity
+            equity += delta
+        return returns
+
+    gross_returns = return_series_from_fixed_equity_deltas(gross_pnl)
+    net_returns = (
+        return_series_from_fixed_equity_deltas(
+            [gross_pnl[index] + cost_pnl[index] for index in range(count)]
+        )
+        if costs_complete else None
+    )
+    train_end = int(count * 0.60)
+    validation_end = int(count * 0.80)
+    boundaries = (train_end, validation_end, start, count - 1)
+
+    latest_index = count - 1
+    latest_scores: list[tuple[str, float]] = []
+    for symbol in symbols:
+        current = closes[symbol][latest_index]
+        fast_base = closes[symbol][latest_index - MOMENTUM_FAST_LOOKBACK_BARS]
+        slow_base = closes[symbol][latest_index - MOMENTUM_SLOW_LOOKBACK_BARS]
+        score = (
+            MOMENTUM_SCORE_FAST_WEIGHT * (current / fast_base - 1.0)
+            + MOMENTUM_SCORE_SLOW_WEIGHT * (current / slow_base - 1.0)
+        )
+        if math.isfinite(score):
+            latest_scores.append((symbol, score))
+    latest_scores.sort(key=lambda item: (-item[1], item[0]))
+    latest_long = [
+        item[0] for item in latest_scores if item[1] > 0
+    ][:MOMENTUM_SIDE_ASSET_COUNT]
+    latest_short = [
+        item[0] for item in sorted(
+            (item for item in latest_scores if item[1] < 0),
+            key=lambda item: (item[1], item[0]),
+        )[:MOMENTUM_SIDE_ASSET_COUNT]
+    ]
+
+    return {
+        "status": "CANDIDATE_RESEARCH",
+        "strategy": "CROSS_SECTIONAL_MOMENTUM_LONG_SHORT",
+        "method": {
+            "fast_lookback_bars": MOMENTUM_FAST_LOOKBACK_BARS,
+            "slow_lookback_bars": MOMENTUM_SLOW_LOOKBACK_BARS,
+            "fast_score_weight": MOMENTUM_SCORE_FAST_WEIGHT,
+            "slow_score_weight": MOMENTUM_SCORE_SLOW_WEIGHT,
+            "rebalance_interval_bars": MOMENTUM_REBALANCE_INTERVAL_BARS,
+            "long_assets": MOMENTUM_SIDE_ASSET_COUNT,
+            "short_assets": MOMENTUM_SIDE_ASSET_COUNT,
+            "gross_weight_per_side": MOMENTUM_GROSS_WEIGHT_PER_SIDE,
+            "gross_exposure_pct": 80.0,
+            "net_exposure_pct": 0.0,
+            "target_cash_weight_pct": 20.0,
+            "maximum_single_asset_weight_pct": round(
+                MOMENTUM_GROSS_WEIGHT_PER_SIDE / MOMENTUM_SIDE_ASSET_COUNT * 100.0, 6
+            ),
+            "selection_uses_only_closed_decision_bar": True,
+            "execution_reference": "NEXT_H1_OPEN_TO_NEXT_H1_OPEN",
+            "fixed_initial_equity_notional": True,
+            "leverage_used": False,
+        },
+        "fee_basis": (
+            "KRAKEN_TAKER_FEE" if fee_type == "taker"
+            else "HYPOTHETICAL_MAKER_FEE_REFERENCE_NO_FILL_ASSUMPTION"
+        ),
+        "slippage_bps_per_side": slippage_bps_per_side,
+        "gross": _curve_metrics(gross_returns[start:count - 1]),
+        "gross_chronological_splits": _split_returns(gross_returns, boundaries),
+        "costed_proxy": (
+            _curve_metrics(net_returns[start:count - 1]) if net_returns is not None else None
+        ),
+        "costed_proxy_chronological_splits": (
+            _split_returns(net_returns, boundaries) if net_returns is not None else None
+        ),
+        "cost_quality": (
+            "CURRENT_KRAKEN_FEE_AND_TICKER_SPREAD_PROXY_PLUS_ASSUMED_SLIPPAGE"
+            if costs_complete else "INCOMPLETE_FEE_OR_SPREAD_INPUTS"
+        ),
+        "turnover_pct_of_initial_equity": round(turnover * 100.0, 6),
+        "estimated_trading_cost_pct_of_initial_equity": (
+            round(cost_total_fraction * 100.0, 6) if costs_complete else None
+        ),
+        "rebalance_count": rebalance_count,
+        "invested_rebalance_count": invested_rebalance_count,
+        "cash_rebalance_count": cash_rebalance_count,
+        "mean_selected_long_assets": (
+            round(fmean(selected_long_counts), 6) if selected_long_counts else 0.0
+        ),
+        "mean_selected_short_assets": (
+            round(fmean(selected_short_counts), 6) if selected_short_counts else 0.0
+        ),
+        "mean_cash_weight_pct": (
+            round(fmean(cash_weights) * 100.0, 6) if cash_weights else 100.0
+        ),
+        "latest_long_candidates": latest_long,
+        "latest_short_candidates": latest_short,
+        "latest_rankings": [
+            {"symbol": symbol, "score": round(score, 8)}
+            for symbol, score in latest_scores[:12]
+        ],
+        "margin_shorting_required": True,
+        "margin_financing_costs_included": False,
+        "margin_net_returns_calculated": False,
+        "actual_fills": False,
+        "portfolio_pnl": False,
+    }
+
+
 def _rank_pair_correlations(
     closes: Mapping[str, Sequence[float]],
     *,
