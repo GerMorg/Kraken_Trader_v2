@@ -304,7 +304,7 @@ def _recover_transient_public_network_breaker(
 
 
 
-_SQLITE_CANTOPEN_RESEARCH_READ_SIGNATURE = {
+_SQLITE_CANTOPEN_RESEARCH_READ_SIGNATURE: dict[str, Any] = {
     "exception_type": "OperationalError",
     "failure_stage": "FINALIZE_TSM_RESEARCH_SUMMARY_READ",
     "failure_location": {
