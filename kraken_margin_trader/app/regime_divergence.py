@@ -11,6 +11,9 @@ SHOCK_HORIZON = 6
 CONFIRMATION_HORIZON = 2
 HOLDING_HORIZON = 12
 ENTRY_Z = 1.5
+REGIME_VOLATILITY_WINDOW = 24
+REGIME_REFERENCE_WINDOW = 72
+MAX_VOLATILITY_EXPANSION_MULTIPLE = 1.5
 MINIMUM_BARS = 240
 
 
@@ -57,6 +60,15 @@ def _rolling_beta(asset: Sequence[float], market: Sequence[float], end: int) -> 
     )
     beta = covariance / variance
     return beta if isfinite(beta) else None
+
+
+def _realized_volatility(values: Sequence[float], end: int) -> float | None:
+    start = end - REGIME_VOLATILITY_WINDOW + 1
+    window = values[start : end + 1]
+    if start < 0 or len(window) != REGIME_VOLATILITY_WINDOW:
+        return None
+    result = sqrt(sum(value * value for value in window))
+    return result if isfinite(result) else None
 
 
 def _split(index: int, train_end: int, validation_end: int) -> str:
@@ -120,6 +132,7 @@ def run_regime_divergence_research(
     trades: list[dict[str, Any]] = []
     skipped_unknown_costs = 0
     skipped_split_boundary = 0
+    regime_filter_excluded_count = 0
     next_entry_index = {symbol: 0 for symbol in symbols}
 
     for symbol in symbols:
@@ -174,6 +187,26 @@ def run_regime_divergence_research(
             elif z_score >= ENTRY_Z and confirmation_return < 0:
                 direction = "SHORT"
             if direction is None:
+                continue
+
+            market_volatility = _realized_volatility(
+                market_returns, decision_index - 1
+            )
+            reference_volatility = [
+                value
+                for end in range(
+                    decision_index - REGIME_VOLATILITY_WINDOW - REGIME_REFERENCE_WINDOW,
+                    decision_index - REGIME_VOLATILITY_WINDOW,
+                )
+                if (value := _realized_volatility(market_returns, end)) is not None
+            ]
+            if (
+                market_volatility is None
+                or len(reference_volatility) < REGIME_REFERENCE_WINDOW
+                or market_volatility
+                > median(reference_volatility) * MAX_VOLATILITY_EXPANSION_MULTIPLE
+            ):
+                regime_filter_excluded_count += 1
                 continue
 
             entry_index = decision_index + 1
@@ -256,6 +289,9 @@ def run_regime_divergence_research(
             "residual_normalization_lookback": RESIDUAL_LOOKBACK,
             "entry_abs_z_score": ENTRY_Z,
             "reversal_confirmation_bars": CONFIRMATION_HORIZON,
+            "market_regime_filter": "24H_REALIZED_VOLATILITY_NOT_ABOVE_1_5X_TRAILING_72H_MEDIAN",
+            "market_volatility_window_bars": REGIME_VOLATILITY_WINDOW,
+            "market_volatility_reference_windows": REGIME_REFERENCE_WINDOW,
             "holding_horizon_bars": HOLDING_HORIZON,
             "entry_timing": "NEXT_H1_OPEN_AFTER_CLOSED_SIGNAL_BAR",
             "exit_timing": "OPEN_AFTER_FIXED_HOLDING_HORIZON",
@@ -268,6 +304,7 @@ def run_regime_divergence_research(
         "costed_trade_count": len(costed),
         "unknown_cost_trade_count": skipped_unknown_costs,
         "split_boundary_excluded_count": skipped_split_boundary,
+        "market_regime_filter_excluded_count": regime_filter_excluded_count,
         "chronological_splits": by_split,
         "slippage_sensitivity": sensitivity,
         "sample_trades": trades[-20:],
