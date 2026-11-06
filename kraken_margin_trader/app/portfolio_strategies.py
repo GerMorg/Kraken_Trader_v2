@@ -5,7 +5,7 @@ from itertools import combinations
 import hashlib
 import math
 from statistics import fmean, median, pstdev
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence, cast
 from decimal import Decimal
 
 from app.regime_divergence import run_regime_divergence_research
@@ -1202,7 +1202,8 @@ def _time_separated_l2_cost_diagnostics(
                     missing_fee_count += 1
                     continue
                 for notional in notional_values:
-                    for direction in ("LONG", "SHORT"):
+                    for raw_direction in ("LONG", "SHORT"):
+                        direction = cast(Literal["LONG", "SHORT"], raw_direction)
                         try:
                             result = simulate_order_book_round_trip(
                                 entry_book,
