@@ -1,4 +1,10 @@
-## Aktueller Status — 0.1.53
+## Aktueller Status — 0.1.54
+
+**Version 0.1.54 ergänzt Variante D — Regime-Conditioned Residual Recoil (RCR).** Die Research-Hypothese sucht nach idiosynkratischen Kursausschlägen relativ zu einem gleichgewichteten Markt-Faktor und verlangt eine bestätigte Gegenbewegung des Residuals, bevor ein hypothetischer Trade am nächsten H1-Open beginnt. Die Haltedauer ist vorab auf 12 Stunden fixiert. Die Signale werden mit rollierendem Beta, standardisiertem Residualschock und chronologischen Train-/Validation-/Test-Splits ausgewertet. Unbekannte Gebühren/Spreads werden nicht als null angenommen; Kostenresultate bleiben Proxys, keine historischen Fills.
+
+RCR ist eine eigenständige Research-Variante und weder klassische Preis-Mean-Reversion noch Cross-Sectional-Momentum. Sie erzeugt keine Order-Intents, Orders oder Fills, simuliert kein gemeinsames Portfolio und darf keine Strategieparameter oder Live-Freigaben automatisch promovieren. Margin-Finanzierung ist nicht enthalten. Die Produktionsstrategie bleibt unverändert und `INTERNAL_LIVE_EXECUTION_RELEASED` bleibt `False`.
+
+## Vorversion — 0.1.53
 
 **Version 0.1.53 erweitert das Multi-Asset-Research um Cross-Sectional Momentum, account-spezifische Gebühren-Diagnostik und persistente L2-Orderbuch-Snapshots.** Variante C testet eine vorab festgelegte, marktneutrale Long-/Short-Auswahl der stärksten und schwächsten USD-Kryptomärkte. Kraken-Taker-Gebühren bleiben die Kostenbaseline; Maker-Raten werden nur als getrennte Gebührenreferenz behandelt.
 
