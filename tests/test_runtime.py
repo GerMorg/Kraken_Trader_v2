@@ -174,6 +174,77 @@ def test_circuit_breaker_diagnostics_expose_persisted_cantopen_storage_snapshot_
     assert "sqlite_storage_diagnostics" not in unrelated_error[0]
 
 
+def test_cantopen_breaker_includes_current_storage_snapshot_separately_from_history(tmp_path):
+    database_path = str(tmp_path / "state" / "trader.sqlite3")
+    db = Persistence(database_path)
+    try:
+        diagnostics = _circuit_breaker_diagnostics([{
+            "name": "UNHANDLED_RUNTIME",
+            "reason": "CYCLE_EXCEPTION",
+            "ts": "2026-10-30T18:35:08.285234+00:00",
+            "detail": {
+                "sqlite_error_code": 14,
+                "sqlite_error_name": "SQLITE_CANTOPEN",
+                "failure_stage": "FINALIZE_TSM_RESEARCH_SUMMARY_READ",
+            },
+        }], persistence=db)
+
+        item = diagnostics[0]
+        assert "sqlite_storage_diagnostics" not in item
+        current = item["sqlite_current_storage_diagnostics"]
+        assert current["database_path"] == database_path
+        assert current["database"]["exists"] is True
+        assert current["database"]["is_directory"] is False
+        assert current["database_parent"]["exists"] is True
+        assert current["database_parent"]["is_directory"] is True
+        assert "sqlite_current_storage_diagnostics_observed_at" in item
+        assert item["sqlite_current_storage_diagnostics_scope"] == (
+            "CURRENT_RUNTIME_STATE_NOT_ORIGINAL_FAILURE_STATE"
+        )
+    finally:
+        db.close()
+
+
+def test_current_storage_diagnostic_probe_failure_does_not_break_cycle():
+    class BrokenStorageProbe:
+        def storage_diagnostics(self):
+            raise sqlite3.OperationalError("probe failed")
+
+    diagnostics = _circuit_breaker_diagnostics([{
+        "name": "UNHANDLED_RUNTIME",
+        "reason": "CYCLE_EXCEPTION",
+        "ts": "2026-10-30T18:35:08.285234+00:00",
+        "detail": {
+            "sqlite_error_code": 14,
+            "sqlite_error_name": "SQLITE_CANTOPEN",
+        },
+    }], persistence=BrokenStorageProbe())
+
+    assert diagnostics[0]["sqlite_current_storage_diagnostics_probe_error"] == {
+        "exception_type": "OperationalError",
+    }
+
+
+def test_non_cantopen_breaker_does_not_probe_current_storage():
+    class MustNotProbe:
+        def storage_diagnostics(self):
+            raise AssertionError("storage diagnostics should only run for CANTOPEN")
+
+    diagnostics = _circuit_breaker_diagnostics([{
+        "name": "UNHANDLED_RUNTIME",
+        "reason": "CYCLE_EXCEPTION",
+        "ts": "2026-10-30T18:35:08.285234+00:00",
+        "detail": {
+            "sqlite_error_code": 10,
+            "sqlite_error_name": "SQLITE_IOERR",
+        },
+    }], persistence=MustNotProbe())
+
+    assert "sqlite_current_storage_diagnostics" not in diagnostics[0]
+    assert "sqlite_current_storage_diagnostics_probe_error" not in diagnostics[0]
+
+
+
 def test_circuit_breaker_diagnostics_identify_wallet_mismatch_assets():
     diagnostics = _circuit_breaker_diagnostics([{
         "name": "WALLET_BALANCE_RECONCILIATION",
