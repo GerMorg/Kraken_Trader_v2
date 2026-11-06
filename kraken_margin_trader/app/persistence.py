@@ -32,6 +32,8 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 class Persistence:
+    SCHEMA_VERSION = 12
+
     def __init__(self, path: str = "/data/state/kraken_trader.sqlite3") -> None:
         self.path = path
         if path != ":memory:":
@@ -273,8 +275,9 @@ class Persistence:
                     "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','12') "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(self.SCHEMA_VERSION),),
             )
 
 
@@ -878,8 +881,13 @@ class Persistence:
             research_bar_ts = int(snapshot["research_bar_ts"])
         except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError("MARKET_DEPTH_TIMESTAMP_INVALID") from exc
+        pair_parts = pair.rsplit("/", 1)
+        fiat_base_assets = {"USD", "EUR", "GBP", "CAD", "AUD", "CHF", "JPY"}
         if (
-            not pair.endswith("/USD") or snapshot_ts <= 0 or research_bar_ts <= 0
+            len(pair_parts) != 2 or not pair_parts[0]
+            or pair_parts[0].upper() in fiat_base_assets
+            or pair_parts[1].upper() != "USD"
+            or snapshot_ts <= 0 or research_bar_ts <= 0
             or source != "KRAKEN_PUBLIC_DEPTH"
         ):
             raise ValueError("MARKET_DEPTH_IDENTITY_INVALID")
