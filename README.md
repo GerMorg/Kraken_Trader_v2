@@ -1,12 +1,12 @@
-## Aktueller Status — 0.1.52
+## Aktueller Status — 0.1.53
 
-**Version 0.1.52 erweitert das Multi-Asset-Research und die Kostenmessung.** Variante A liefert eine vorab definierte Sensitivität für negative Korrelationsschwellen und eine Rangliste der aktuell am wenigsten korrelierten Paare. Variante B führt Exits erst am Open der nächsten H1-Kerze aus und ergänzt eine gemeinsame, unverschuldete Portfolio-Simulation mit höchstens vier gleichzeitig offenen Paaren und ohne doppelte Asset-Belegung.
+**Version 0.1.53 erweitert das Multi-Asset-Research um Cross-Sectional Momentum, account-spezifische Gebühren-Diagnostik und persistente L2-Orderbuch-Snapshots.** Variante C testet eine vorab festgelegte, marktneutrale Long-/Short-Auswahl der stärksten und schwächsten USD-Kryptomärkte. Kraken-Taker-Gebühren bleiben die Kostenbaseline; Maker-Raten werden nur als getrennte Gebührenreferenz behandelt.
 
-Die Kostenanalyse bewertet Slippage-Szenarien von 0/1/2/5/10 Basispunkten je Seite, berechnet Break-even-Slippage und erfasst zu jedem neuen gemeinsamen H1-Forschungsstand aktuelle Kraken-Orderbuchtiefe. Für standardisierte Ordergrößen werden sichtbare Liquidität, Spread, Taker-Gebühr und modellierte Slippage getrennt ausgewiesen. Diese L2-Werte sind aktuelle Momentaufnahmen, keine historischen Kosten oder tatsächlichen Fills. Die bisherige 5-bp-Baseline bleibt erhalten und wird nicht als tatsächliche Kostenwahrheit behandelt.
+Die Kostenanalyse bewertet Slippage-Szenarien von 0/1/2/5/10 Basispunkten je Seite. `TradeVolume` wird mit `fee_schedule=true` abgefragt. Aktuelle Taker-Raten bleiben die Baseline; vorhandene Maker-Raten sind ein separater theoretischer Gebührenvergleich und keine angenommene Ausführung. Öffentliche L2-Snapshots werden append-only in SQLite gespeichert, damit spätere zeitlich getrennte Entry-/Exit-Messungen möglich werden. Die 5-bp-Baseline bleibt ein Sensitivitätsszenario, keine behauptete Ausführungswahrheit.
 
-Die gemeinsame Pair-Simulation berücksichtigt Überschneidungen, begrenzt parallele Positionen und markiert das Portfolio stündlich. Sie bleibt ein Research-Modell ohne Margin-Hebel. Formale Cointegrationstests, Mehrfachtestkorrektur, historische Orderbuchdaten und bestätigte Margin-Eröffnungs-/Rollover-Kosten bleiben offen.
+Die gemeinsame Pair-Simulation berücksichtigt Überschneidungen, begrenzt parallele Positionen und markiert das Portfolio stündlich. Variante C ist unverschuldet und netto-exposure-neutral, benötigt für Short-Legs aber Margin. Formale Cointegrationstests, Mehrfachtestkorrektur, echte historische Orderbuchdaten sowie bestätigte Margin-Eröffnungs-/Rollover-Kosten bleiben offen.
 
-Die Erweiterungen erzeugen keine Orders oder Order-Intents, verändern nicht die produktive TSM-Strategie und wählen keine Kandidaten automatisch aus. `INTERNAL_LIVE_EXECUTION_RELEASED` bleibt `False`; vorhandene Datenbankbestände werden nicht zurückgesetzt oder gelöscht.
+Die Erweiterungen erzeugen keine Orders oder Order-Intents, verändern nicht die produktive TSM-Strategie und wählen keine Kandidaten automatisch aus. `INTERNAL_LIVE_EXECUTION_RELEASED` bleibt `False`; die SQLite-Migration ist additiv und erhält alle bestehenden Daten.
 
 Siehe [Multi-Asset-Research](docs/MULTI_ASSET_STRATEGY_RESEARCH.md) und [Strategie-Research](docs/STRATEGY_RESEARCH.md).
 ## Vorversion — 0.1.50

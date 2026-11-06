@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.53 — Gebühren- und Markt-Mikrostruktur-Evidenz; Cross-Sectional-Momentum
+
+- `TradeVolume` fordert `fee_schedule=true` an. Account-spezifische Taker- und separat gelieferte Maker-Raten werden paarbezogen erfasst; Maker bleibt ein reiner Gebührenvergleich ohne angenommene Maker-Fills.
+- Persistiert öffentliche Kraken-L2-Snapshots append-only in der vorhandenen SQLite-Datenbank, einschließlich Snapshotzeit, zugehörigem H1-Balken, Bid-/Ask-Tiefe und bekannten Kostenfeldern. Keine bestehende Datenbanktabelle oder Research-Historie wird gelöscht oder zurückgesetzt.
+- Ergänzt Variante C: Cross-Sectional-Momentum mit 24-/72-H1-Score, 3 Longs/3 Shorts, 40 % Brutto je Seite, 20 % Cash, Neuauswahl alle 6 Stunden und Ausführung frühestens am Folge-H1-Open.
+- Ergänzt getrennte Maker-Gebühren-Referenzszenarien für Multi-Asset-Kosten. Die Taker-basierte Baseline und 0/1/2/5/10-bp-Slippage-Sensitivität bleiben unverändert.
+- Keine Order-Intents, Orders oder Fills; keine automatische Strategieauswahl oder Parameterpromotion. Short-Legs bleiben Research-only; Margin-Open-/Rollover-/Borrow-Kosten sind nicht verifiziert enthalten. `INTERNAL_LIVE_EXECUTION_RELEASED` bleibt `False`.
+
+
 ## 0.1.52 — Kostenkalibrierung und Multi-Asset-Portfolio-Research
 
 - Ergänzt eine Slippage-Sensitivität von 0/1/2/5/10 bp je Seite für TSM-Forward-Labels und Strategy-Lab-Kandidaten sowie Break-even-Slippage. Die Primärannahme von 5 bp bleibt unverändert; die Szenarien sind keine tatsächlichen historischen Ausführungskosten.
