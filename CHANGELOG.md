@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.54 — Regime-Conditioned Residual Recoil Research
+
+- Ergänzt Variante D `regime_conditioned_residual_recoil`: ein Cross-Asset-Markt-Faktor wird von den Einzelasset-Renditen abgezogen; extreme standardisierte 6-Stunden-Residualbewegungen werden nur nach bestätigter 2-Stunden-Gegenbewegung gehandelt.
+- Schätzt Betas ausschließlich aus zurückliegenden H1-Renditen, bildet den Residual-Z-Score aus abgeschlossenen Kerzen und verwendet Entry am nächsten H1-Open sowie einen fixen 12-Stunden-Exit. Nicht überlappende Trades je Asset und Split-Grenzen-Purging verhindern wiederholte bzw. übergreifende Signale.
+- Berichtet getrennte Train-/Validation-/Test-Kennzahlen, Kostenabdeckung, 0/1/2/5/10-bp-Slippage-Sensitivität und Stichproben-Trades. Unbekannte Kosten werden ausgeschlossen statt als null angesetzt.
+- Keine Portfolio-PnL-, Fill-, Margin-Finanzierungs- oder Orderausführungsbehauptung; keine automatische Parameterpromotion und keine Änderung der Produktionsstrategie oder Live-Sperre.
+- Behebt den Mypy-Typfehler bei der Richtungsübergabe an den L2-Roundtrip-Simulator und ergänzt gezielte Tests.
+
+
 ## 0.1.53 — Gebühren- und Markt-Mikrostruktur-Evidenz; Cross-Sectional-Momentum
 
 - `TradeVolume` fordert `fee_schedule=true` an. Account-spezifische Taker- und separat gelieferte Maker-Raten werden paarbezogen erfasst; Maker bleibt ein reiner Gebührenvergleich ohne angenommene Maker-Fills.
