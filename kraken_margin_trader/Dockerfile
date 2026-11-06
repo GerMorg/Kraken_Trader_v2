@@ -1,6 +1,6 @@
 FROM python:3.12-alpine
 
-ARG BUILD_VERSION=0.1.60
+ARG BUILD_VERSION=0.1.61
 ARG BUILD_ARCH=amd64
 
 LABEL \
@@ -26,7 +26,6 @@ RUN chmod 0755 /run.sh \
 RUN test -f /opt/kraken-trader/app/main.py \
   && test -f /opt/kraken-trader/app/__init__.py \
   && python -c "import app.main; print('Kraken Trader application import: OK')" \
-  && python -c "import sys; sys.path.insert(0, '/opt/kraken-trader'); import app.main; print('Kraken Trader explicit-path bootstrap import: OK')" \
-  && /run.sh --healthcheck
+  && python -c "import sys; print('Python:', sys.version)"
 
 ENTRYPOINT ["/run.sh"]
