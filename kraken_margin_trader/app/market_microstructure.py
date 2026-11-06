@@ -200,6 +200,13 @@ class MarketMicrostructureCollector:
                 self._metrics["connection_state"] = "CONNECTED_PARTIAL"
             elif expected and acknowledged == expected:
                 self._metrics["connection_state"] = "CONNECTED"
+                if self._metrics["last_error_type"] in {
+                    None, "SUBSCRIPTION_REJECTED", "SUBSCRIPTION_ACK_TIMEOUT"
+                }:
+                    self._metrics["last_error_type"] = None
+                    self._metrics["last_subscription_error"] = None
+                    self._metrics["last_subscription_channel"] = None
+                    self._metrics["last_subscription_symbol"] = None
 
     def _prepare_subscriptions(self, symbols: tuple[str, ...]) -> list[str]:
         internal_to_ws = {pair: self.to_ws_v2_symbol(pair) for pair in symbols}
@@ -299,6 +306,12 @@ class MarketMicrostructureCollector:
                 result.get("symbol") or message.get("symbol") or ""
             ).strip().upper()
             error = str(message.get("error") or "SUBSCRIPTION_REJECTED")[:240]
+            if not subscription_symbol:
+                for token in error.upper().split():
+                    candidate = token.strip(".,;:'\"()[]{}")
+                    if self._valid_pair(candidate):
+                        subscription_symbol = candidate
+                        break
             with self._lock:
                 key = (subscription_channel, subscription_symbol)
                 if message["success"] is True:
