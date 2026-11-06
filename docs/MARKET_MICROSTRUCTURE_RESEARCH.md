@@ -12,6 +12,8 @@ Der öffentliche Feed ist unauthentifiziert. Die Erfassung benötigt keine priva
 
 Endpoint: wss://ws.kraken.com/v2.
 
+Die Symbolbezeichnungen stammen direkt aus dem Kraken-AssetPairs-Feld wsname; sie werden nicht aus den REST-Tickern oder den internen Asset-Codes selbst konstruiert.
+
 Abonniert werden:
 
 - book mit Tiefe 10 und Snapshot beim Subscribe. Es verarbeitet die vollständigen Snapshots und danach die geordneten Preislevel-Änderungen. Menge null entfernt ein Preislevel.
@@ -36,7 +38,7 @@ Die Rohereignisse werden im Arbeitsspeicher verarbeitet und pro UTC-Minute aggre
 | bid_depth_usd, ask_depth_usd | Sichtbares Quote-Notional in den bis zu zehn gespeicherten Levels |
 | depth_imbalance | Bid-Tiefe minus Ask-Tiefe, geteilt durch die gesamte sichtbare Tiefe |
 | microprice_deviation_bps | Abweichung des mengen-gewichteten Microprice vom Midprice |
-| checksum_checks, checksum_failures | Anzahl erfolgreicher Prüfmöglichkeiten und fehlgeschlagener Prüfsummen |
+| checksum_checks, checksum_failures | Anzahl der Checksum-Prüfversuche und fehlgeschlagener Prüfsummen |
 | trade_id_gaps | Anzahl erkannter übersprungener Trade-IDs innerhalb des beobachteten Streams |
 | connection_gap_count | Verbindungsunterbrechungen, die eine Minutenaggregation betreffen |
 
@@ -46,7 +48,7 @@ Die L1-OFI- und Microprice-Kennzahlen sind beobachtungsbasierte Mikrostrukturfea
 
 Die SQLite-Tabelle microstructure_bars enthält eine Zeile je Paar und Minute. Primärschlüssel (pair, minute_ts) verhindert doppelte Speicherung. Die Daten werden append-only geschrieben; ältere Handels-, Order-, Fill-, Ledger-, Steuer- und Research-Daten werden nicht ersetzt.
 
-- VALID: Ein Book-Zustand wurde mit Checksum verifiziert, ist für die Minute ausreichend frisch und für diese Minute wurden keine Checksum-Fehler, erkannten Trade-ID-Lücken oder Verbindungsunterbrechungen registriert.
+- VALID: Ein Book-Zustand wurde mit Checksum verifiziert, ist für die Minute ausreichend frisch und für diese Minute wurden keine Checksum-Fehler, erkannten Trade-ID-Lücken, unbekannten initialen Trade-ID-Baselines oder Verbindungsunterbrechungen registriert.
 - PARTIAL: Mindestens eine dieser Bedingungen ist nicht erfüllt oder es liegen nur unvollständige Beobachtungen vor.
 
 Eine Minute ohne Trades ist nicht automatisch fehlerhaft: Trade-Anzahl und Trade-Notional bleiben null. Eine Minute ohne verifiziertes Orderbuch kann dagegen nicht als vollständige Orderflow-Beobachtung gelten.
