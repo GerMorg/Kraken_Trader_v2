@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.61 — Erweiterte Mikrostruktur-Minutenbeobachtungen
+
+- Ergänzt Trade-OHLC, Basisvolumen und Zeitstempel je WS-v2-Minute sowie den letzten verifizierten Midprice und die letzten bis zu zehn Bid-/Ask-Level.
+- Erfasst Anzahl und zeitliche Spannweite verifizierter Book-Ereignisse; ein Balken wird nur bei mindestens zwei Book-Samples mit mindestens zehn Sekunden Abstand und erfüllten bisherigen Integritätsprüfungen als VALID markiert.
+- Validiert persistierte Dezimalwerte, Zeitstempel und sortierte L2-Level. Bestehende JSON-Balken bleiben rückwärtskompatibel; keine Datenbankmigration oder Order-/Strategieänderung.
+- Dokumentiert ausdrücklich, dass Minuten-End-Snapshots kein zeitaufgelöster historischer Orderbook-Tape und daher keine exakten historischen Entry-Fills sind. SHADOW- und Live-Sperren bleiben unverändert.
+
 ## 0.1.60 — Validated recovery for historical SQLite CANTOPEN
 
 - Resolves only the exact persisted UNHANDLED_RUNTIME/CYCLE_EXCEPTION incident from FINALIZE_TSM_RESEARCH_SUMMARY_READ when the same research-observation read and summary complete successfully and current database, parent-directory, temporary-directory and SQLite PRAGMA checks pass.
