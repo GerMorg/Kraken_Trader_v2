@@ -1136,6 +1136,7 @@ class TraderRuntime:
             )
             portfolio_histories: dict[str, list[dict[str, Any]]] = {}
             portfolio_market_costs: dict[str, dict[str, Any]] = {}
+            portfolio_instruments: dict[str, Any] = {}
             for instrument in candidates:
                 failure_stage = f"MARKET_SCAN:{instrument.pair_id}"
                 if account is not None:
@@ -1253,6 +1254,7 @@ class TraderRuntime:
                 fee=taker_fee_from_trade_volume(trade_volume,(instrument.pair_id,instrument.altname,instrument.wsname))
                 if self.settings.shadow_strategy_lab_enabled and bars:
                     portfolio_histories[instrument.wsname] = bars
+                    portfolio_instruments[instrument.wsname] = instrument
                     portfolio_market_costs[instrument.wsname] = {
                         "taker_fee_bps": str(fee) if fee is not None else None,
                         "spread_bps": str(ticker.spread_bps),
@@ -1829,6 +1831,79 @@ class TraderRuntime:
                             "order_creation_allowed": False,
                         }
                     else:
+                        # Collect one fresh Kraken L2 snapshot per common H1 research
+                        # bar. This is current execution-cost evidence only; it is never
+                        # retroactively applied to historical candles or treated as fills.
+                        depth_sampled_symbols: list[str] = []
+                        depth_unavailable_symbols: list[str] = []
+                        research_bar_age = (
+                            int(time.time()) - (candidate_bar_ts + 3600)
+                            if candidate_bar_ts is not None else None
+                        )
+                        if (
+                            latest_bar_is_common
+                            and research_bar_age is not None
+                            and -60 <= research_bar_age <= 3900
+                        ):
+                            for symbol in sorted(portfolio_histories):
+                                instrument = portfolio_instruments.get(symbol)
+                                if instrument is None:
+                                    depth_unavailable_symbols.append(symbol)
+                                    continue
+                                try:
+                                    depth_result = self.client.public(
+                                        "Depth", {"pair": instrument.altname, "count": 10}
+                                    )
+                                    depth_book = (
+                                        depth_result.get(instrument.pair_id)
+                                        or depth_result.get(instrument.altname)
+                                        or depth_result.get(instrument.wsname)
+                                    )
+                                    if not isinstance(depth_book, dict) and len(depth_result) == 1:
+                                        only_value = next(iter(depth_result.values()))
+                                        depth_book = only_value if isinstance(only_value, dict) else None
+                                    if not isinstance(depth_book, dict):
+                                        depth_unavailable_symbols.append(symbol)
+                                        continue
+
+                                    def valid_depth_levels(raw_levels: Any) -> list[list[str]]:
+                                        parsed: list[list[str]] = []
+                                        if not isinstance(raw_levels, list):
+                                            return parsed
+                                        for level in raw_levels:
+                                            if not isinstance(level, (list, tuple)) or len(level) < 2:
+                                                continue
+                                            try:
+                                                price = D(str(level[0]))
+                                                quantity = D(str(level[1]))
+                                            except (ArithmeticError, TypeError, ValueError):
+                                                continue
+                                            if (
+                                                price.is_finite() and quantity.is_finite()
+                                                and price > 0 and quantity > 0
+                                            ):
+                                                parsed.append([str(price), str(quantity)])
+                                        return parsed
+
+                                    bids = valid_depth_levels(depth_book.get("bids"))
+                                    asks = valid_depth_levels(depth_book.get("asks"))
+                                    if not bids or not asks:
+                                        depth_unavailable_symbols.append(symbol)
+                                        continue
+                                    portfolio_market_costs[symbol]["order_book_l2"] = {
+                                        "snapshot_ts": int(time.time()),
+                                        "bids": bids,
+                                        "asks": asks,
+                                        "source": "KRAKEN_PUBLIC_DEPTH",
+                                        "levels_requested": 10,
+                                    }
+                                    depth_sampled_symbols.append(symbol)
+                                except Exception:
+                                    # Depth enrichment is optional research evidence:
+                                    # never turn a transient public-data failure into a
+                                    # failed trading cycle or assume zero execution cost.
+                                    depth_unavailable_symbols.append(symbol)
+
                         from app.portfolio_strategies import run_multi_asset_strategy_research
 
                         multi_asset_research_summary = run_multi_asset_strategy_research(
@@ -1836,6 +1911,15 @@ class TraderRuntime:
                             portfolio_market_costs,
                             now_epoch=int(time.time()),
                         )
+                        multi_asset_research_summary["current_order_book_observation_summary"] = {
+                            "source": "KRAKEN_PUBLIC_DEPTH",
+                            "snapshot_count": len(depth_sampled_symbols),
+                            "sampled_symbols": depth_sampled_symbols,
+                            "unavailable_symbols": depth_unavailable_symbols,
+                            "once_per_new_common_h1_bar": True,
+                            "historical_cost_evidence": False,
+                            "actual_fills": False,
+                        }
                         multi_asset_research_summary["snapshot_persisted"] = False
                         if (
                             multi_asset_research_summary.get("status") == "RESEARCH_COMPLETE"

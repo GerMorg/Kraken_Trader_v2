@@ -1,12 +1,12 @@
-## Aktueller Status — 0.1.51
+## Aktueller Status — 0.1.52
 
-**Version 0.1.51 ergänzt zwei voneinander getrennte Multi-Asset-Research-Module.** Variante A untersucht dynamisches Rebalancing von negativ korrelierten USD-Krypto-Assets und vergleicht es mit periodischem Equal-Weight-Rebalancing und Buy-and-Hold. Variante B untersucht Relative-Value-/Mean-Reversion-Pairs mit Hedge-Ratio, Spread-Z-Score, hypothetischen Long-/Short-Spread-Trades sowie Spread- und Zeit-Exit.
+**Version 0.1.52 erweitert das Multi-Asset-Research und die Kostenmessung.** Variante A liefert eine vorab definierte Sensitivität für negative Korrelationsschwellen und eine Rangliste der aktuell am wenigsten korrelierten Paare. Variante B führt Exits erst am Open der nächsten H1-Kerze aus und ergänzt eine gemeinsame, unverschuldete Portfolio-Simulation mit höchstens vier gleichzeitig offenen Paaren und ohne doppelte Asset-Belegung.
 
-Die Berechnung nutzt synchronisierte, lückenlose geschlossene H1-Kerzen aus dem beobachteten Kraken-USD-Universum. Je frischem gemeinsamen Stundenbalken wird höchstens ein unveränderlicher Snapshot in `multi_asset_research_runs` gespeichert. Gebühren, aktueller Spread und Slippage werden nur als historische Spot-Kosten-Proxys verwendet; unbekannte Werte werden nicht als null angenommen.
+Die Kostenanalyse bewertet Slippage-Szenarien von 0/1/2/5/10 Basispunkten je Seite, berechnet Break-even-Slippage und erfasst zu jedem neuen gemeinsamen H1-Forschungsstand aktuelle Kraken-Orderbuchtiefe. Für standardisierte Ordergrößen werden sichtbare Liquidität, Spread, Taker-Gebühr und modellierte Slippage getrennt ausgewiesen. Diese L2-Werte sind aktuelle Momentaufnahmen, keine historischen Kosten oder tatsächlichen Fills. Die bisherige 5-bp-Baseline bleibt erhalten und wird nicht als tatsächliche Kostenwahrheit behandelt.
 
-Variante B zeigt die erforderlichen BUY-/SELL-Margin-Richtungen je Leg anhand der Instrument-Metadaten. Formale Cointegrationstests, Mehrfachtestkorrektur, echte historische Orderbuchkosten, Margin-Eröffnungs-/Rollover-Finanzierung und eine gemeinsame Portfolio-Simulation über mehrere parallele Pairs bleiben offen. Die Resultate sind deshalb Kandidaten-Research, keine nachgewiesene Nettorendite.
+Die gemeinsame Pair-Simulation berücksichtigt Überschneidungen, begrenzt parallele Positionen und markiert das Portfolio stündlich. Sie bleibt ein Research-Modell ohne Margin-Hebel. Formale Cointegrationstests, Mehrfachtestkorrektur, historische Orderbuchdaten und bestätigte Margin-Eröffnungs-/Rollover-Kosten bleiben offen.
 
-Beide Varianten erzeugen keine Orders oder Order-Intents, verändern nicht die produktive TSM-Strategie und wählen keine Kandidaten automatisch aus. Wir vergleichen sie zunächst prospektiv mit den bestehenden Kandidaten und wählen erst nach belastbarer OOS-/Forward-Auswertung Strategien für eine separat zu prüfende Live-Freigabe aus. `INTERNAL_LIVE_EXECUTION_RELEASED` bleibt `False`.
+Die Erweiterungen erzeugen keine Orders oder Order-Intents, verändern nicht die produktive TSM-Strategie und wählen keine Kandidaten automatisch aus. `INTERNAL_LIVE_EXECUTION_RELEASED` bleibt `False`; vorhandene Datenbankbestände werden nicht zurückgesetzt oder gelöscht.
 
 Siehe [Multi-Asset-Research](docs/MULTI_ASSET_STRATEGY_RESEARCH.md) und [Strategie-Research](docs/STRATEGY_RESEARCH.md).
 ## Vorversion — 0.1.50

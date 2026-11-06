@@ -2,7 +2,7 @@
 
 ## Zweck und Abgrenzung
 
-Ab App-Version 0.1.51 untersucht der bestehende SHADOW-Zyklus zwei weitere, strikt getrennte Research-Ansätze:
+Ab App-Version 0.1.52 untersucht der bestehende SHADOW-Zyklus zwei weitere, strikt getrennte Research-Ansätze:
 
 - **Variante A — Volatility Harvesting / Parrondo-inspiriertes Rebalancing:** Ein Portfolio aus aktuell stark negativ korrelierten USD-Krypto-Paaren wird dynamisch ausgewählt und bei Bedarf auf Zielgewichte zurückgesetzt.
 - **Variante B — Relative-Value-/Mean-Reversion-Pairs:** Zwei positiv gemeinsam bewegte Assets werden anhand eines rollierenden logarithmischen Preis-Spreads untersucht. Bei einer großen Abweichung wird ein hypothetischer Long-Spread oder Short-Spread bewertet.
@@ -64,6 +64,7 @@ Ein Kandidat wird nur weiter untersucht, wenn:
 ### Signal, Richtung und Exit-Regeln
 
 - Entscheidung nach dem Schluss der aktuellen Kerze; Einstieg wird frühestens am Open der nächsten H1-Kerze bewertet.
+- Ein Exit-Signal wird ebenfalls erst nach Kerzenschluss erkannt. Die hypothetische Ausführung erfolgt frühestens am Open der darauffolgenden H1-Kerze, nicht zum selben Schlusskurs.
 - Z-Score mindestens +2,0: `SHORT_SPREAD` (Asset A short, Asset B long).
 - Z-Score höchstens -2,0: `LONG_SPREAD` (Asset A long, Asset B short).
 - Ausstieg bei Rückkehr auf |Z| <= 0,5.
@@ -72,7 +73,20 @@ Ein Kandidat wird nur weiter untersucht, wenn:
 - Die zum Einstieg geschätzte Hedge-Ratio wird für den gesamten Trade eingefroren.
 - Trades überlappen sich pro Paar nicht. Trades, deren Ziel über eine Train-/Validation-/Test-Grenze läuft, werden als Boundary-Purged markiert.
 
-Das hypothetische Pair-PnL wird auf ein kombiniertes Brutto-Notional von 1 normiert; die Leg-Gewichte berücksichtigen die Hedge-Ratio und das relative Kursniveau. Die Rückrechnung ist ein Zwei-Leg-Signal-/Return-Simulator, noch keine gemeinsame Simulation aller gleichzeitig offenen Paare.
+Das hypothetische Pair-PnL wird auf ein kombiniertes Brutto-Notional von 1 normiert; die Leg-Gewichte berücksichtigen die Hedge-Ratio und das relative Kursniveau.
+
+### Gemeinsame Pair-Portfolio-Simulation
+
+Die Kandidaten aller Paare werden zusätzlich zeitlich gemeinsam simuliert:
+
+- maximal vier gleichzeitig offene Pairs;
+- 25 % des anfänglichen Equity als kombiniertes Brutto-Notional je Pair, maximal 100 % Gesamt-Brutto-Notional;
+- ein Asset darf nicht gleichzeitig in mehreren offenen Pairs vorkommen;
+- Konflikte werden deterministisch nach Entry-Zeitpunkt, danach absteigendem Betrag des Entry-Z-Scores und Symbolnamen priorisiert;
+- Pair-Positionen werden stündlich mark-to-market bewertet; Ein- und Ausstiegskosten werden am jeweiligen Open angesetzt;
+- die Slippage-Sensitivität wird für 0/1/2/5/10 bp je Seite ausgewiesen.
+
+Die Allokation bleibt auf das anfängliche Equity bezogen und wird nicht automatisch reinvestiert. Es wird kein Hebel eingesetzt und keine Kraken-Margin-/Liquidationslogik simuliert. `portfolio_pnl: false` bleibt korrekt, da es sich nicht um echte Fill- oder KontopnL handelt.
 
 ### Kraken-Margin-Prüfung
 
@@ -80,9 +94,11 @@ Aktuelle Signale nennen für jedes Leg die benötigte Kraken-Richtung (BUY oder 
 
 ## Kostenmodell und Kennzeichnung
 
-Bekannte aktuelle Kraken-Taker-Gebühren (wenn verfügbar), aktueller Ticker-Spread sowie fest angenommene 5 Basispunkte Slippage je Seite werden als historische Kosten-Proxys verwendet. Der aktuelle Spread ist kein historischer Spreadnachweis. Bei fehlender Gebühren- oder Spreadinformation wird keine Netto-Kennzahl berechnet; fehlende Kosten werden nicht auf null gesetzt.
+Bekannte aktuelle Kraken-Taker-Gebühren (wenn verfügbar), aktueller Ticker-Spread sowie 5 Basispunkte Slippage je Seite bleiben die Baseline-Historien-Proxys. Zusätzlich werden 0/1/2/5/10 bp Slippage-Szenarien und Break-even-Slippage ausgewiesen. Die 0-bp-Variante ist eine mathematische Untergrenze, kein garantiert ausführbarer Preis. Bei fehlenden Gebühren- oder Spreadinformationen wird keine Netto-Kennzahl berechnet; fehlende Kosten werden nicht auf null gesetzt.
 
-Für Variante B werden die beiden Legs beim Ein- und Ausstieg kostenbelastet. Finanzierung, Borrow-/Margin-Open-Gebühren, Rollover, Liquidationskosten und kontospezifische Margin-Zinsen sind noch nicht modelliert. Alle Netto-Kennzahlen tragen deshalb den Status eines Kosten-Proxys.
+Für Variante B werden beide Legs beim Ein- und Ausstieg belastet. Zusätzlich werden zu jedem frischen gemeinsamen H1-Bar öffentliche Kraken-Depth-Snapshots (bis zu zehn sichtbare Levels) je Asset erfasst und Round-Trip-Kosten für 250/500/1.000/2.500 USD simuliert. Je sichtbarer Preisstufe werden höchstens 25 % der angezeigten Menge genutzt. Die L2-Auswertung nutzt denselben Snapshot für Kauf und Verkauf und ist daher nur ein aktueller Kostenindikator, kein historischer oder zeitlich ausführbarer Round-Trip.
+
+Finanzierung, Borrow-/Margin-Open-Gebühren, Rollover, Liquidationskosten und kontospezifische Margin-Zinsen sind noch nicht modelliert. Alle Netto-Kennzahlen tragen deshalb den Status eines Kosten-Proxys.
 
 ## Chronologische Auswertung
 

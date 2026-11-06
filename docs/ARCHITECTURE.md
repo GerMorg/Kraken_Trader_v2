@@ -11,6 +11,7 @@
 - `app/position_management.py`: deterministischer, pro Exchange-Positions-ID arbeitender Shadow-Exit-Planer für Teilgewinn und Stop-Risikoreduktion; keinerlei eigenständige Orderübermittlung.
 - `app/backtest.py`: chronologischer OHLCV-Szenario-Simulator mit realistischen Grenzen klar benannt, konservativer voller Margin-Kostenbasis, konto-gewichteter Equitykurve und Drawdown-/Tail-/Kostenkennzahlen.
 - `app/costs.py`: Gesamtkostenmodell; wenn tatsächliche Handels-/Margin-Kosten unbekannt sind, Status `INCOMPLETE`.
+- `app/portfolio_strategies.py`: getrennte Parrondo-/Pair-Research-Varianten mit Korrelations-/Slippage-Sensitivität, aktuellen L2-Kostenindikatoren und begrenzter gemeinsamer Pair-Portfolio-Simulation (SHADOW-only).
 - `app/risk.py`: risikobasierte Notionalgröße und unabhängiges Entry-Gate.
 - `app/execution.py`: Order-Intent, strikte Parametervalidierung, persistente Order-State-Machine und zentrale Order Authority. Es gibt keinen separaten Compile-Time-Release-Schalter; unabhängige Laufzeit-Gates blockieren aktuell reguläre Entries.
 - `app/portfolio.py`: richtungsgetrennte Brutto-/Nettoexposure-Aggregation, streng geprüfte Margin-Lots, paarbezogene Mengensicherheit und Kennzeichnung erwarteter (nicht kontobestätigter) EWR-Finanzierungswährung.

@@ -1,22 +1,28 @@
-## Version 0.1.51 — Multi-Asset-Research (SHADOW only)
+## Version 0.1.52 — Kostenkalibrierung und Multi-Asset-Research (SHADOW only)
 
-Version 0.1.51 ergänzt MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY für zwei neue Research-Varianten:
+Version 0.1.52 erweitert MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY und die SHADOW-Kostenmessung:
 
 - Variante A: dynamische Auswahl disjunkter negativ korrelierter Paare, 24-Stunden-Rebalancing, USD-Cash für nicht ausgewählte Titel, Vergleich gegen periodisches Equal-Weight-Rebalancing und Buy-and-Hold.
-- Variante B: Relative-Value-/Mean-Reversion-Pairs mit rollierender Hedge-Ratio, Residual-AR(1)-Halbwertszeit, Z-Score-Einstieg/-Ausstieg, Spread-Stop, maximal 48 Stunden Haltedauer und Kennzeichnung der nötigen BUY-/SELL-Margin-Richtung pro Leg.
+- Variante B: Relative-Value-/Mean-Reversion-Pairs mit rollierender Hedge-Ratio, Residual-AR(1)-Halbwertszeit, Z-Score-Einstieg/-Ausstieg, Spread-Stop und Kennzeichnung der nötigen BUY-/SELL-Margin-Richtung pro Leg.
+- Variante B führt close-basierte Exits frühestens am nächsten H1-Open aus und simuliert alle Pairs gemeinsam: maximal vier offene Pairs, 25 % des anfänglichen Equity je Pair, keine doppelte Coin-Belegung.
+- Variante A vergleicht die vorab definickten Korrelationsschwellen -0,25/-0,15/-0,05/0,0; -0,25 bleibt die primäre Hypothese.
+- TSM- und Kandidaten-Research zeigen Kosten-Sensitivität für 0/1/2/5/10 bp Slippage je Seite sowie Break-even-Slippage.
+- Je neuem gemeinsamen H1-Bar werden aktuelle Kraken-Depth-Snapshots erfasst und für 250/500/1.000/2.500 USD bei 25 % sichtbarer Level-Partizipation simuliert.
 
 Die App verwendet synchronisierte geschlossene H1-Kerzen und ergänzt fehlende Balken niemals. Snapshots werden je gemeinsamem Stundenzeitpunkt idempotent in multi_asset_research_runs gespeichert; die Datenbankmigration ist additiv. Vorhandene SQLite-Daten dürfen nicht gelöscht oder neu initialisiert werden.
 
 ### Beobachtung und Interpretation
 
-1. Version 0.1.51 installieren, ohne den vorhandenen /data/state/kraken_trader.sqlite3-Datenbestand zu löschen.
+1. Version 0.1.52 installieren, ohne den vorhandenen /data/state/kraken_trader.sqlite3-Datenbestand zu löschen.
 2. Prüfen, dass der Zyklus CYCLE_SUMMARY mit multi_asset_research_status ausgibt.
 3. Bei ausreichender gemeinsamer H1-Historie erscheint MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY höchstens einmal pro neuem gemeinsamen Stundenbalken.
 4. variant_a_volatility_harvesting getrennt nach Brutto- und Spot-Netto-Proxy, Drawdown, Turnover und Buy-and-Hold-/periodischem Benchmark prüfen.
-5. variant_b_relative_value_pairs nach Train-/Validation-/Test-Samples, Paaranzahl, Kostenqualität, durchschnittlichem Netto-Proxy, Win-Rate, Profit-Factor, Spread-Stop-Häufigkeit und pending_trades_at_sample_end prüfen.
+5. variant_b_relative_value_pairs nach Train-/Validation-/Test-Samples, Kostenqualität, concurrent_portfolio (Trades, Slots, Konflikte, Drawdown) und Slippage-Sensitivität prüfen.
+6. Slippage-Szenarien mit aktuellen L2-Notional-Snapshots vergleichen. 0 bp ist eine theoretische Untergrenze; Depth-Snapshots sind keine historischen Fills.
+7. Die Ergebnisse nicht als Margin-Nettorendite interpretieren: Open-/Rollover-Gebühren und kontospezifische Borrow-Kosten bleiben unbestätigt.
 6. Unbekannte Fee-/Spread-Werte bleiben unvollständig. Margin-Finanzierung ist nicht eingerechnet; Instrument-Leverage-Metadaten sind kein Nachweis einer kontoseitigen Margin-Freigabe.
 
-Die Pair-Methode verwendet nur die AR(1)-Residual-Halbwertszeit als Mean-Reversion-Filter; sie hat noch keinen formalen Cointegrationstest und keine Mehrfachtestkorrektur. Die gleichzeitige Kapitalbindung über mehrere Pair-Signale wird noch nicht als gemeinsames Portfolio simuliert. Daher sind auch positive Testwerte keine Live-Freigabe. Beide Varianten bleiben vom operativen Entry-Pfad getrennt.
+Die Pair-Methode verwendet nur die AR(1)-Residual-Halbwertszeit als Mean-Reversion-Filter; sie hat noch keinen formalen Cointegrationstest und keine Mehrfachtestkorrektur. Die gemeinsame Simulation ist unverschuldet und bildet keine Kraken-Margin- oder Liquidationslogik ab. L2-Snapshots sind aktuelle Momentaufnahmen, keine historischen Quotes. Daher sind auch positive Testwerte keine Live-Freigabe. Beide Varianten bleiben vom operativen Entry-Pfad getrennt.
 
 ## Version 0.1.50 — SQLite-Research-Finalisierung
 

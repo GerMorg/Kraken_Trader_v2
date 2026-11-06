@@ -9,6 +9,8 @@ from app.portfolio_strategies import (
     _pair_model,
     _select_negative_pairs,
     _simulate_rebalancing,
+    _pair_portfolio_simulation,
+    _current_order_book_cost_diagnostics,
     run_multi_asset_strategy_research,
 )
 
@@ -132,7 +134,10 @@ def test_pair_backtest_uses_non_overlapping_trades_and_does_not_force_end_exit()
     prices_a, prices_b = _correlated_pair(420)
     for shock_index in (240, 300, 360):
         prices_a[shock_index] *= math.exp(0.055)
-    opens = {"A/USD": list(prices_a), "B/USD": list(prices_b)}
+    opens = {
+        "A/USD": [price * 1.001 for price in prices_a],
+        "B/USD": [price * 0.999 for price in prices_b],
+    }
     closes = {"A/USD": list(prices_a), "B/USD": list(prices_b)}
     costs = {symbol: {"taker_fee_bps": 5, "spread_bps": 4} for symbol in closes}
 
@@ -153,6 +158,15 @@ def test_pair_backtest_uses_non_overlapping_trades_and_does_not_force_end_exit()
     if trades:
         assert all(item["direction"] in {"LONG_SPREAD", "SHORT_SPREAD"} for item in trades)
         assert all(item["net_return_bps"] is not None for item in trades)
+        assert all(item["exit_index"] == item["exit_trigger_index"] + 1 for item in trades)
+        assert all(
+            item["exit_execution_reference"] == "NEXT_H1_OPEN_AFTER_CLOSE_SIGNAL"
+            for item in trades
+        )
+        assert all(
+            item["exit_price_a"] == opens["A/USD"][item["exit_index"]]
+            for item in trades
+        )
 
 
 def test_multi_asset_report_keeps_both_variants_research_only() -> None:
@@ -183,6 +197,16 @@ def test_multi_asset_report_keeps_both_variants_research_only() -> None:
     assert report["status"] == "RESEARCH_COMPLETE"
     assert report["as_of_bar_freshness"] == "FRESH"
     assert report["variant_a_volatility_harvesting"]["portfolio_simulation"] is True
+    assert len(
+        report["variant_a_volatility_harvesting"]["negative_correlation_threshold_sensitivity"]
+    ) == 4
+    assert len(
+        report["variant_a_volatility_harvesting"]["primary_threshold_slippage_sensitivity"]
+    ) == 5
+    assert report["variant_b_relative_value_pairs"]["portfolio_simulation"] is True
+    assert len(
+        report["variant_b_relative_value_pairs"]["concurrent_portfolio_slippage_sensitivity"]
+    ) == 5
     assert report["variant_b_relative_value_pairs"]["latest_pair_eligible_count"] >= 1
     assert all(
         item["margin_execution_eligible_from_instrument_metadata"] is True
@@ -206,6 +230,69 @@ def test_multi_asset_insufficient_history_does_not_claim_strategy_result() -> No
     assert report["status"] == "INSUFFICIENT_ASSET_HISTORY"
     assert report["release_gate_eligible"] is False
     assert report["order_creation_allowed"] is False
+
+
+def test_pair_portfolio_simulation_limits_slots_and_prevents_double_asset_exposure() -> None:
+    prices = [100.0 + index for index in range(240)]
+    opens = {symbol: list(prices) for symbol in ("A/USD", "B/USD", "C/USD", "D/USD")}
+    closes = {symbol: list(prices) for symbol in ("A/USD", "B/USD", "C/USD", "D/USD")}
+    common = {
+        "direction": "LONG_SPREAD",
+        "entry_index": 180,
+        "exit_index": 200,
+        "entry_price_a": 280.0,
+        "entry_price_b": 280.0,
+        "leg_weight_a": 0.5,
+        "leg_weight_b": 0.5,
+        "fee_per_side_bps": 1.0,
+        "half_spread_per_side_bps": 0.5,
+        "split": "train",
+    }
+    trades = [
+        {**common, "symbol_a": "A/USD", "symbol_b": "B/USD", "entry_z_score": 3.0},
+        {**common, "symbol_a": "C/USD", "symbol_b": "D/USD", "entry_z_score": 2.5},
+        {**common, "symbol_a": "A/USD", "symbol_b": "C/USD", "entry_z_score": 2.0},
+    ]
+
+    result = _pair_portfolio_simulation(
+        trades,
+        opens,
+        closes,
+        bar_count=12,
+        train_end=210,
+        validation_end=230,
+        slippage_bps_per_side=5.0,
+    )
+
+    assert result["selected_trade_count"] == 2
+    assert result["skipped_due_to_asset_overlap"] == 1
+    assert result["observed_max_concurrent_pairs"] == 2
+    assert result["maximum_combined_gross_notional_pct_of_initial_equity"] == 100.0
+    assert result["spot_net_portfolio"] is not None
+    assert result["portfolio_pnl"] is False
+    assert result["actual_fills"] is False
+
+
+def test_current_l2_cost_diagnostics_use_depth_and_flag_not_fills() -> None:
+    snapshot = {
+        "snapshot_ts": 1_700_000_000,
+        "bids": [[str(100.0 - index * 0.01), "100"] for index in range(10)],
+        "asks": [[str(100.1 + index * 0.01), "100"] for index in range(10)],
+    }
+
+    result = _current_order_book_cost_diagnostics({
+        "A/USD": {"taker_fee_bps": "5", "order_book_l2": snapshot}
+    })
+
+    diagnostics = result["by_symbol"]["A/USD"]
+    assert diagnostics["status"] == "CURRENT_L2_COST_ESTIMATE"
+    assert diagnostics["round_trip_assumption"] == "SAME_SNAPSHOT_BUY_AND_SELL; NOT_A_FILL"
+    assert all(
+        item["status"] == "VISIBLE_DEPTH_FILLED"
+        for item in diagnostics["notional_scenarios"]
+    )
+    assert result["historical_cost_evidence"] is False
+    assert result["actual_fills"] is False
 
 
 def test_pair_trade_return_uses_beta_as_dollar_notional_ratio() -> None:
