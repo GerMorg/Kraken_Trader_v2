@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.59 — Live filesystem diagnostics for historical SQLite CANTOPEN breakers
+
+- Captures a fresh, allowlisted snapshot of the current process, database file, parent directory, WAL/SHM/journal files, temporary directory and SQLite PRAGMAs when an active persisted breaker is identified as `SQLITE_CANTOPEN`.
+- Labels the snapshot explicitly as current runtime state, not as evidence from the historical failure timestamp; any original failure-time snapshot remains separately exposed when present.
+- Isolates diagnostic-probe failures so they cannot fail the trading cycle; unrelated SQLite breaker types do not trigger the probe.
+- Adds tests for current-vs-historical separation, probe-failure containment and CANTOPEN-only collection. No schema change, breaker auto-clear, order-authority change or strategy change.
+
 ## 0.1.58 — Sichtbarkeit persistierter SQLite-Speicherdiagnose
 
 - Exposes the allowlisted filesystem, database/WAL/SHM, temporary-directory and SQLite PRAGMA snapshot already persisted with a `SQLITE_CANTOPEN` runtime breaker.
