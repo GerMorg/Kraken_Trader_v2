@@ -321,7 +321,9 @@ def _exchange_order_rows(response: Any, key: str) -> dict[str, dict[str, Any]] |
     return {str(order_id): row for order_id, row in rows.items()}
 
 
-def _circuit_breaker_diagnostics(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _circuit_breaker_diagnostics(
+    rows: list[dict[str, Any]], *, persistence: Persistence | None = None
+) -> list[dict[str, Any]]:
     """Expose actionable breaker causes without dumping arbitrary persisted detail."""
     diagnostics: list[dict[str, Any]] = []
     for row in rows:
@@ -370,42 +372,78 @@ def _circuit_breaker_diagnostics(rows: list[dict[str, Any]]) -> list[dict[str, A
             )
         )
         storage = detail.get("sqlite_storage_diagnostics")
-        if is_sqlite_cantopen and isinstance(storage, dict):
-            safe_storage: dict[str, Any] = {}
-            for key in ("database_path", "temporary_directory", "sqlite_temp_store", "sqlite_journal_mode"):
-                value = storage.get(key)
-                if isinstance(value, str):
-                    safe_storage[key] = value[:240]
-            for key in ("process_uid", "process_gid"):
-                value = storage.get(key)
-                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-                    safe_storage[key] = value
-            state_fields = (
-                "database", "database_parent", "database_wal", "database_shm",
-                "database_journal", "temporary_directory_state",
-            )
-            bool_fields = ("exists", "is_directory", "readable", "writable", "searchable")
-            int_fields = ("stat_errno", "uid", "gid", "size_bytes")
-            for state_key in state_fields:
-                state = storage.get(state_key)
-                if not isinstance(state, dict):
-                    continue
-                safe_state: dict[str, Any] = {}
-                for key in bool_fields:
-                    value = state.get(key)
-                    if isinstance(value, bool):
-                        safe_state[key] = value
-                for key in int_fields:
-                    value = state.get(key)
-                    if isinstance(value, int) and not isinstance(value, bool):
-                        safe_state[key] = value
-                mode = state.get("mode")
-                if isinstance(mode, str):
-                    safe_state["mode"] = mode[:16]
-                if safe_state:
-                    safe_storage[state_key] = safe_state
-            if safe_storage:
-                item["sqlite_storage_diagnostics"] = safe_storage
+        if is_sqlite_cantopen:
+            def safe_storage_snapshot(raw: Any) -> dict[str, Any]:
+                if not isinstance(raw, dict):
+                    return {}
+                safe_storage: dict[str, Any] = {}
+                for key in (
+                    "database_path", "temporary_directory", "sqlite_temp_store",
+                    "sqlite_journal_mode",
+                ):
+                    value = raw.get(key)
+                    if isinstance(value, str):
+                        safe_storage[key] = value[:240]
+                for key in ("process_uid", "process_gid"):
+                    value = raw.get(key)
+                    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                        safe_storage[key] = value
+                state_fields = (
+                    "database", "database_parent", "database_wal", "database_shm",
+                    "database_journal", "temporary_directory_state",
+                )
+                bool_fields = ("exists", "is_directory", "readable", "writable", "searchable")
+                int_fields = ("stat_errno", "uid", "gid", "size_bytes")
+                for state_key in state_fields:
+                    state = raw.get(state_key)
+                    if not isinstance(state, dict):
+                        continue
+                    safe_state: dict[str, Any] = {}
+                    for key in bool_fields:
+                        value = state.get(key)
+                        if isinstance(value, bool):
+                            safe_state[key] = value
+                    for key in int_fields:
+                        value = state.get(key)
+                        if isinstance(value, int) and not isinstance(value, bool):
+                            safe_state[key] = value
+                    mode = state.get("mode")
+                    if isinstance(mode, str):
+                        safe_state["mode"] = mode[:16]
+                    if safe_state:
+                        safe_storage[state_key] = safe_state
+                return safe_storage
+
+            historical_storage = safe_storage_snapshot(storage)
+            if historical_storage:
+                item["sqlite_storage_diagnostics"] = historical_storage
+
+            # The original failure may predate storage snapshots. Capture the
+            # current process/filesystem state separately; never label it as
+            # evidence from the historical failure time.
+            if persistence is not None:
+                try:
+                    current_storage = safe_storage_snapshot(persistence.storage_diagnostics())
+                    if current_storage:
+                        item["sqlite_current_storage_diagnostics"] = current_storage
+                        item["sqlite_current_storage_diagnostics_observed_at"] = (
+                            datetime.now(timezone.utc).isoformat()
+                        )
+                        item["sqlite_current_storage_diagnostics_scope"] = (
+                            "CURRENT_RUNTIME_STATE_NOT_ORIGINAL_FAILURE_STATE"
+                        )
+                except Exception as exc:
+                    probe_error: dict[str, Any] = {
+                        "exception_type": type(exc).__name__[:100],
+                    }
+                    if isinstance(exc, sqlite3.Error):
+                        code = getattr(exc, "sqlite_errorcode", None)
+                        name = getattr(exc, "sqlite_errorname", None)
+                        if isinstance(code, int):
+                            probe_error["sqlite_error_code"] = code
+                        if isinstance(name, str):
+                            probe_error["sqlite_error_name"] = name[:80]
+                    item["sqlite_current_storage_diagnostics_probe_error"] = probe_error
 
         asset_results = detail.get("asset_results")
         if isinstance(asset_results, list):
@@ -1214,7 +1252,7 @@ class TraderRuntime:
                 account_snapshot_available=account is not None,
             )
             active_breaker_rows = self.persistence.circuit_breakers()
-            active_breaker_diagnostics = _circuit_breaker_diagnostics(active_breaker_rows)
+            active_breaker_diagnostics = _circuit_breaker_diagnostics(active_breaker_rows, persistence=self.persistence)
             self.audit.emit(
                 "CIRCUIT_BREAKER_STATUS",
                 cycle_id=cycle_id,
@@ -2149,7 +2187,7 @@ class TraderRuntime:
             self.microstructure.flush_due()
             microstructure_status = self.microstructure.status()
             final_breaker_rows = self.persistence.circuit_breakers()
-            final_breaker_diagnostics = _circuit_breaker_diagnostics(final_breaker_rows)
+            final_breaker_diagnostics = _circuit_breaker_diagnostics(final_breaker_rows, persistence=self.persistence)
             result = {
                 "cycle_id": cycle_id,
                 "status": "OK",
