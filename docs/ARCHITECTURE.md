@@ -30,7 +30,7 @@
 
 Der kontinuierliche Collector ist vom normalen 5-Minuten-/H1-Handelszyklus entkoppelt. Das H1-Research kann einen bereits gespeicherten gemeinsamen Stundenbalken überspringen, während der WebSocket-Worker währenddessen weiterhin Book- und Trade-Updates beobachtet. Er abonniert nur das dynamisch nach 24h-Quote-Volumen ausgewählte USD-Krypto-Universum (konfigurierbar 1–20 Paare).
 
-Es werden nur verifizierte Book-Snapshots/Updates als gültiger Orderbuchzustand behandelt. Pro Minute werden Trade-Notionals, Trade-ID-Lücken, L1-OFI-Proxy, Spread, Tiefe und Microprice-Metriken gespeichert. Die vollständige Datenqualität und Grenzen sind in Market Microstructure Research beschrieben. Der Collector liefert keine Live-Strategieentscheidung und keine Orderdaten.
+REST-`wsname`-Symbole werden für WebSocket v2 in das API-Symbolformat überführt (insbesondere `XBT/USD` → `BTC/USD`); eingehende Daten werden wieder auf den internen REST-Paar-Schlüssel zurückgeführt. Der Collector verfolgt Acknowledgements pro Channel/Symbol und unterscheidet `SUBSCRIBING`, `CONNECTED` und `CONNECTED_PARTIAL`. Einzelne abgelehnte Symbole lösen keinen Reconnect-Sturm aus; der Fehler bleibt im `CYCLE_SUMMARY` sichtbar. Es werden nur verifizierte Book-Snapshots/Updates als gültiger Orderbuchzustand behandelt. Pro Minute werden Trade-Notionals, Trade-ID-Lücken, L1-OFI-Proxy, Spread, Tiefe und Microprice-Metriken gespeichert. Die vollständige Datenqualität und Grenzen sind in Market Microstructure Research beschrieben. Der Collector liefert keine Live-Strategieentscheidung und keine Orderdaten.
 
 ## Research-Pfade ab Version 0.1.47/0.1.48
 

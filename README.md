@@ -1,4 +1,6 @@
-## Aktueller Status — 0.1.55
+## Aktueller Status — 0.1.56
+
+**Version 0.1.56 korrigiert die Kraken-WebSocket-v2-Symbolformate.** Die REST-Instrumentmetadaten liefern für Bitcoin `XBT/USD`, WebSocket v2 erwartet dagegen `BTC/USD`. Die App übersetzt das Symbol für die Subscription und ordnet eingehende Daten wieder dem internen REST-Paar zu. Subscription-Bestätigungen und Ablehnungen werden je Channel und Symbol nachverfolgt; einzelne Ablehnungen reißen nicht mehr die gesamte Verbindung ab und erzeugen keinen Reconnect-Sturm. `CYCLE_SUMMARY` enthält jetzt die erwarteten, bestätigten, abgelehnten und noch offenen Subscriptions samt genauer Kraken-Fehlermeldung.
 
 **Version 0.1.55 ergänzt Variante E — Orderflow & Market Microstructure.** Ein separater öffentlicher Kraken-WebSocket-v2-Worker beobachtet für standardmäßig zwölf der liquidesten ausgewählten USD-Kryptopaare kontinuierliche L2-Book-Updates und einzelne Trades. Das Book wird mit dem Kraken-CRC32-Checksum geprüft; Trades werden anhand ihrer Trade-ID auf erkennbare Feed-Lücken kontrolliert. Aus den Ereignissen entstehen append-only gespeicherte Ein-Minuten-Aggregate mit L1-Orderflow-Imbalance, taker-signed Trade-Notional, Spread, sichtbarer Tiefe, Depth-Imbalance und Microprice-Abweichung.
 

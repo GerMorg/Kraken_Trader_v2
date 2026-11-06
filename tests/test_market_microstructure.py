@@ -144,3 +144,76 @@ def test_microstructure_observer_rejects_non_usd_pairs_and_bad_timestamps():
     with pytest.raises(ValueError, match="MICROSTRUCTURE_IDENTITY_INVALID"):
         db.record_microstructure_bar({**with_value, "minute_ts": 1_800_000_001})
     db.close()
+
+
+def test_websocket_v2_converts_rest_xbt_symbol_and_maps_stream_data_back():
+    db = Persistence(":memory:")
+    collector = MarketMicrostructureCollector(db, enabled=False)
+    collector.update_symbols(["XBT/USD", "ETH/USD"])
+
+    ws_symbols = collector._prepare_subscriptions(collector.desired_symbols())
+    assert ws_symbols == ["BTC/USD", "ETH/USD"]
+    assert collector.status()["subscribed_symbols"] == ["XBT/USD", "ETH/USD"]
+
+    collector._metrics["connected"] = True
+    for channel, symbol in (
+        ("book", "BTC/USD"),
+        ("trade", "BTC/USD"),
+        ("book", "ETH/USD"),
+        ("trade", "ETH/USD"),
+    ):
+        assert collector.process_message({
+            "method": "subscribe",
+            "success": True,
+            "result": {"channel": channel, "symbol": symbol},
+        }) is True
+
+    assert collector.status()["subscription_expected_count"] == 4
+    assert collector.status()["subscription_acknowledged_count"] == 4
+    assert collector.status()["subscription_pending_count"] == 0
+    assert collector.status()["subscription_coverage_pct"] == 100.0
+    assert collector.status()["connection_state"] == "CONNECTED"
+
+    bids = {Decimal("100"): Decimal("2")}
+    asks = {Decimal("101"): Decimal("3")}
+    snapshot = {
+        "channel": "book",
+        "type": "snapshot",
+        "data": [{
+            "symbol": "BTC/USD",
+            "timestamp": "2027-01-15T08:00:01.000000Z",
+            "bids": [{"price": "100", "qty": "2"}],
+            "asks": [{"price": "101", "qty": "3"}],
+            "checksum": calculate_book_checksum(bids, asks),
+        }],
+    }
+    assert collector.process_message(snapshot) is True
+    assert "XBT/USD" in collector._books
+    assert "BTC/USD" not in collector._books
+    db.close()
+
+
+def test_rejected_subscription_is_reported_without_reconnect_loop():
+    db = Persistence(":memory:")
+    collector = MarketMicrostructureCollector(db, enabled=False)
+    collector.update_symbols(["XBT/USD"])
+    assert collector._prepare_subscriptions(collector.desired_symbols()) == ["BTC/USD"]
+    collector._metrics["connected"] = True
+
+    assert collector.process_message({
+        "method": "subscribe",
+        "success": False,
+        "symbol": "BTC/USD",
+        "error": "Currency pair not supported BTC/USD",
+    }) is True
+
+    status = collector.status()
+    assert status["connection_state"] == "CONNECTED_PARTIAL"
+    assert status["subscription_expected_count"] == 2
+    assert status["subscription_acknowledged_count"] == 0
+    assert status["subscription_rejected_count"] == 2
+    assert status["subscription_pending_count"] == 0
+    assert status["last_error_type"] == "SUBSCRIPTION_REJECTED"
+    assert status["last_subscription_error"] == "Currency pair not supported BTC/USD"
+    assert status["last_subscription_symbol"] == "BTC/USD"
+    db.close()

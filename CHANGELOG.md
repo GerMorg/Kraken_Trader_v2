@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.56 — Kraken WebSocket v2 symbol compatibility and subscription diagnostics
+
+- Translates the REST instrument alias `XBT/USD` to Kraken Spot WebSocket v2's `BTC/USD` symbol on outbound book/trade subscriptions, while mapping incoming stream events back to the internal REST pair key.
+- Tracks per-symbol, per-channel subscription acknowledgements and rejections. A rejected symbol no longer tears down the complete connection and cannot cause a rapid reconnect loop.
+- Reports WebSocket symbols, expected/acknowledged/rejected/pending subscription counts, coverage, and the exact bounded Kraken rejection reason/channel/symbol in `CYCLE_SUMMARY`.
+- Distinguishes `SUBSCRIBING`, `CONNECTED`, and `CONNECTED_PARTIAL`; reconnect backoff is reset after subscription responses, not immediately after opening a TCP/WebSocket connection.
+- Adds regression tests for XBT/BTC translation, internal-symbol canonicalization, complete subscription coverage and non-storm handling of rejections.
+- No database schema change, no order authority changes, no TSM changes, and no change to the live execution release gate.
+
 ## 0.1.55 — Variante E: Orderflow & Market Microstructure
 
 - Ergänzt einen isolierten Kraken-WebSocket-v2-Worker für öffentliche book- und trade-Streams der ausgewählten USD-Kryptopaare; standardmäßig zwölf Symbole, konfigurierbar 1–20.

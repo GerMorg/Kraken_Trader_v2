@@ -106,6 +106,11 @@ class MarketMicrostructureCollector:
         self._stop = threading.Event()
         self._symbols_changed = threading.Event()
         self._symbols: tuple[str, ...] = ()
+        self._internal_to_ws_symbol: dict[str, str] = {}
+        self._ws_to_internal_symbol: dict[str, str] = {}
+        self._expected_subscriptions: set[tuple[str, str]] = set()
+        self._acknowledged_subscriptions: set[tuple[str, str]] = set()
+        self._rejected_subscriptions: dict[tuple[str, str], str] = {}
         self._books: dict[str, _Book] = {}
         self._minutes: dict[tuple[str, int], _Minute] = {}
         self._last_trade_id: dict[str, int] = {}
@@ -123,6 +128,14 @@ class MarketMicrostructureCollector:
             "trade_id_gaps": 0,
             "connection_gaps": 0,
             "reconnects": 0,
+            "subscription_expected_count": 0,
+            "subscription_acknowledged_count": 0,
+            "subscription_rejected_count": 0,
+            "subscription_pending_count": 0,
+            "subscription_coverage_pct": 0.0,
+            "last_subscription_error": None,
+            "last_subscription_channel": None,
+            "last_subscription_symbol": None,
             "last_message_epoch": None,
             "last_error_type": None,
         }
@@ -146,10 +159,74 @@ class MarketMicrostructureCollector:
             and parts[1] == "USD"
         )
 
+    @staticmethod
+    def to_ws_v2_symbol(pair: str) -> str:
+        """Translate REST wsname symbols to Kraken Spot WebSocket v2 symbols."""
+        normalized = pair.strip().upper()
+        parts = normalized.rsplit("/", 1)
+        if len(parts) != 2:
+            return normalized
+        base, quote = parts
+        if base == "XBT":
+            base = "BTC"
+        return f"{base}/{quote}"
+
+    def _internal_symbol(self, ws_symbol: str) -> str:
+        normalized = str(ws_symbol).strip().upper()
+        with self._lock:
+            mapped = self._ws_to_internal_symbol.get(normalized)
+        if mapped is not None:
+            return mapped
+        if normalized.startswith("BTC/"):
+            return "XBT/" + normalized.split("/", 1)[1]
+        return normalized
+
+    def _refresh_subscription_metrics_locked(self) -> None:
+        expected = len(self._expected_subscriptions)
+        acknowledged = len(self._acknowledged_subscriptions)
+        rejected = len(self._rejected_subscriptions)
+        pending = max(0, expected - acknowledged - rejected)
+        self._metrics["subscription_expected_count"] = expected
+        self._metrics["subscription_acknowledged_count"] = acknowledged
+        self._metrics["subscription_rejected_count"] = rejected
+        self._metrics["subscription_pending_count"] = pending
+        self._metrics["subscription_coverage_pct"] = (
+            round(100.0 * acknowledged / expected, 1) if expected else 0.0
+        )
+        if self._metrics["connected"]:
+            if pending:
+                self._metrics["connection_state"] = "SUBSCRIBING"
+            elif rejected:
+                self._metrics["connection_state"] = "CONNECTED_PARTIAL"
+            elif expected and acknowledged == expected:
+                self._metrics["connection_state"] = "CONNECTED"
+                if self._metrics["last_error_type"] in {
+                    None, "SUBSCRIPTION_REJECTED", "SUBSCRIPTION_ACK_TIMEOUT"
+                }:
+                    self._metrics["last_error_type"] = None
+                    self._metrics["last_subscription_error"] = None
+                    self._metrics["last_subscription_channel"] = None
+                    self._metrics["last_subscription_symbol"] = None
+
+    def _prepare_subscriptions(self, symbols: tuple[str, ...]) -> list[str]:
+        internal_to_ws = {pair: self.to_ws_v2_symbol(pair) for pair in symbols}
+        ws_to_internal = {ws_symbol: pair for pair, ws_symbol in internal_to_ws.items()}
+        ws_symbols = list(dict.fromkeys(internal_to_ws.values()))
+        with self._lock:
+            self._internal_to_ws_symbol = internal_to_ws
+            self._ws_to_internal_symbol = ws_to_internal
+            self._expected_subscriptions = {
+                (channel, symbol)
+                for channel in ("book", "trade")
+                for symbol in ws_symbols
+            }
+            self._acknowledged_subscriptions.clear()
+            self._rejected_subscriptions.clear()
+            self._refresh_subscription_metrics_locked()
+        return ws_symbols
+
     def update_symbols(self, symbols: list[str]) -> None:
-        """Replace the live observation universe with liquid USD crypto pairs."""
-        if not self.enabled:
-            return
+        """Replace the USD crypto universe, preserving REST aliases internally."""
         normalized: list[str] = []
         seen: set[str] = set()
         for symbol in symbols:
@@ -164,7 +241,8 @@ class MarketMicrostructureCollector:
             if current == self._symbols:
                 return
             self._symbols = current
-            self._symbols_changed.set()
+            if self.enabled:
+                self._symbols_changed.set()
 
     def desired_symbols(self) -> tuple[str, ...]:
         with self._lock:
@@ -177,6 +255,7 @@ class MarketMicrostructureCollector:
                 **self._metrics,
                 "subscribed_symbol_count": len(self._symbols),
                 "subscribed_symbols": list(self._symbols),
+                "websocket_symbols": list(self._internal_to_ws_symbol.values()),
                 "source": SOURCE,
                 "aggregation": "ONE_MINUTE",
                 "book_depth": MAX_BOOK_DEPTH,
@@ -217,10 +296,47 @@ class MarketMicrostructureCollector:
             self._metrics["messages"] += 1
             self._metrics["last_message_epoch"] = int(time.time())
 
-        if message.get("success") is False and message.get("method") == "subscribe":
+        if message.get("method") == "subscribe" and isinstance(message.get("success"), bool):
+            result = message.get("result")
+            result = result if isinstance(result, dict) else {}
+            subscription_channel = str(
+                result.get("channel") or message.get("channel") or ""
+            ).strip().lower()
+            subscription_symbol = str(
+                result.get("symbol") or message.get("symbol") or ""
+            ).strip().upper()
+            error = str(message.get("error") or "SUBSCRIPTION_REJECTED")[:240]
+            if not subscription_symbol:
+                for token in error.upper().split():
+                    candidate = token.strip(".,;:'\"()[]{}")
+                    if self._valid_pair(candidate):
+                        subscription_symbol = candidate
+                        break
             with self._lock:
-                self._metrics["last_error_type"] = "SUBSCRIPTION_REJECTED"
-            return False
+                key = (subscription_channel, subscription_symbol)
+                if message["success"] is True:
+                    if key in self._expected_subscriptions:
+                        self._acknowledged_subscriptions.add(key)
+                        self._rejected_subscriptions.pop(key, None)
+                    self._refresh_subscription_metrics_locked()
+                else:
+                    self._metrics["last_error_type"] = "SUBSCRIPTION_REJECTED"
+                    self._metrics["last_subscription_error"] = error
+                    self._metrics["last_subscription_channel"] = subscription_channel or None
+                    self._metrics["last_subscription_symbol"] = subscription_symbol or None
+                    rejected_keys = (
+                        [key] if subscription_channel and subscription_symbol
+                        else [
+                            expected_key for expected_key in self._expected_subscriptions
+                            if subscription_symbol and expected_key[1] == subscription_symbol
+                        ]
+                    )
+                    for rejected_key in rejected_keys:
+                        if rejected_key in self._expected_subscriptions:
+                            self._rejected_subscriptions[rejected_key] = error
+                    self._refresh_subscription_metrics_locked()
+            # Keep healthy symbols connected; a rejected pair must not cause a reconnect storm.
+            return True
 
         if channel not in {"book", "trade"}:
             return True
@@ -273,7 +389,7 @@ class MarketMicrostructureCollector:
         return {price: book[price] for price in keys}
 
     def _apply_book(self, item: dict[str, Any], message_type: str) -> bool:
-        pair = str(item.get("symbol", "")).upper()
+        pair = self._internal_symbol(str(item.get("symbol", "")))
         if not self._valid_pair(pair):
             return True
         timestamp = _epoch(item.get("timestamp"))
@@ -428,7 +544,7 @@ class MarketMicrostructureCollector:
             return True
 
     def _apply_trades(self, item: dict[str, Any]) -> None:
-        pair = str(item.get("symbol", "")).upper()
+        pair = self._internal_symbol(str(item.get("symbol", "")))
         if not self._valid_pair(pair):
             return
         epoch = _epoch(item.get("timestamp"))
@@ -576,6 +692,7 @@ class MarketMicrostructureCollector:
             try:
                 from websockets.sync.client import connect
 
+                ws_symbols = self._prepare_subscriptions(symbols)
                 with connect(
                     WS_URL,
                     open_timeout=10,
@@ -585,11 +702,19 @@ class MarketMicrostructureCollector:
                     max_size=4_194_304,
                     proxy=None,
                 ) as websocket:
+                    with self._lock:
+                        self._metrics["connection_state"] = "SUBSCRIBING"
+                        self._metrics["connected"] = True
+                        self._refresh_subscription_metrics_locked()
+                        if had_connection:
+                            self._metrics["reconnects"] += 1
+                    had_connection = True
+                    subscription_started = time.monotonic()
                     websocket.send(json.dumps({
                         "method": "subscribe",
                         "params": {
                             "channel": "book",
-                            "symbol": list(symbols),
+                            "symbol": ws_symbols,
                             "depth": MAX_BOOK_DEPTH,
                             "snapshot": True,
                         },
@@ -598,19 +723,20 @@ class MarketMicrostructureCollector:
                         "method": "subscribe",
                         "params": {
                             "channel": "trade",
-                            "symbol": list(symbols),
+                            "symbol": ws_symbols,
                             "snapshot": False,
                         },
                     }))
-                    with self._lock:
-                        self._metrics["connection_state"] = "CONNECTED"
-                        self._metrics["connected"] = True
-                        self._metrics["last_error_type"] = None
-                        if had_connection:
-                            self._metrics["reconnects"] += 1
-                    had_connection = True
-                    backoff = 1.0
                     while not self._stop.is_set():
+                        with self._lock:
+                            pending_subscriptions = self._metrics["subscription_pending_count"]
+                        if (
+                            pending_subscriptions
+                            and time.monotonic() - subscription_started > 20.0
+                        ):
+                            with self._lock:
+                                self._metrics["last_error_type"] = "SUBSCRIPTION_ACK_TIMEOUT"
+                            break
                         if self._symbols_changed.is_set():
                             self._symbols_changed.clear()
                             break
@@ -621,6 +747,10 @@ class MarketMicrostructureCollector:
                             continue
                         if not self.process_message(raw):
                             break
+                        with self._lock:
+                            pending_subscriptions = self._metrics["subscription_pending_count"]
+                        if pending_subscriptions == 0:
+                            backoff = 1.0
                         self.flush_due()
             except Exception as exc:
                 with self._lock:
