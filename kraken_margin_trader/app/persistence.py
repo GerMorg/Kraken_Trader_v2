@@ -222,6 +222,21 @@ class Persistence:
                 );
                 CREATE INDEX IF NOT EXISTS multi_asset_research_asof_idx
                     ON multi_asset_research_runs(as_of_bar_ts DESC,research_key DESC);
+                CREATE TABLE IF NOT EXISTS market_depth_snapshots(
+                    pair TEXT NOT NULL,
+                    snapshot_ts INTEGER NOT NULL,
+                    research_bar_ts INTEGER NOT NULL,
+                    source TEXT NOT NULL,
+                    bids_json TEXT NOT NULL,
+                    asks_json TEXT NOT NULL,
+                    taker_fee_bps TEXT,
+                    maker_fee_bps TEXT,
+                    spread_bps TEXT,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(pair,snapshot_ts)
+                );
+                CREATE INDEX IF NOT EXISTS market_depth_pair_ts_idx
+                    ON market_depth_snapshots(pair,snapshot_ts DESC);
             """)
             research_columns = {
                 str(row["name"]) for row in self.connection.execute("PRAGMA table_info(research_observations)")
@@ -258,7 +273,7 @@ class Persistence:
                     "ALTER TABLE history_sync_state ADD COLUMN quality_gaps_json TEXT NOT NULL DEFAULT '[]'"
                 )
             self.connection.execute(
-                "INSERT INTO schema_meta(key,value) VALUES('schema_version','11') "
+                "INSERT INTO schema_meta(key,value) VALUES('schema_version','12') "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
             )
 
@@ -850,6 +865,115 @@ class Persistence:
                 ),
             )
             return cursor.rowcount == 1
+
+    def record_market_depth_snapshot(self, snapshot: dict[str, Any]) -> bool:
+        """Persist one immutable public L2 snapshot; never overwrite market evidence."""
+        required = ("pair", "snapshot_ts", "research_bar_ts", "source", "bids", "asks")
+        if not isinstance(snapshot, dict) or any(key not in snapshot for key in required):
+            raise ValueError("MARKET_DEPTH_REQUIRED_FIELD_MISSING")
+        pair = str(snapshot["pair"]).strip()
+        source = str(snapshot["source"]).strip()
+        try:
+            snapshot_ts = int(snapshot["snapshot_ts"])
+            research_bar_ts = int(snapshot["research_bar_ts"])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("MARKET_DEPTH_TIMESTAMP_INVALID") from exc
+        if (
+            not pair.endswith("/USD") or snapshot_ts <= 0 or research_bar_ts <= 0
+            or source != "KRAKEN_PUBLIC_DEPTH"
+        ):
+            raise ValueError("MARKET_DEPTH_IDENTITY_INVALID")
+
+        def normalize_levels(raw: Any, *, bids: bool) -> list[list[str]]:
+            if not isinstance(raw, list) or not raw or len(raw) > 10:
+                raise ValueError("MARKET_DEPTH_LEVELS_INVALID")
+            normalized: list[list[str]] = []
+            previous: Decimal | None = None
+            for row in raw:
+                if not isinstance(row, (list, tuple)) or len(row) < 2:
+                    raise ValueError("MARKET_DEPTH_LEVEL_INVALID")
+                try:
+                    price = Decimal(str(row[0]))
+                    quantity = Decimal(str(row[1]))
+                except (ArithmeticError, TypeError, ValueError) as exc:
+                    raise ValueError("MARKET_DEPTH_LEVEL_INVALID") from exc
+                if (
+                    not price.is_finite() or not quantity.is_finite()
+                    or price <= 0 or quantity <= 0
+                ):
+                    raise ValueError("MARKET_DEPTH_LEVEL_INVALID")
+                if previous is not None and (
+                    (bids and price >= previous) or (not bids and price <= previous)
+                ):
+                    raise ValueError("MARKET_DEPTH_LEVEL_ORDER_INVALID")
+                normalized.append([str(price), str(quantity)])
+                previous = price
+            return normalized
+
+        bids = normalize_levels(snapshot["bids"], bids=True)
+        asks = normalize_levels(snapshot["asks"], bids=False)
+        if Decimal(bids[0][0]) >= Decimal(asks[0][0]):
+            raise ValueError("MARKET_DEPTH_BOOK_CROSSED_OR_LOCKED")
+
+        optional_costs: dict[str, str | None] = {}
+        for field in ("taker_fee_bps", "maker_fee_bps", "spread_bps"):
+            value = snapshot.get(field)
+            if value is None:
+                optional_costs[field] = None
+                continue
+            try:
+                parsed = Decimal(str(value))
+            except (ArithmeticError, TypeError, ValueError) as exc:
+                raise ValueError("MARKET_DEPTH_COST_INVALID:" + field) from exc
+            if not parsed.is_finite() or parsed < 0:
+                raise ValueError("MARKET_DEPTH_COST_INVALID:" + field)
+            optional_costs[field] = str(parsed)
+
+        with self.lock:
+            cursor = self.connection.execute(
+                "INSERT OR IGNORE INTO market_depth_snapshots("
+                "pair,snapshot_ts,research_bar_ts,source,bids_json,asks_json,"
+                "taker_fee_bps,maker_fee_bps,spread_bps,created_at"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    pair, snapshot_ts, research_bar_ts, source, _json(bids), _json(asks),
+                    optional_costs["taker_fee_bps"], optional_costs["maker_fee_bps"],
+                    optional_costs["spread_bps"], _now(),
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def market_depth_snapshot_count(self, pair: str | None = None) -> int:
+        """Count immutable public depth snapshots, optionally for one USD pair."""
+        with self.lock:
+            if pair is None:
+                row = self.connection.execute(
+                    "SELECT COUNT(*) AS n FROM market_depth_snapshots"
+                ).fetchone()
+            else:
+                row = self.connection.execute(
+                    "SELECT COUNT(*) AS n FROM market_depth_snapshots WHERE pair=?",
+                    (str(pair).strip(),),
+                ).fetchone()
+        return int(row["n"]) if row is not None else 0
+
+    def market_depth_snapshots(
+        self, pair: str, *, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        """Return stored depth observations in chronological order for cost calibration."""
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT * FROM market_depth_snapshots WHERE pair=? "
+                "ORDER BY snapshot_ts DESC LIMIT ?",
+                (str(pair).strip(), max(1, min(int(limit), 10000))),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in reversed(rows):
+            item = dict(row)
+            item["bids"] = json.loads(str(item.pop("bids_json")))
+            item["asks"] = json.loads(str(item.pop("asks_json")))
+            result.append(item)
+        return result
 
     def multi_asset_research_bar_exists(self, as_of_bar_ts: int) -> bool:
         """Check whether a multi-asset snapshot already exists for this common H1 bar."""

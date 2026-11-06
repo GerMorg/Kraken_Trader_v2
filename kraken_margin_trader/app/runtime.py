@@ -13,7 +13,10 @@ from zoneinfo import ZoneInfo
 from app import STRATEGY_VERSION
 from app.audit import AuditLogger
 from app.config import INTERNAL_LIVE_EXECUTION_RELEASED, Settings
-from app.costs import cost_diagnostic, estimate_round_trip_cost, select_costed_plan, taker_fee_from_trade_volume
+from app.costs import (
+    cost_diagnostic, estimate_round_trip_cost, maker_fee_from_trade_volume,
+    select_costed_plan, taker_fee_from_trade_volume,
+)
 from app.kraken import (
     KrakenAPIError, KrakenAmbiguousError, KrakenClient,
     api_key_permission_gate_reasons,
@@ -492,7 +495,7 @@ class TraderRuntime:
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
         failure_stage = "CYCLE_INITIALIZATION"
-        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0,"strategy_lab_observations_recorded":0,"strategy_lab_outcomes_settled":0,"strategy_lab_outcomes_incomplete":0,"multi_asset_research_runs_recorded":0}
+        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0,"strategy_lab_observations_recorded":0,"strategy_lab_outcomes_settled":0,"strategy_lab_outcomes_incomplete":0,"multi_asset_research_runs_recorded":0,"market_depth_snapshots_recorded":0}
         history_ready_for_entries = False
         history_evidence_gaps = ["ACCOUNT_HISTORY_NOT_CHECKED"]
         api_permissions_ready = False
@@ -1104,7 +1107,9 @@ class TraderRuntime:
                         **decision,
                     )
                 trade_volume = (
-                    self.client.trade_volume([i.altname for i in candidates])
+                    self.client.trade_volume(
+                        [i.altname for i in candidates], fee_schedule=True
+                    )
                     if api_permissions_ready and history_ready_for_entries else {}
                 )
             else:
@@ -1251,12 +1256,20 @@ class TraderRuntime:
                     momentum_slow_bps=signal.momentum_slow_bps,trend_efficiency_24h=signal.trend_efficiency_24h,
                     trend_efficiency_72h=signal.trend_efficiency_72h,trend_strength_score=signal.score,
                     score_is_calibrated_probability=False,spread_bps=ticker.spread_bps)
-                fee=taker_fee_from_trade_volume(trade_volume,(instrument.pair_id,instrument.altname,instrument.wsname))
+                fee=taker_fee_from_trade_volume(
+                    trade_volume,(instrument.pair_id,instrument.altname,instrument.wsname)
+                )
+                maker_fee=maker_fee_from_trade_volume(
+                    trade_volume,(instrument.pair_id,instrument.altname,instrument.wsname)
+                )
                 if self.settings.shadow_strategy_lab_enabled and bars:
                     portfolio_histories[instrument.wsname] = bars
                     portfolio_instruments[instrument.wsname] = instrument
                     portfolio_market_costs[instrument.wsname] = {
                         "taker_fee_bps": str(fee) if fee is not None else None,
+                        "maker_fee_bps": str(maker_fee) if maker_fee is not None else None,
+                        "fee_schedule_source": "KRAKEN_PRIVATE_TRADE_VOLUME",
+                        "fee_schedule_observed_at": int(time.time()),
                         "spread_bps": str(ticker.spread_bps),
                         "margin_buy_supported": any(level >= 2 for level in instrument.leverage_buy),
                         "margin_sell_supported": any(level >= 2 for level in instrument.leverage_sell),
@@ -1890,13 +1903,28 @@ class TraderRuntime:
                                     if not bids or not asks:
                                         depth_unavailable_symbols.append(symbol)
                                         continue
+                                    snapshot_ts = int(time.time())
                                     portfolio_market_costs[symbol]["order_book_l2"] = {
-                                        "snapshot_ts": int(time.time()),
+                                        "snapshot_ts": snapshot_ts,
                                         "bids": bids,
                                         "asks": asks,
                                         "source": "KRAKEN_PUBLIC_DEPTH",
                                         "levels_requested": 10,
                                     }
+                                    if candidate_bar_ts is not None:
+                                        depth_saved = self.persistence.record_market_depth_snapshot({
+                                            "pair": symbol,
+                                            "snapshot_ts": snapshot_ts,
+                                            "research_bar_ts": int(candidate_bar_ts),
+                                            "source": "KRAKEN_PUBLIC_DEPTH",
+                                            "bids": bids,
+                                            "asks": asks,
+                                            "taker_fee_bps": portfolio_market_costs[symbol].get("taker_fee_bps"),
+                                            "maker_fee_bps": portfolio_market_costs[symbol].get("maker_fee_bps"),
+                                            "spread_bps": portfolio_market_costs[symbol].get("spread_bps"),
+                                        })
+                                        if depth_saved:
+                                            counts["market_depth_snapshots_recorded"] += 1
                                     depth_sampled_symbols.append(symbol)
                                 except Exception:
                                     # Depth enrichment is optional research evidence:
@@ -1921,6 +1949,26 @@ class TraderRuntime:
                             "actual_fills": False,
                         }
                         multi_asset_research_summary["snapshot_persisted"] = False
+                        multi_asset_research_summary["historical_depth_evidence"] = {
+                            "persisted_snapshot_count": self.persistence.market_depth_snapshot_count(),
+                            "snapshots_recorded_this_cycle": counts["market_depth_snapshots_recorded"],
+                            "pair_snapshots_are_time_separated_for_future_calibration": True,
+                            "historical_round_trip_cost_available": False,
+                            "actual_fills": False,
+                        }
+                        multi_asset_research_summary["fee_schedule_evidence"] = {
+                            "source": "KRAKEN_PRIVATE_TRADE_VOLUME",
+                            "fee_schedule_requested": True,
+                            "taker_fee_pair_count": sum(
+                                item.get("taker_fee_bps") is not None
+                                for item in portfolio_market_costs.values()
+                            ),
+                            "maker_fee_pair_count": sum(
+                                item.get("maker_fee_bps") is not None
+                                for item in portfolio_market_costs.values()
+                            ),
+                            "maker_rates_are_fill_assumptions": False,
+                        }
                         if (
                             multi_asset_research_summary.get("status") == "RESEARCH_COMPLETE"
                             and multi_asset_research_summary.get("as_of_bar_freshness") == "FRESH"
