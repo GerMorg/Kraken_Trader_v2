@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.57 — Persisted runtime breaker diagnostics
+
+- Adds allowlisted `failure_stage`, `failure_location`, SQLite error code/name and bounded SQLite error message to persisted circuit-breaker diagnostics.
+- Keeps file/function/line fields individually sanitized and does not expose arbitrary detail JSON, API secrets, or unrelated persisted fields.
+- Does not automatically clear or deactivate `UNHANDLED_RUNTIME` breakers; the diagnostic improvement is observational only.
+- Adds regression coverage for actionable SQLite I/O failure diagnostics and secret-field exclusion.
+
 ## 0.1.56 — Kraken WebSocket v2 symbol compatibility and subscription diagnostics
 
 - Translates the REST instrument alias `XBT/USD` to Kraken Spot WebSocket v2's `BTC/USD` symbol on outbound book/trade subscriptions, while mapping incoming stream events back to the internal REST pair key.
