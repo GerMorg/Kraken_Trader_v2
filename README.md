@@ -1,4 +1,8 @@
-## Aktueller Status — 0.1.57
+## Aktueller Status — 0.1.58
+
+**Version 0.1.58 macht die bereits beim ursprünglichen `SQLITE_CANTOPEN`-Fehler gespeicherten SQLite-Speicherdiagnosen in `CIRCUIT_BREAKER_STATUS` und `CYCLE_SUMMARY` sichtbar.** Dazu gehören nur allowlist-basierte Angaben zu Datenbankdatei, Verzeichnis, WAL/SHM, Prozessrechten, Temp-Verzeichnis und SQLite-PRAGMAs. Sofern die damalige Version diese Angaben beim Fehler bereits gespeichert hatte, kann der bestehende Breaker jetzt die ursprüngliche Fehlerumgebung offenlegen. Beliebige gespeicherte Felder oder Secrets werden nicht ausgegeben. Der Breaker wird weiterhin **nicht** automatisch aufgehoben.
+
+**Version 0.1.57 ergänzte die Diagnose persistierter Circuit-Breaker.** Bei einem gespeicherten Runtime-Fehler werden Fehlerphase, SQLite-Fehlercode/-name/-meldung und die begrenzte Quellstelle (Datei/Funktion/Zeile) sichtbar.
 
 **Version 0.1.57 ergänzt die Diagnose persistierter Circuit-Breaker.** Bei einem gespeicherten Runtime-Fehler werden jetzt zusätzlich Fehlerphase, SQLite-Fehlercode/-name/-meldung und die begrenzte Quellstelle (Datei/Funktion/Zeile) im `CIRCUIT_BREAKER_STATUS` und `CYCLE_SUMMARY` sichtbar. Die Ausgabe verwendet eine feste Allowlist; beliebige Detailfelder oder API-Geheimnisse werden nicht ausgegeben. Der Breaker wird dadurch ausdrücklich **nicht** automatisch aufgehoben.
 
