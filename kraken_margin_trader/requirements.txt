@@ -1,2 +1,2 @@
 # Runtime dependency for Kraken public WebSocket v2 market data.
-websockets>=14,<17
+websockets>=15,<17
