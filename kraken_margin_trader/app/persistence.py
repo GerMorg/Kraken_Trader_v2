@@ -32,7 +32,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 class Persistence:
-    SCHEMA_VERSION = 12
+    SCHEMA_VERSION = 13
 
     def __init__(self, path: str = "/data/state/kraken_trader.sqlite3") -> None:
         self.path = path
