@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.55 — Variante E: Orderflow & Market Microstructure
+
+- Ergänzt einen isolierten Kraken-WebSocket-v2-Worker für öffentliche book- und trade-Streams der ausgewählten USD-Kryptopaare; standardmäßig zwölf Symbole, konfigurierbar 1–20.
+- Verarbeitet L2-Snapshots und Deltas in Reihenfolge, entfernt Levels bei Menge null, begrenzt das Buch auf zehn Levels und prüft den Kraken-CRC32-Checksum. Ein fehlgeschlagener Checksum erzwingt eine neue Verbindung mit frischem Snapshot.
+- Aggregiert taker-signierte Trade-Notionals, Trade-ID-Lücken, L1-Orderflow-Imbalance, Spread, sichtbare USD-Tiefe, Depth-Imbalance und Microprice-Abweichung in UTC-Minuten.
+- Persistiert qualitätsmarkierte Minuten-Bars append-only in einer neuen SQLite-Tabelle (Schema 13). Bestehende Orders, Fills, Ledger, Steuerdaten und Research-Historie bleiben unverändert.
+- Der Collector hat keinen Zugriff auf Order Authority und erzeugt keine Signale, Intents, Orders, Fills oder Strategiepromotion. TSM und die Live-Sperre bleiben unverändert.
+- Fügt WebSocket-Abhängigkeit, HA-Optionen, Shutdown-Handling, Regressionstests und eine eigene Microstructure-Research-Dokumentation hinzu.
+
 ## 0.1.54 — Regime-Conditioned Residual Recoil Research
 
 - Ergänzt Variante D `regime_conditioned_residual_recoil`: ein Cross-Asset-Markt-Faktor wird von den Einzelasset-Renditen abgezogen; extreme standardisierte 6-Stunden-Residualbewegungen werden nur nach bestätigter 2-Stunden-Gegenbewegung gehandelt.
