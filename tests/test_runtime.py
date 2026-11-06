@@ -13,6 +13,7 @@ from app.runtime import (
     _circuit_breaker_diagnostics,
     _open_position_rows,
     _recover_transient_public_network_breaker,
+    _recover_transient_sqlite_cantopen_research_read_breaker,
     _resolve_clean_reconciliation_breaker,
 )
 
@@ -1080,5 +1081,152 @@ def test_kraken_status_breaker_is_not_resolved_when_offline_or_reason_changed():
         db, audit, cycle_id="changed-reason", system_status="online"
     ) is False
     assert db.circuit_breakers()[0]["reason"] == "OPERATOR_REVIEW_REQUIRED"
+    audit.close()
+    db.close()
+
+
+
+def _historical_sqlite_cantopen_detail(**overrides):
+    detail = {
+        "exception_type": "OperationalError",
+        "failure_stage": "FINALIZE_TSM_RESEARCH_SUMMARY_READ",
+        "failure_location": {
+            "file": "persistence.py",
+            "function": "research_observations",
+            "line": 624,
+        },
+        "sqlite_error_code": sqlite3.SQLITE_CANTOPEN,
+        "sqlite_error_name": "SQLITE_CANTOPEN",
+        "sqlite_error_message": "unable to open database file",
+    }
+    detail.update(overrides)
+    return detail
+
+
+def test_exact_sqlite_cantopen_research_read_breaker_recovers_after_read_and_storage_check(tmp_path):
+    db = Persistence(str(tmp_path / "state" / "trader.sqlite3"))
+    audit = AuditLogger(str(tmp_path / "audit.jsonl"), stream=io.StringIO())
+    db.trip_circuit_breaker(
+        "UNHANDLED_RUNTIME", "CYCLE_EXCEPTION", _historical_sqlite_cantopen_detail()
+    )
+
+    observations = db.research_observations(limit=5000)
+    assert _recover_transient_sqlite_cantopen_research_read_breaker(
+        db,
+        audit,
+        cycle_id="validated-cycle",
+        research_observation_count=len(observations),
+    ) is True
+
+    assert db.circuit_breakers() == []
+    recovered = db.connection.execute(
+        "SELECT payload_json FROM events WHERE name='CIRCUIT_BREAKER_RECOVERED'"
+    ).fetchone()
+    assert recovered is not None
+    assert "EXACT_RESEARCH_READ_AND_CURRENT_STORAGE_VALIDATION" in recovered["payload_json"]
+    assert "validated-cycle" in audit.stream.getvalue()
+    audit.close()
+    db.close()
+
+
+def test_sqlite_cantopen_recovery_does_not_clear_different_failure_signatures(tmp_path):
+    db = Persistence(str(tmp_path / "state.sqlite3"))
+    audit = AuditLogger(str(tmp_path / "audit.jsonl"), stream=io.StringIO())
+    mismatches = [
+        _historical_sqlite_cantopen_detail(failure_stage="FINALIZE_TSM_RESEARCH_SUMMARY_WRITE"),
+        _historical_sqlite_cantopen_detail(
+            sqlite_error_code=sqlite3.SQLITE_IOERR, sqlite_error_name="SQLITE_IOERR"
+        ),
+        _historical_sqlite_cantopen_detail(
+            failure_location={
+                "file": "persistence.py",
+                "function": "other",
+                "line": 624,
+            }
+        ),
+        _historical_sqlite_cantopen_detail(exception_type="ValueError"),
+    ]
+    for index, mismatch in enumerate(mismatches):
+        db.trip_circuit_breaker("UNHANDLED_RUNTIME", "CYCLE_EXCEPTION", mismatch)
+        assert _recover_transient_sqlite_cantopen_research_read_breaker(
+            db, audit, cycle_id=f"mismatch-{index}", research_observation_count=0
+        ) is False
+        assert db.circuit_breakers()[0]["detail"] == mismatch
+    audit.close()
+    db.close()
+
+
+def test_sqlite_cantopen_recovery_defers_when_current_storage_probe_is_unhealthy(tmp_path, monkeypatch):
+    db = Persistence(str(tmp_path / "state.sqlite3"))
+    audit = AuditLogger(str(tmp_path / "audit.jsonl"), stream=io.StringIO())
+    db.trip_circuit_breaker(
+        "UNHANDLED_RUNTIME", "CYCLE_EXCEPTION", _historical_sqlite_cantopen_detail()
+    )
+    monkeypatch.setattr(db, "storage_diagnostics", lambda: {
+        "database": {
+            "exists": True,
+            "is_directory": False,
+            "readable": True,
+            "writable": False,
+        },
+        "database_parent": {
+            "exists": True,
+            "is_directory": True,
+            "readable": True,
+            "writable": True,
+            "searchable": True,
+        },
+        "temporary_directory_state": {
+            "exists": True,
+            "is_directory": True,
+            "readable": True,
+            "writable": True,
+            "searchable": True,
+        },
+        "sqlite_journal_mode": "wal",
+        "sqlite_temp_store": "0",
+    })
+
+    assert _recover_transient_sqlite_cantopen_research_read_breaker(
+        db, audit, cycle_id="storage-unhealthy", research_observation_count=0
+    ) is False
+    assert db.circuit_breakers()[0]["active"] is True
+    assert "CIRCUIT_BREAKER_RECOVERY_DEFERRED" in audit.stream.getvalue()
+    audit.close()
+    db.close()
+
+
+def test_resolve_circuit_breaker_can_require_a_matching_persisted_detail_signature():
+    db = Persistence(":memory:")
+    db.trip_circuit_breaker(
+        "UNHANDLED_RUNTIME", "CYCLE_EXCEPTION", {"exception_type": "ValueError"}
+    )
+    assert db.resolve_circuit_breaker(
+        "UNHANDLED_RUNTIME",
+        "CYCLE_EXCEPTION",
+        expected_detail={"exception_type": "OperationalError"},
+    ) is False
+    assert db.circuit_breakers()[0]["active"] is True
+    db.close()
+
+
+
+def test_sqlite_cantopen_recovery_defers_when_storage_probe_raises(tmp_path, monkeypatch):
+    db = Persistence(str(tmp_path / "state.sqlite3"))
+    audit = AuditLogger(str(tmp_path / "audit.jsonl"), stream=io.StringIO())
+    db.trip_circuit_breaker(
+        "UNHANDLED_RUNTIME", "CYCLE_EXCEPTION", _historical_sqlite_cantopen_detail()
+    )
+
+    def fail_probe():
+        raise OSError("filesystem probe unavailable")
+
+    monkeypatch.setattr(db, "storage_diagnostics", fail_probe)
+    assert _recover_transient_sqlite_cantopen_research_read_breaker(
+        db, audit, cycle_id="storage-probe-error", research_observation_count=0
+    ) is False
+    assert db.circuit_breakers()[0]["active"] is True
+    assert "OSError" in audit.stream.getvalue()
+    assert "filesystem probe unavailable" not in audit.stream.getvalue()
     audit.close()
     db.close()

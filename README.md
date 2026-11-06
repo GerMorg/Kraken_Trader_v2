@@ -1,4 +1,6 @@
-## Aktueller Status — 0.1.59
+## Aktueller Status — 0.1.60
+
+**Version 0.1.60 ergänzt eine eng begrenzte Recovery für den historischen `SQLITE_CANTOPEN`-Breaker.** Aufgelöst wird ausschließlich der exakt gespeicherte Fehler beim Lesen der Research-Beobachtungen, nachdem derselbe Lese-/Zusammenfassungsschritt erfolgreich war und die aktuelle Datenbank-, Verzeichnis-, Temp- und SQLite-PRAGMA-Prüfung bestanden wurde. Ein anderer Fehler mit gleichem Breaker-Namen wird nicht gelöscht. Das aktuelle Cycle bleibt bis zum nächsten Lauf entry-blocked; SHADOW-Modus und interne Live-Freigabe bleiben unverändert.
 
 **Version 0.1.59 ergänzt beim bestehenden `SQLITE_CANTOPEN`-Breaker eine aktuelle Speicherdiagnose.** Sie erfasst beim jeweiligen Status-/Cycle-Summary-Lauf die Dateisystem- und SQLite-Situation des laufenden Containers. Die Ausgabe ist ausdrücklich als aktueller Zustand gekennzeichnet und darf nicht mit dem ursprünglichen Fehlerzeitpunkt verwechselt werden. Ein Diagnosefehler kann den Runtime-Zyklus nicht abbrechen. Historische gespeicherte Diagnosen bleiben separat.
 

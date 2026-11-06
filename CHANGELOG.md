@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.60 — Validated recovery for historical SQLite CANTOPEN
+
+- Resolves only the exact persisted UNHANDLED_RUNTIME/CYCLE_EXCEPTION incident from FINALIZE_TSM_RESEARCH_SUMMARY_READ when the same research-observation read and summary complete successfully and current database, parent-directory, temporary-directory and SQLite PRAGMA checks pass.
+- Adds a persisted-detail signature guard so a stale recovery attempt cannot clear a newer failure with the same breaker name and reason; unrelated SQLite errors and other runtime breakers remain untouched.
+- Records the recovery in the existing breaker event history and cycle summary. The current cycle remains blocked for new entries; SHADOW mode and the internal live-order release gate are unchanged.
+- Adds regression tests for exact recovery, mismatched failure signatures, unhealthy current storage and detail-signature mismatch. No DB reset or schema migration.
+
 ## 0.1.59 — Live filesystem diagnostics for historical SQLite CANTOPEN breakers
 
 - Captures a fresh, allowlisted snapshot of the current process, database file, parent directory, WAL/SHM/journal files, temporary directory and SQLite PRAGMAs when an active persisted breaker is identified as `SQLITE_CANTOPEN`.
