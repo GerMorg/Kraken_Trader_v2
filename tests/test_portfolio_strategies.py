@@ -169,7 +169,7 @@ def test_pair_backtest_uses_non_overlapping_trades_and_does_not_force_end_exit()
         )
 
 
-def test_multi_asset_report_keeps_both_variants_research_only() -> None:
+def test_multi_asset_report_keeps_all_variants_research_only() -> None:
     prices_a, prices_b = _correlated_pair(720, final_shock=0.035)
     prices_c = [100.0]
     for index in range(1, len(prices_a)):
@@ -209,6 +209,9 @@ def test_multi_asset_report_keeps_both_variants_research_only() -> None:
     ) == 5
     assert report["variant_c_cross_sectional_momentum"]["actual_fills"] is False
     assert report["variant_c_cross_sectional_momentum"]["portfolio_pnl"] is False
+    assert report["cost_assumptions"]["time_separated_l2_cost_diagnostics"]["status"] == (
+        "INSUFFICIENT_TIME_SEPARATED_L2_COST_EVIDENCE"
+    )
     assert len(
         report["variant_c_cross_sectional_momentum"]["slippage_sensitivity"]
     ) == 5
@@ -396,3 +399,36 @@ def test_cross_sectional_momentum_maker_reference_is_separate_from_taker_baselin
     assert taker["fee_basis"] == "KRAKEN_TAKER_FEE"
     assert maker["fee_basis"] == "HYPOTHETICAL_MAKER_FEE_REFERENCE_NO_FILL_ASSUMPTION"
     assert maker["costed_proxy"]["total_return_pct"] >= taker["costed_proxy"]["total_return_pct"]
+
+
+def test_time_separated_l2_cost_diagnostics_replays_distinct_entry_and_exit_books():
+    from app.portfolio_strategies import _time_separated_l2_cost_diagnostics
+
+    base_ts = 1_800_000_000
+    snapshots = []
+    for index in range(3):
+        mid = 100.0 + index
+        snapshots.append({
+            "snapshot_ts": base_ts + index * 3600,
+            "research_bar_ts": base_ts + index * 3600 - 3600,
+            "bids": [[str(mid - 0.1), "100"], [str(mid - 0.2), "100"]],
+            "asks": [[str(mid + 0.1), "100"], [str(mid + 0.2), "100"]],
+            "taker_fee_bps": "5",
+        })
+
+    report = _time_separated_l2_cost_diagnostics({"A/USD": snapshots})
+
+    assert report["status"] == "TIME_SEPARATED_L2_COST_SAMPLES_AVAILABLE"
+    assert report["snapshot_count"] == 3
+    assert report["horizons"][0]["target_horizon_hours"] == 1
+    assert report["horizons"][0]["pair_observation_count"] == 2
+    long_250 = next(
+        item for item in report["horizons"][0]["scenarios"]
+        if item["notional_usd"] == 250.0 and item["direction"] == "LONG"
+    )
+    assert long_250["sample_count"] == 2
+    assert 29.0 <= long_250["round_trip_cost_bps"]["median"] <= 31.0
+    assert long_250["components_bps_median"]["trading_fees"] > 0
+    assert long_250["components_bps_median"]["spread"] > 0
+    assert report["margin_financing_included"] is False
+    assert report["actual_fills"] is False

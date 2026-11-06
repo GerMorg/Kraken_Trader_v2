@@ -151,3 +151,10 @@ Ab 0.1.53 fragt die App `TradeVolume` mit `fee_schedule=true` ab und protokollie
 Öffentliche Kraken-Depth-Snapshots werden zusätzlich append-only in der bestehenden SQLite-Datenbank gespeichert (Tabelle `market_depth_snapshots`). Jede Aufnahme enthält Paar, Snapshotzeit, zugehörigen gemeinsamen H1-Balken, bis zu zehn Bid-/Ask-Levels und bekannte Gebühren-/Spreadfelder. Frühere Snapshots werden nicht überschrieben. Mit zeitlich getrennten Snapshots können spätere Entry-/Exit-Kostenanalysen entstehen. Die Migration ist additiv: Vorhandene Research-, Handels-, Order-, Fill- und Ledger-Daten bleiben erhalten.
 
 Ein einzelnes öffentliches L2-Buch bleibt nur eine Momentaufnahme sichtbarer Liquidität. Es belegt weder Queue-Position, versteckte Liquidität, Fill-Wahrscheinlichkeit, Markteinfluss bei späterer Ausführung noch einen echten Fill. Exakte realisierte Kosten können erst aus tatsächlichen Order-/Fill-Daten derselben Ausführung gemessen werden. Fehlende Werte werden daher nicht zu null oder zu Maker-Gebühren umgedeutet.
+
+
+### Zeitlich getrennte L2-Kostenkalibrierung
+
+Wenn genügend Snapshots vorhanden sind, verbindet die Research-Auswertung für dieselbe USD-Paarung zeitlich getrennte Bücher im Abstand von 1, 4 und 24 Stunden (jeweils ±25 % Toleranz). Für 250/500/1.000/2.500 USD werden Long- und Short-Roundtrips separat mit dem Orderbuch-Simulator und der zum jeweiligen Snapshot gespeicherten Taker-Gebühr wiedergegeben. Ausgewiesen werden Median/P90 der Modellkosten sowie Gebühren, Spread und sichtbare-Tiefe-Slippage getrennt.
+
+Es werden nur vollständig durch die sichtbaren Levels gefüllte Modell-Roundtrips in die Verteilung aufgenommen. Die Beobachtungen können zeitlich überlappen und sind korreliert. Sie sind keine tatsächlichen Fills, keine historischen PnL-Beobachtungen und enthalten keine Margin-Finanzierungskosten. Bis genügend zeitlich getrennte Snapshotpaare vorhanden sind, bleibt der Status ausdrücklich `INSUFFICIENT_TIME_SEPARATED_L2_COST_EVIDENCE`.

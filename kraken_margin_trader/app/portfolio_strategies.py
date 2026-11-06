@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left
 from itertools import combinations
 import hashlib
 import math
@@ -1168,24 +1169,33 @@ def _time_separated_l2_cost_diagnostics(
         if len(parsed) < 2:
             continue
 
+        snapshot_timestamps = [item[0].timestamp for item in parsed]
         for horizon in horizons:
             target_seconds = horizon * 3600
             minimum_seconds = int(target_seconds * 0.75)
             maximum_seconds = int(target_seconds * 1.25)
             for entry_index, (entry_book, entry_fee) in enumerate(parsed[:-1]):
-                later = [
-                    item for item in parsed[entry_index + 1:]
-                    if minimum_seconds <= item[0].timestamp - entry_book.timestamp <= maximum_seconds
+                target_timestamp = entry_book.timestamp + target_seconds
+                insertion_index = bisect_left(snapshot_timestamps, target_timestamp)
+                candidate_indices = [
+                    candidate_index
+                    for candidate_index in (insertion_index - 1, insertion_index)
+                    if candidate_index > entry_index
+                    and 0 <= candidate_index < len(parsed)
+                    and minimum_seconds
+                    <= snapshot_timestamps[candidate_index] - entry_book.timestamp
+                    <= maximum_seconds
                 ]
-                if not later:
+                if not candidate_indices:
                     continue
-                exit_book, exit_fee = min(
-                    later,
-                    key=lambda item: (
-                        abs(item[0].timestamp - entry_book.timestamp - target_seconds),
-                        item[0].timestamp,
+                exit_index = min(
+                    candidate_indices,
+                    key=lambda candidate_index: (
+                        abs(snapshot_timestamps[candidate_index] - target_timestamp),
+                        snapshot_timestamps[candidate_index],
                     ),
                 )
+                exit_book, exit_fee = parsed[exit_index]
                 paired_snapshot_count[horizon] += 1
                 if entry_fee is None or exit_fee is None:
                     missing_fee_count += 1
