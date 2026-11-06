@@ -302,6 +302,157 @@ def _recover_transient_public_network_breaker(
     return False
 
 
+
+
+_SQLITE_CANTOPEN_RESEARCH_READ_SIGNATURE = {
+    "exception_type": "OperationalError",
+    "failure_stage": "FINALIZE_TSM_RESEARCH_SUMMARY_READ",
+    "failure_location": {
+        "file": "persistence.py",
+        "function": "research_observations",
+        "line": 624,
+    },
+    "sqlite_error_code": sqlite3.SQLITE_CANTOPEN,
+    "sqlite_error_name": "SQLITE_CANTOPEN",
+}
+
+
+def _sqlite_storage_diagnostics_are_healthy(snapshot: dict[str, Any]) -> tuple[bool, list[str]]:
+    """Require current DB, directory, temp-path and PRAGMA access before recovery."""
+    database = snapshot.get("database")
+    parent = snapshot.get("database_parent")
+    temporary = snapshot.get("temporary_directory_state")
+
+    def file_accessible(state: Any) -> bool:
+        return (
+            isinstance(state, dict)
+            and state.get("exists") is True
+            and state.get("is_directory") is False
+            and state.get("readable") is True
+            and state.get("writable") is True
+        )
+
+    def directory_accessible(state: Any) -> bool:
+        return (
+            isinstance(state, dict)
+            and state.get("exists") is True
+            and state.get("is_directory") is True
+            and state.get("readable") is True
+            and state.get("writable") is True
+            and state.get("searchable") is True
+        )
+
+    checks = {
+        "database_file_readable_and_writable": file_accessible(database),
+        "database_parent_accessible": directory_accessible(parent),
+        "temporary_directory_accessible": directory_accessible(temporary),
+        "sqlite_pragmas_accessible": (
+            isinstance(snapshot.get("sqlite_journal_mode"), str)
+            and bool(snapshot.get("sqlite_journal_mode"))
+            and isinstance(snapshot.get("sqlite_temp_store"), str)
+            and not any(
+                key in snapshot
+                for key in ("sqlite_journal_mode_probe_error", "sqlite_temp_store_probe_error")
+            )
+        ),
+    }
+    for key in ("database_wal", "database_shm", "database_journal"):
+        state = snapshot.get(key)
+        if isinstance(state, dict) and state.get("exists") is True:
+            checks[f"{key}_accessible"] = (
+                state.get("readable") is True and state.get("writable") is True
+            )
+    failed = [name for name, passed in checks.items() if not passed]
+    return not failed, failed
+
+
+def _recover_transient_sqlite_cantopen_research_read_breaker(
+    persistence: Persistence,
+    audit: AuditLogger,
+    *,
+    cycle_id: str,
+    research_observation_count: int,
+) -> bool:
+    """Resolve only the exact historical read-stage CANTOPEN after that read succeeds."""
+    matching = False
+    for breaker in persistence.circuit_breakers():
+        detail = breaker.get("detail")
+        detail = detail if isinstance(detail, dict) else {}
+        if (
+            breaker.get("name") == "UNHANDLED_RUNTIME"
+            and breaker.get("reason") == "CYCLE_EXCEPTION"
+            and all(
+                detail.get(key) == value
+                for key, value in _SQLITE_CANTOPEN_RESEARCH_READ_SIGNATURE.items()
+                if key != "failure_location"
+            )
+            and isinstance(detail.get("failure_location"), dict)
+            and all(
+                detail["failure_location"].get(key) == value
+                for key, value in _SQLITE_CANTOPEN_RESEARCH_READ_SIGNATURE["failure_location"].items()
+            )
+        ):
+            matching = True
+            break
+    if not matching:
+        return False
+
+    # The exact failed query and summary have already completed in this cycle.
+    # Require an independent current filesystem/SQLite check before resolving.
+    snapshot = persistence.storage_diagnostics()
+    storage_healthy, failed_checks = _sqlite_storage_diagnostics_are_healthy(snapshot)
+    if not storage_healthy:
+        audit.emit(
+            "CIRCUIT_BREAKER_RECOVERY_DEFERRED",
+            cycle_id=cycle_id,
+            name="UNHANDLED_RUNTIME",
+            previous_reason="CYCLE_EXCEPTION",
+            recovery_method="EXACT_RESEARCH_READ_AND_STORAGE_VALIDATION",
+            failed_storage_checks=failed_checks,
+            historical_failure_stage="FINALIZE_TSM_RESEARCH_SUMMARY_READ",
+        )
+        return False
+
+    recovery_detail = {
+        "cycle_id": cycle_id,
+        "recovery_method": "EXACT_RESEARCH_READ_AND_CURRENT_STORAGE_VALIDATION",
+        "validated_operation": "Persistence.research_observations(limit=5000)",
+        "research_summary_completed": True,
+        "research_observation_count": max(0, int(research_observation_count)),
+        "storage_checks_passed": [
+            "database_file_readable_and_writable",
+            "database_parent_accessible",
+            "temporary_directory_accessible",
+            "sqlite_pragmas_accessible",
+        ],
+        "sqlite_journal_mode": snapshot.get("sqlite_journal_mode"),
+        "storage_snapshot_scope": "CURRENT_RUNTIME_STATE_NOT_ORIGINAL_FAILURE_STATE",
+        "other_entry_gates_remain_in_force": True,
+    }
+    if not persistence.resolve_circuit_breaker(
+        "UNHANDLED_RUNTIME",
+        "CYCLE_EXCEPTION",
+        recovery_detail,
+        expected_detail=_SQLITE_CANTOPEN_RESEARCH_READ_SIGNATURE,
+    ):
+        return False
+    audit.emit(
+        "CIRCUIT_BREAKER_RECOVERED",
+        cycle_id=cycle_id,
+        name="UNHANDLED_RUNTIME",
+        previous_reason="CYCLE_EXCEPTION",
+        recovery_method="EXACT_RESEARCH_READ_AND_CURRENT_STORAGE_VALIDATION",
+        validated_failure_stage="FINALIZE_TSM_RESEARCH_SUMMARY_READ",
+        validated_operation="Persistence.research_observations(limit=5000)",
+        research_observation_count=max(0, int(research_observation_count)),
+        current_sqlite_journal_mode=snapshot.get("sqlite_journal_mode"),
+        new_entries_in_this_cycle_remained_blocked=True,
+        other_entry_gates_remain_in_force=True,
+        live_execution_release_unchanged=True,
+    )
+    return True
+
+
 def _open_position_rows(response: dict[str,Any]) -> dict[str,dict[str,Any]]:
     wrapped=response.get("open")
     source=wrapped if isinstance(wrapped,dict) else response
@@ -622,6 +773,7 @@ class TraderRuntime:
         history_window_unknown = False
         closed_history_snapshot_allowed = False
         multi_asset_research_summary: dict[str, Any] = {"status": "NOT_RUN", "release_gate_eligible": False}
+        recovered_transient_sqlite_cantopen_breaker = False
         wallet_reconciliation: dict[str, Any] | None = None
         order_reconciliation: dict[str, Any] | None = None
         position_reconciliation: dict[str, Any] | None = None
@@ -2169,9 +2321,18 @@ class TraderRuntime:
                     primary_outcomes_unchanged=True,
                 )
             failure_stage = "FINALIZE_TSM_RESEARCH_SUMMARY_READ"
+            research_observations = self.persistence.research_observations(limit=5000)
             research_summary = summarize_shadow_research(
-                self.persistence.research_observations(limit=5000),
+                research_observations,
                 strategy_version=STRATEGY_VERSION,
+            )
+            recovered_transient_sqlite_cantopen_breaker = (
+                _recover_transient_sqlite_cantopen_research_read_breaker(
+                    self.persistence,
+                    self.audit,
+                    cycle_id=cycle_id,
+                    research_observation_count=len(research_observations),
+                )
             )
             failure_stage = "FINALIZE_TSM_RESEARCH_SUMMARY_WRITE"
             self.persistence.record_event("SHADOW_RESEARCH_SUMMARY", research_summary)
@@ -2201,6 +2362,7 @@ class TraderRuntime:
                 "active_circuit_breaker_count": len(final_breaker_rows),
                 "active_circuit_breakers": final_breaker_diagnostics,
                 "recovered_transient_public_network_breaker": recovered_transient_public_network_breaker,
+                "recovered_transient_sqlite_cantopen_breaker": recovered_transient_sqlite_cantopen_breaker,
                 "shadow_research_validation_status": research_summary["validation_status"],
                 "shadow_research_costed_sample_count": research_summary["costed_spot_proxy_observations"],
                 "shadow_research_holdout_available": research_summary["holdout_sample_available_for_review"],
