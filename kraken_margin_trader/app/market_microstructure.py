@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import json
 import threading
@@ -113,6 +113,7 @@ class MarketMicrostructureCollector:
             "connection_state": "DISABLED" if not enabled else "WAITING_FOR_SYMBOLS",
             "connected": False,
             "messages": 0,
+            "parse_errors": 0,
             "book_snapshots": 0,
             "book_updates": 0,
             "trades": 0,
@@ -192,6 +193,9 @@ class MarketMicrostructureCollector:
             try:
                 raw = raw.decode("utf-8")
             except UnicodeDecodeError:
+                with self._lock:
+                    self._metrics["parse_errors"] += 1
+                    self._metrics["last_error_type"] = "MESSAGE_PARSE_ERROR"
                 return True
         try:
             message = (
@@ -199,6 +203,9 @@ class MarketMicrostructureCollector:
                 else json.loads(raw, parse_float=D, parse_int=int)
             )
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+            with self._lock:
+                self._metrics["parse_errors"] += 1
+                self._metrics["last_error_type"] = "MESSAGE_PARSE_ERROR"
             return True
         if not isinstance(message, dict):
             return True
@@ -215,8 +222,13 @@ class MarketMicrostructureCollector:
                 self._metrics["last_error_type"] = "SUBSCRIPTION_REJECTED"
             return False
 
-        if channel not in {"book", "trade"} or not isinstance(data, list):
+        if channel not in {"book", "trade"}:
             return True
+        if not isinstance(data, list):
+            with self._lock:
+                self._metrics["parse_errors"] += 1
+                self._metrics["last_error_type"] = "MESSAGE_DATA_INVALID"
+            return False
 
         for item in data:
             if not isinstance(item, dict):
@@ -282,29 +294,41 @@ class MarketMicrostructureCollector:
                 asks = self._levels(item.get("asks"))
                 if bids is None or asks is None:
                     book.valid = False
+                    current_minute.book_verified = False
                     current_minute.quality_flags.add("INVALID_BOOK_SNAPSHOT")
-                    return True
+                    self._metrics["last_error_type"] = "INVALID_BOOK_SNAPSHOT"
+                    return False
                 book.bids = self._trim(bids, bids=True)
                 book.asks = self._trim(asks, bids=False)
             elif message_type == "update":
                 if not book.valid:
+                    current_minute.book_verified = False
                     current_minute.quality_flags.add("UPDATE_WITHOUT_VALID_SNAPSHOT")
-                    return True
+                    self._metrics["last_error_type"] = "UPDATE_WITHOUT_VALID_SNAPSHOT"
+                    return False
                 for key, side in (("bids", book.bids), ("asks", book.asks)):
                     changes = item.get(key, [])
                     if not isinstance(changes, list):
                         book.valid = False
-                        return True
+                        current_minute.book_verified = False
+                        current_minute.quality_flags.add("INVALID_BOOK_UPDATE")
+                        self._metrics["last_error_type"] = "INVALID_BOOK_UPDATE"
+                        return False
                     for level in changes:
                         if not isinstance(level, dict):
                             book.valid = False
-                            return True
+                            current_minute.book_verified = False
+                            current_minute.quality_flags.add("INVALID_BOOK_UPDATE")
+                            self._metrics["last_error_type"] = "INVALID_BOOK_UPDATE"
+                            return False
                         price = _decimal(level.get("price"))
                         quantity = _decimal(level.get("qty"))
                         if price is None or quantity is None or price <= 0 or quantity < 0:
                             book.valid = False
+                            current_minute.book_verified = False
                             current_minute.quality_flags.add("INVALID_BOOK_UPDATE")
-                            return True
+                            self._metrics["last_error_type"] = "INVALID_BOOK_UPDATE"
+                            return False
                         if quantity == 0:
                             side.pop(price, None)
                         else:
@@ -318,20 +342,26 @@ class MarketMicrostructureCollector:
             best_ask = min(book.asks) if book.asks else None
             if best_bid is None or best_ask is None or best_bid >= best_ask:
                 book.valid = False
+                current_minute.book_verified = False
                 current_minute.quality_flags.add("CROSSED_OR_EMPTY_BOOK")
-                return True
+                self._metrics["last_error_type"] = "CROSSED_OR_EMPTY_BOOK"
+                return False
 
             checksum_value = item.get("checksum")
             if checksum_value is None:
                 book.valid = False
+                current_minute.book_verified = False
                 current_minute.quality_flags.add("BOOK_CHECKSUM_MISSING")
-                return True
+                self._metrics["last_error_type"] = "BOOK_CHECKSUM_MISSING"
+                return False
             try:
                 expected_checksum = int(checksum_value)
             except (ValueError, TypeError, OverflowError):
                 book.valid = False
+                current_minute.book_verified = False
                 current_minute.quality_flags.add("BOOK_CHECKSUM_INVALID")
-                return True
+                self._metrics["last_error_type"] = "BOOK_CHECKSUM_INVALID"
+                return False
 
             actual_checksum = calculate_book_checksum(book.bids, book.asks)
             current_minute.checksum_checks += 1
@@ -430,6 +460,8 @@ class MarketMicrostructureCollector:
                     current.quality_flags.add("INVALID_TRADE_ID")
                     return
                 previous = self._last_trade_id.get(pair)
+                if previous is None:
+                    current.quality_flags.add("TRADE_ID_BASELINE_UNAVAILABLE")
                 if previous is not None and trade_id > previous + 1:
                     missing = trade_id - previous - 1
                     current.trade_id_gaps += missing
@@ -480,6 +512,7 @@ class MarketMicrostructureCollector:
                 and aggregate.checksum_failures == 0
                 and aggregate.trade_id_gaps == 0
                 and aggregate.connection_gap_count == 0
+                and not aggregate.quality_flags
                 else "PARTIAL"
             )
             payload = {
