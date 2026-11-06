@@ -258,7 +258,7 @@ def test_pair_portfolio_simulation_limits_slots_and_prevents_double_asset_exposu
         trades,
         opens,
         closes,
-        bar_count=12,
+        bar_count=len(prices),
         train_end=210,
         validation_end=230,
         slippage_bps_per_side=5.0,
