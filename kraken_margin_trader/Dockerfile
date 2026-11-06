@@ -1,6 +1,6 @@
 FROM python:3.12-alpine
 
-ARG BUILD_VERSION=0.1.54
+ARG BUILD_VERSION=0.1.55
 ARG BUILD_ARCH=amd64
 
 LABEL \
@@ -8,7 +8,9 @@ LABEL \
   io.hass.type="app" \
   io.hass.arch="${BUILD_ARCH}"
 
-RUN apk add --no-cache su-exec
+COPY requirements.txt /requirements.txt
+RUN apk add --no-cache su-exec \
+  && pip install --no-cache-dir -r /requirements.txt
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/opt/kraken-trader APP_VERSION=${BUILD_VERSION}
 WORKDIR /opt/kraken-trader
