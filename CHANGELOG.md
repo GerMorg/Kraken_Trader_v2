@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.58 — Sichtbarkeit persistierter SQLite-Speicherdiagnose
+
+- Exposes the allowlisted filesystem, database/WAL/SHM, temporary-directory and SQLite PRAGMA snapshot already persisted with a `SQLITE_CANTOPEN` runtime breaker.
+- Keeps nested diagnostics limited to known path-state fields and emits them only for `SQLITE_CANTOPEN`; arbitrary persisted fields and secrets remain excluded.
+- Allows the existing 30 October breaker to reveal its original failure-time snapshot, if that snapshot was stored by the then-installed version. No database reset, breaker auto-clear, strategy change or order-authority change.
+- Adds regression tests for persisted-snapshot visibility, field allowlisting, secret exclusion and non-CANTOPEN suppression.
+
 ## 0.1.57 — Persisted runtime breaker diagnostics
 
 - Adds allowlisted `failure_stage`, `failure_location`, SQLite error code/name and bounded SQLite error message to persisted circuit-breaker diagnostics.
