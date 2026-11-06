@@ -1,4 +1,8 @@
-## Aktueller Status — 0.1.58
+## Aktueller Status — 0.1.59
+
+**Version 0.1.59 ergänzt beim bestehenden `SQLITE_CANTOPEN`-Breaker eine aktuelle Speicherdiagnose.** Sie erfasst beim jeweiligen Status-/Cycle-Summary-Lauf die Dateisystem- und SQLite-Situation des laufenden Containers. Die Ausgabe ist ausdrücklich als aktueller Zustand gekennzeichnet und darf nicht mit dem ursprünglichen Fehlerzeitpunkt verwechselt werden. Ein Diagnosefehler kann den Runtime-Zyklus nicht abbrechen. Historische gespeicherte Diagnosen bleiben separat.
+
+**Version 0.1.58 macht bereits gespeicherte SQLite-Speicherdiagnosen des ursprünglichen `SQLITE_CANTOPEN`-Fehlers sichtbar.**
 
 **Version 0.1.58 macht die bereits beim ursprünglichen `SQLITE_CANTOPEN`-Fehler gespeicherten SQLite-Speicherdiagnosen in `CIRCUIT_BREAKER_STATUS` und `CYCLE_SUMMARY` sichtbar.** Dazu gehören nur allowlist-basierte Angaben zu Datenbankdatei, Verzeichnis, WAL/SHM, Prozessrechten, Temp-Verzeichnis und SQLite-PRAGMAs. Sofern die damalige Version diese Angaben beim Fehler bereits gespeichert hatte, kann der bestehende Breaker jetzt die ursprüngliche Fehlerumgebung offenlegen. Beliebige gespeicherte Felder oder Secrets werden nicht ausgegeben. Der Breaker wird weiterhin **nicht** automatisch aufgehoben.
 
