@@ -2,7 +2,7 @@
 
 ## Zweck und Sicherheitsgrenze
 
-Variante E ergänzt ab App-Version 0.1.55 eine eigenständige, kontinuierliche Datenerfassung für Kraken Spot USD-Kryptopaare. Ziel ist es, Mikrostrukturinformationen für spätere Forschung zu sammeln, die aus H1-Schlusskursen oder einzelnen REST-Orderbuch-Snapshots nicht hervorgehen.
+Variante E ergänzt ab App-Version 0.1.55; die WebSocket-v2-Symbolübersetzung und Subscription-Diagnose wurden in 0.1.56 korrigiert. eine eigenständige, kontinuierliche Datenerfassung für Kraken Spot USD-Kryptopaare. Ziel ist es, Mikrostrukturinformationen für spätere Forschung zu sammeln, die aus H1-Schlusskursen oder einzelnen REST-Orderbuch-Snapshots nicht hervorgehen.
 
 **Der aktuelle Status ist Datenerfassung, nicht Strategiehandel.** Der Collector erzeugt keine Handelssignale, Order-Intents, Orders oder Fills. Er ist nicht mit der Order Authority verbunden. Er verändert weder TSM noch die Varianten A–D und darf keine Parameter oder Live-Freigaben promotieren. INTERNAL_LIVE_EXECUTION_RELEASED bleibt unverändert False.
 
@@ -12,14 +12,14 @@ Der öffentliche Feed ist unauthentifiziert. Die Erfassung benötigt keine priva
 
 Endpoint: wss://ws.kraken.com/v2.
 
-Die Symbolbezeichnungen stammen direkt aus dem Kraken-AssetPairs-Feld wsname; sie werden nicht aus den REST-Tickern oder den internen Asset-Codes selbst konstruiert.
+Das interne Universum stammt aus den Kraken-AssetPairs-Metadaten. REST-`wsname` und WebSocket-v2-Symbole sind jedoch nicht vollständig identisch: Kraken WebSocket v2 verwendet für Bitcoin `BTC/USD`, während REST-`wsname` `XBT/USD` liefern kann. Die App übersetzt deshalb `XBT/USD` beim Subscribe zu `BTC/USD` und mappt eingehende `BTC/USD`-Events zurück auf den internen Schlüssel `XBT/USD`. Das unveränderte Weiterreichen von REST-`wsname` an WebSocket v2 ist ausdrücklich nicht zulässig.
 
 Abonniert werden:
 
 - book mit Tiefe 10 und Snapshot beim Subscribe. Es verarbeitet die vollständigen Snapshots und danach die geordneten Preislevel-Änderungen. Menge null entfernt ein Preislevel.
 - trade mit Snapshot deaktiviert. Die Nachrichten werden als einzelne Trades verarbeitet; die side-Angabe beschreibt die Taker-Seite. Die Trade-ID wird pro Markt auf Lücken und nicht-monotone Werte geprüft.
 
-Der Worker bleibt über die normalen Runtime-Zyklen hinweg verbunden. Ein geändertes Symboluniversum führt zu einer kontrollierten Neuverbindung. Netzwerkfehler oder ein Datenfeed-Ausfall dürfen den Handelszyklus nicht blockieren. Nach Verbindungsverlust wird der bisherige Book-Zustand als ungültig markiert; erst ein neuer Snapshot mit erfolgreichem Checksum stellt wieder einen gültigen Zustand her.
+Der Worker bleibt über die normalen Runtime-Zyklen hinweg verbunden. Er verfolgt Kraken-Subscription-Acknowledgements getrennt je Symbol und Channel; die API sendet je Symbol eine eigene Bestätigung. Statuswerte unterscheiden `SUBSCRIBING`, `CONNECTED` und `CONNECTED_PARTIAL`. Ein einzelner abgelehnter Markt beendet nicht mehr die gesamte Verbindung. Die begrenzte Kraken-Fehlermeldung sowie Channel und Symbol werden im `CYCLE_SUMMARY` angezeigt. Fehlende Bestätigungen führen nach einem Timeout zu einem Backoff-Reconnect statt zu schnellen Wiederholungen. Ein geändertes Symboluniversum führt zu einer kontrollierten Neuverbindung. Netzwerkfehler oder ein Datenfeed-Ausfall dürfen den Handelszyklus nicht blockieren. Nach Verbindungsverlust wird der bisherige Book-Zustand als ungültig markiert; erst ein neuer Snapshot mit erfolgreichem Checksum stellt wieder einen gültigen Zustand her.
 
 Der CRC32-Checksum des Orderbuchs wird vor der Verwendung geprüft. Es werden die zehn besten Ask-Level aufsteigend, anschließend die zehn besten Bid-Level absteigend verarbeitet. Bei Abweichung wird die Verbindung erneuert, um mit einem frischen Snapshot zu beginnen. Preis- und Mengenwerte werden als Decimal behandelt, um Rundungsfehler zu vermeiden.
 
@@ -53,7 +53,7 @@ Die SQLite-Tabelle microstructure_bars enthält eine Zeile je Paar und Minute. P
 
 Eine Minute ohne Trades ist nicht automatisch fehlerhaft: Trade-Anzahl und Trade-Notional bleiben null. Eine Minute ohne verifiziertes Orderbuch kann dagegen nicht als vollständige Orderflow-Beobachtung gelten.
 
-CYCLE_SUMMARY weist den Verbindungsstatus, die Zahl abonnierter Symbole, gespeicherte Minuten-Bars, die persistierte Gesamtzahl, Checksum-Fehler, Trade-ID-Lücken, Verbindungsunterbrechungen und den letzten Fehlertyp aus. Die HA-Optionen microstructure_enabled (Standard true) und microstructure_max_symbols (Standard 12, begrenzt auf 1–20) steuern die Erfassung.
+CYCLE_SUMMARY weist den Verbindungsstatus, REST- und WebSocket-Symbole, erwartete/bestätigte/abgelehnte/offene Subscriptions, Subscriptionsabdeckung, die letzte Kraken-Fehlermeldung, gespeicherte Minuten-Bars, die persistierte Gesamtzahl, Checksum-Fehler, Trade-ID-Lücken, Verbindungsunterbrechungen und den letzten Fehlertyp aus. Die HA-Optionen microstructure_enabled (Standard true) und microstructure_max_symbols (Standard 12, begrenzt auf 1–20) steuern die Erfassung.
 
 Die Migration auf SQLite-Schema 13 ist additiv. Ein bestehender Datenbankinhalt wird nicht zurückgesetzt.
 
