@@ -561,7 +561,16 @@ class KrakenClient:
             raise ValueError("QUERY_LEDGERS_IDS_LIMIT_EXCEEDED")
         return self.private("QueryLedgers", {"id": ",".join(normalized)})
 
-    def trade_volume(self, pairs: list[str]) -> dict[str, Any]:
+    def trade_volume(
+        self, pairs: list[str], *, fee_schedule: bool = True
+    ) -> dict[str, Any]:
+        """Fetch account-specific fees and, by default, Kraken's pair fee schedule.
+
+        Maker rates are only fee references, not evidence of passive-order fills.
+        """
         if not pairs:
             return {}
-        return self.private("TradeVolume", {"pair": ",".join(pairs)})
+        params: dict[str, Any] = {"pair": ",".join(pairs)}
+        if fee_schedule:
+            params["fee_schedule"] = True
+        return self.private("TradeVolume", params)

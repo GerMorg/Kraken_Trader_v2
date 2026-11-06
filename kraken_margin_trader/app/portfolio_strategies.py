@@ -14,7 +14,7 @@ from app.orderbook_simulator import (
 )
 
 D_MIN = 1e-12
-PORTFOLIO_RESEARCH_VERSION = "parrondo-multi-asset-v0.2"
+PORTFOLIO_RESEARCH_VERSION = "parrondo-multi-asset-v0.3"
 CORRELATION_LOOKBACK_BARS = 168
 PAIR_REGRESSION_LOOKBACK_BARS = 168
 MIN_SYNCHRONIZED_BARS = 240
@@ -32,6 +32,13 @@ CORRELATION_SENSITIVITY_THRESHOLDS = (-0.25, -0.15, -0.05, 0.0)
 MAX_CONCURRENT_PAIR_POSITIONS = 4
 PAIR_SLOT_EQUITY_FRACTION = 0.25
 ORDER_BOOK_NOTIONAL_USD = (250.0, 500.0, 1000.0, 2500.0)
+MOMENTUM_FAST_LOOKBACK_BARS = 24
+MOMENTUM_SLOW_LOOKBACK_BARS = 72
+MOMENTUM_REBALANCE_INTERVAL_BARS = 6
+MOMENTUM_SIDE_ASSET_COUNT = 3
+MOMENTUM_GROSS_WEIGHT_PER_SIDE = 0.40
+MOMENTUM_SCORE_FAST_WEIGHT = 0.40
+MOMENTUM_SCORE_SLOW_WEIGHT = 0.60
 
 
 def _finite_float(value: Any) -> float | None:
@@ -161,9 +168,16 @@ def _side_cost_components(
     market_costs: Mapping[str, Mapping[str, Any]],
     *,
     slippage_bps_per_side: float = SLIPPAGE_BPS_PER_SIDE,
+    fee_type: str = "taker",
 ) -> tuple[float, float, float] | None:
     raw = market_costs.get(symbol, {})
-    fee = _finite_float(raw.get("taker_fee_bps"))
+    fee_field = {
+        "taker": "taker_fee_bps",
+        "maker_reference": "maker_fee_bps",
+    }.get(fee_type)
+    if fee_field is None:
+        return None
+    fee = _finite_float(raw.get(fee_field))
     spread = _finite_float(raw.get("spread_bps"))
     if (
         fee is None or spread is None or fee < 0 or spread < 0
@@ -178,9 +192,11 @@ def _side_cost_bps(
     market_costs: Mapping[str, Mapping[str, Any]],
     *,
     slippage_bps_per_side: float = SLIPPAGE_BPS_PER_SIDE,
+    fee_type: str = "taker",
 ) -> float | None:
     components = _side_cost_components(
-        symbol, market_costs, slippage_bps_per_side=slippage_bps_per_side
+        symbol, market_costs, slippage_bps_per_side=slippage_bps_per_side,
+        fee_type=fee_type,
     )
     return sum(components) if components is not None else None
 
@@ -234,13 +250,15 @@ def _simulate_rebalancing(
     lookback: int = CORRELATION_LOOKBACK_BARS,
     correlation_threshold: float = NEGATIVE_CORRELATION_THRESHOLD,
     slippage_bps_per_side: float = SLIPPAGE_BPS_PER_SIDE,
+    fee_type: str = "taker",
 ) -> dict[str, Any]:
     symbols = market["symbols"]
     closes = market["closes"]
     count = len(market["timestamps"])
     costs = {
         symbol: _side_cost_bps(
-            symbol, market_costs, slippage_bps_per_side=slippage_bps_per_side
+            symbol, market_costs, slippage_bps_per_side=slippage_bps_per_side,
+            fee_type=fee_type,
         )
         for symbol in symbols
     }
@@ -341,6 +359,10 @@ def _simulate_rebalancing(
         "correlation_threshold": correlation_threshold
         if strategy == "negative_correlation_threshold_rebalance" else None,
         "slippage_bps_per_side": slippage_bps_per_side,
+        "fee_basis": (
+            "KRAKEN_TAKER_FEE" if fee_type == "taker"
+            else "HYPOTHETICAL_MAKER_FEE_REFERENCE_NO_FILL_ASSUMPTION"
+        ),
         "gross": _curve_metrics(gross_returns[start:]),
         "gross_chronological_splits": _split_returns(gross_returns, boundaries),
         "spot_net": _curve_metrics(net_returns[start:]) if costs_complete else None,
@@ -472,13 +494,14 @@ def _backtest_pair(
     *,
     train_end: int,
     validation_end: int,
+    fee_type: str = "taker",
 ) -> dict[str, Any]:
     count = len(closes[symbol_a])
     trades: list[dict[str, Any]] = []
     pending = 0
     index = PAIR_REGRESSION_LOOKBACK_BARS - 1
-    cost_a = _side_cost_components(symbol_a, market_costs)
-    cost_b = _side_cost_components(symbol_b, market_costs)
+    cost_a = _side_cost_components(symbol_a, market_costs, fee_type=fee_type)
+    cost_b = _side_cost_components(symbol_b, market_costs, fee_type=fee_type)
     while index < count - 1:
         model = _pair_model(closes[symbol_a], closes[symbol_b], end_index=index)
         if model is None or abs(model["z_score"]) < PAIR_ENTRY_Z:
@@ -573,6 +596,10 @@ def _backtest_pair(
             "hedge_ratio_beta": model["beta"],
             "gross_return_bps": gross_bps,
             "fee_per_side_bps": fee_per_side,
+            "fee_basis": (
+                "KRAKEN_TAKER_FEE" if fee_type == "taker"
+                else "HYPOTHETICAL_MAKER_FEE_REFERENCE_NO_FILL_ASSUMPTION"
+            ),
             "half_spread_per_side_bps": half_spread_per_side,
             "spot_round_trip_cost_bps": cost_bps,
             "net_return_bps": net_bps,
@@ -854,6 +881,7 @@ def _current_order_book_cost_diagnostics(
     for symbol, raw in sorted(market_costs.items()):
         book_data = raw.get("order_book_l2")
         fee = _finite_float(raw.get("taker_fee_bps"))
+        maker_fee = _finite_float(raw.get("maker_fee_bps"))
         if not isinstance(book_data, Mapping) or fee is None or fee < 0:
             continue
         try:
@@ -903,6 +931,11 @@ def _current_order_book_cost_diagnostics(
                 ),
                 "spread_bps": str(buy.spread_bps),
                 "round_trip_taker_fee_bps": str(Decimal(2) * Decimal(str(fee))),
+                "round_trip_maker_fee_reference_bps": (
+                    str(Decimal(2) * Decimal(str(maker_fee)))
+                    if maker_fee is not None else None
+                ),
+                "maker_fee_is_not_a_fill_assumption": True,
                 "round_trip_execution_cost_bps": (
                     str(
                         Decimal(2) * Decimal(str(fee)) + buy.spread_bps
@@ -919,6 +952,8 @@ def _current_order_book_cost_diagnostics(
             "level_count_asks": len(snapshot.asks),
             "max_level_participation": 0.25,
             "round_trip_assumption": "SAME_SNAPSHOT_BUY_AND_SELL; NOT_A_FILL",
+            "fee_basis": "KRAKEN_TAKER_FEE",
+            "maker_fee_reference_is_not_an_execution_assumption": True,
             "notional_scenarios": notionals,
         }
     return {
