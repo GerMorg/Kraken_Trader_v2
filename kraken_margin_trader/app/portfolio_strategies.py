@@ -1051,6 +1051,7 @@ def run_multi_asset_strategy_research(
 
     pair_results: list[dict[str, Any]] = []
     all_trades: list[dict[str, Any]] = []
+    maker_reference_trades: list[dict[str, Any]] = []
     for symbol_a, symbol_b in combinations(symbols, 2):
         pair_result = _backtest_pair(
             symbol_a,
@@ -1060,9 +1061,21 @@ def run_multi_asset_strategy_research(
             market_costs,
             train_end=train_end,
             validation_end=validation_end,
+            fee_type="taker",
+        )
+        maker_reference_result = _backtest_pair(
+            symbol_a,
+            symbol_b,
+            opens,
+            closes,
+            market_costs,
+            train_end=train_end,
+            validation_end=validation_end,
+            fee_type="maker_reference",
         )
         if pair_result["trades"] or pair_result["pending_at_sample_end"]:
             all_trades.extend(pair_result["trades"])
+            maker_reference_trades.extend(maker_reference_result["trades"])
             pair_results.append({
                 "symbol_a": symbol_a,
                 "symbol_b": symbol_b,
@@ -1077,6 +1090,15 @@ def run_multi_asset_strategy_research(
     }
     pair_portfolio = _pair_portfolio_simulation(
         all_trades,
+        opens,
+        closes,
+        bar_count=count,
+        train_end=train_end,
+        validation_end=validation_end,
+        slippage_bps_per_side=SLIPPAGE_BPS_PER_SIDE,
+    )
+    maker_fee_reference_portfolio = _pair_portfolio_simulation(
+        maker_reference_trades,
         opens,
         closes,
         bar_count=count,
@@ -1104,6 +1126,25 @@ def run_multi_asset_strategy_research(
     current_pair_signals, current_pair_eligible_count = _latest_pair_signals(
         symbols, closes, market_costs
     )
+    variant_c_taker = _simulate_cross_sectional_momentum(
+        market, market_costs, fee_type="taker"
+    )
+    variant_c_maker_reference = _simulate_cross_sectional_momentum(
+        market, market_costs, fee_type="maker_reference"
+    )
+    variant_c_slippage_sensitivity = [
+        {
+            "slippage_bps_per_side": assumed_slippage,
+            "costed_proxy": _simulate_cross_sectional_momentum(
+                market,
+                market_costs,
+                slippage_bps_per_side=assumed_slippage,
+                fee_type="taker",
+            )["costed_proxy"],
+            "status": "COST_ASSUMPTION_SENSITIVITY_NOT_HISTORICAL_EXECUTION",
+        }
+        for assumed_slippage in SLIPPAGE_SENSITIVITY_BPS_PER_SIDE
+    ]
     if now_epoch is None:
         current_bar_freshness = "NOT_CHECKED"
     else:
@@ -1186,12 +1227,32 @@ def run_multi_asset_strategy_research(
             ),
             "concurrent_portfolio": pair_portfolio,
             "concurrent_portfolio_slippage_sensitivity": pair_portfolio_slippage_sensitivity,
+            "maker_fee_reference_portfolio": maker_fee_reference_portfolio,
+            "maker_fee_reference_status": (
+                "HYPOTHETICAL_LOWER_COST_REFERENCE_NOT_A_PASSIVE_FILL_MODEL"
+            ),
+            "portfolio_simulation": True,
+            "actual_fills": False,
+            "portfolio_pnl": False,
+        },
+        "variant_c_cross_sectional_momentum": {
+            "status": variant_c_taker.get("status", "NOT_AVAILABLE"),
+            "method": variant_c_taker.get("method", {}),
+            "taker_fee_baseline": variant_c_taker,
+            "maker_fee_reference": variant_c_maker_reference,
+            "maker_fee_reference_caveat": (
+                "HYPOTHETICAL_FEE_ONLY; DOES_NOT_MODEL_QUEUE_POSITION_OR_MAKER_FILL_PROBABILITY"
+            ),
+            "slippage_sensitivity": variant_c_slippage_sensitivity,
             "portfolio_simulation": True,
             "actual_fills": False,
             "portfolio_pnl": False,
         },
         "cost_assumptions": {
             "taker_fee_source": "CURRENT_KRAKEN_TRADE_VOLUME_WHEN_AVAILABLE",
+            "maker_fee_source": "CURRENT_KRAKEN_TRADE_VOLUME_FEES_MAKER_WHEN_AVAILABLE",
+            "maker_fee_is_used_for_primary_results": False,
+            "fee_schedule_requested": True,
             "spread_source": "CURRENT_TICKER_SPREAD_APPLIED_AS_HISTORICAL_PROXY",
             "slippage_bps_per_side": SLIPPAGE_BPS_PER_SIDE,
             "slippage_sensitivity_bps_per_side": list(SLIPPAGE_SENSITIVITY_BPS_PER_SIDE),
@@ -1201,6 +1262,7 @@ def run_multi_asset_strategy_research(
             "current_l2_order_book_cost_diagnostics": _current_order_book_cost_diagnostics(
                 market_costs
             ),
+            "time_separated_l2_snapshots_persisted_by_runtime": True,
         },
         "release_gate_eligible": False,
         "actual_fills": False,
