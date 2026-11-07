@@ -1204,8 +1204,11 @@ def _mean_reversion_shadow_diagnostics(
         features = row.get("features")
         if not isinstance(features, dict):
             return None
+        raw_value = features.get(key)
+        if raw_value is None:
+            return None
         try:
-            value = float(features.get(key))
+            value = float(raw_value)
         except (TypeError, ValueError, OverflowError):
             return None
         return value if math.isfinite(value) else None
