@@ -1,4 +1,6 @@
-## Aktueller Status — 0.1.63
+## Aktueller Status — 0.1.64
+
+**Version 0.1.64 trennt vor Beginn der lokalen WS-L2-Aufzeichnung liegende Beobachtungen von tatsächlich ausgereiften In-Feed-Zielhorizonten. Die Match-Quote wird zusätzlich nur für diese auswertbare Kohorte berechnet. Spot-Kosten werden in Taker-Gebühren, Spread und angenommene Slippage zerlegt; Mean-Reversion-Ergebnisse werden nach Richtung und aufgezeichnetem Marktregime aufgeschlüsselt. Alles bleibt Research-only; SHADOW, Live-Order-Sperre und Strategiepromotion-Gates bleiben unverändert.**
 
 **Version 0.1.63 lädt Mikrostruktur-Historie nur noch für tatsächlich gespeicherte Märkte und schließt Book-Marks vor der Signalentscheidung aus der Forward-Bewertung aus. Zielzeitpunkte außerhalb der verfügbaren WS-L2-Historie werden separat ausgewiesen. SHADOW und Live-Sperren bleiben unverändert.**
 

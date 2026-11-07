@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.64 — Reifegrad-Kohorten und Kostenzerlegung im Mikrostruktur-Research
+
+- Trennt historische Beobachtungen vor Beginn der qualifizierten WS-L2-Aufzeichnung von Entscheidungen innerhalb der tatsächlich beobachteten Feed-Periode.
+- Weist innerhalb der Feed-Periode noch nicht ausgereifte Zielhorizonte separat aus und berechnet die Match-Abdeckung nur auf vollständig auswertbaren In-Feed-Kohorten; Auswertungen zusätzlich je Markt und Strategie.
+- Zerlegt den geschätzten Spot-Roundtrip nachvollziehbar in Taker-Gebühren, Entry-/Exit-Spread und angenommene Slippage; fehlende Gebühren-/Spread-Evidenz bleibt unbewertet statt null.
+- Ergänzt Mean-Reversion-Diagnostik nach Long/Short, Signalgrund, aufgezeichnetem Range-/Trend-Regime und Z-Score-Band. Das sind Subgruppenanalysen, keine automatisch promoteten Varianten.
+- Keine Änderung an Entry-Signalen, Produktionsstrategie, Risikoparametern, Datenbankschema oder Order Authority. SHADOW und alle Live-/Promotionsperren bleiben unverändert.
+
 ## 0.1.63 — Mikrostruktur-Historie effizient abfragen und Forward-Causality absichern
 
 - Runtime lädt Minutenbalken nur noch für tatsächlich in SQLite vorhandene Mikrostruktur-Paare statt für alle Instrumente des Spot-Universums; zusätzliche Cycle-Zähler zeigen die geladene Historie.

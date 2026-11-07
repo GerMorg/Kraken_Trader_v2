@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import math
 from hashlib import sha256
 from statistics import median
 from typing import Any, Sequence
@@ -1176,6 +1177,94 @@ def settle_due_strategy_candidate_observations(
     return results
 
 
+def _mean_reversion_shadow_diagnostics(
+    observations: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """Explain MR forward outcomes by direction and the signal's recorded regime features."""
+    rows = [
+        row for row in observations
+        if str(row.get("candidate_name", "")) == "mean_reversion_24h"
+    ]
+    costed = [
+        row for row in rows
+        if row.get("status") in {"SETTLED_COST_ESTIMATE", "SETTLED_GROSS_ONLY"}
+        and row.get("spot_net_return_bps") is not None
+    ]
+
+    def metrics_by(key_fn: Any) -> dict[str, dict[str, Any]]:
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for row in costed:
+            groups.setdefault(str(key_fn(row)), []).append(row)
+        return {
+            key: _metrics_for_field(group, "spot_net_return_bps", "net")
+            for key, group in sorted(groups.items())
+        }
+
+    def feature_number(row: dict[str, Any], key: str) -> float | None:
+        features = row.get("features")
+        if not isinstance(features, dict):
+            return None
+        raw_value = features.get(key)
+        if raw_value is None:
+            return None
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return value if math.isfinite(value) else None
+
+    def path_regime(row: dict[str, Any]) -> str:
+        value = feature_number(row, "path_efficiency_24h")
+        if value is None:
+            return "FEATURE_UNAVAILABLE"
+        return "RANGE_FILTERED_IN" if value <= 0.25 else "TRENDING_FILTERED_OUT"
+
+    def z_score_band(row: dict[str, Any]) -> str:
+        value = feature_number(row, "z_score")
+        if value is None:
+            return "FEATURE_UNAVAILABLE"
+        magnitude = abs(value)
+        if magnitude < 2.0:
+            return "BELOW_2"
+        if magnitude < 2.5:
+            return "2_TO_2_5"
+        if magnitude < 3.0:
+            return "2_5_TO_3"
+        return "3_OR_ABOVE"
+
+    def counts_by(key_fn: Any) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for row in rows:
+            key = str(key_fn(row))
+            counts[key] = counts.get(key, 0) + 1
+        return dict(sorted(counts.items()))
+
+    return {
+        "candidate_observation_count": len(rows),
+        "directional_costed_outcome_count": len(costed),
+        "directional_costed_outcomes_by_direction": metrics_by(
+            lambda row: str(row.get("direction", "UNKNOWN")).upper()
+        ),
+        "costed_outcomes_by_signal_reason": metrics_by(
+            lambda row: row.get("signal_reason", "UNKNOWN")
+        ),
+        "path_efficiency_regime_observation_counts": counts_by(path_regime),
+        "costed_outcomes_by_path_efficiency_regime": metrics_by(path_regime),
+        "z_score_band_observation_counts": counts_by(z_score_band),
+        "costed_outcomes_by_z_score_band": metrics_by(z_score_band),
+        "range_filter_threshold": 0.25,
+        "z_score_entry_threshold": 2.0,
+        "interpretation_limitations": [
+            "These are observational subgroup diagnostics, not independently randomized strategy variants.",
+            "The range/trending classification reuses the candidate's recorded path-efficiency feature.",
+            "Small subgroup samples and chronological holdout results must be reviewed before any strategy change.",
+        ],
+        "actual_fills": False,
+        "portfolio_pnl": False,
+        "release_gate_eligible": False,
+    }
+
+
 def summarize_strategy_candidate_research(
     observations: Sequence[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -1305,6 +1394,7 @@ def summarize_strategy_candidate_research(
         })
 
     return {
+        "mean_reversion_diagnostics": _mean_reversion_shadow_diagnostics(observations),
         "event_scope": "PARALLEL_SHADOW_RESEARCH_ONLY",
         "status": "INSUFFICIENT_FORWARD_SAMPLE" if not summaries or not any(
             item["costed_outcome_count"] for item in summaries
