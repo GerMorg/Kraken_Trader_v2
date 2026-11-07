@@ -190,7 +190,7 @@ def test_strategy_lab_rejects_non_hourly_data_and_invalid_cost_assumptions():
         )
 
 
-def test_live_shadow_candidates_produce_three_separate_predictions_with_walk_forward_ml():
+def test_live_shadow_candidates_produce_four_separate_predictions_with_walk_forward_ml():
     from app.strategy_lab import generate_live_shadow_candidate_signals
 
     candles = synthetic_candles(720)
@@ -217,6 +217,7 @@ def test_live_shadow_candidates_produce_three_separate_predictions_with_walk_for
         "current_tsm",
         "mean_reversion_24h",
         "logistic_regression_wf",
+        "volatility_breakout",
     ]
     assert all(item["direction"] in {"LONG", "SHORT", "NONE"} for item in signals)
     assert signals[0]["candidate_version"] == "tsm-0.2.0"

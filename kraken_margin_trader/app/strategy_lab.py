@@ -15,7 +15,7 @@ from app.strategy import generate_trend_signal
 D = Decimal
 SUPPORTED_INTERVAL_MINUTES = frozenset({1, 5, 15, 30, 60, 240, 720, 1440})
 FEATURE_VERSION = "ohlcv-features-v1"
-RESEARCH_VERSION = "strategy-lab-v0.1"
+RESEARCH_VERSION = "strategy-lab-v0.2"
 MIN_LOGISTIC_TRAIN_SAMPLES = 200
 FEATURE_LOOKBACK_BARS = 72
 LOGISTIC_LONG_THRESHOLD = 0.60
@@ -747,8 +747,9 @@ def compare_strategies(
 
 LIVE_SHADOW_CANDIDATE_VERSIONS = {
     "current_tsm": "tsm-0.2.0",
-    "mean_reversion_24h": "mean-reversion-24h-0.1.0",
+    "mean_reversion_24h": "mean-reversion-24h-0.2.0",
     "logistic_regression_wf": "logistic-regression-wf-0.1.0",
+    "volatility_breakout": "volatility-breakout-0.1.0",
 }
 
 
@@ -841,38 +842,71 @@ def generate_live_shadow_candidate_signals(
         "direction": "NONE",
         "signal_reason": "MEAN_REVERSION_WITHIN_FIXED_THRESHOLD",
         "score": D(0),
-        "features": {"window_bars": 24, "z_score_threshold": 2.0},
+        "features": {"window_bars": 24, "z_score_threshold": 2.0,
+                     "maximum_path_efficiency": 0.25, "normalization": "LOG_CLOSE"},
     }
-    if len(closes) >= 24:
-        window = [float(value) for value in closes[-24:]]
+    if len(closes) >= 25:
+        window = [math.log(float(value)) for value in closes[-24:]]
         average = fmean(window)
         deviation = pstdev(window)
+        path_efficiency = _path_efficiency([float(value) for value in closes[-25:]])
         if math.isfinite(deviation) and deviation > 0:
             z_score = (window[-1] - average) / deviation
-            if math.isfinite(z_score):
-                direction = (
-                    "SHORT" if z_score >= 2.0 else
-                    "LONG" if z_score <= -2.0 else "NONE"
-                )
-                reason = (
-                    "MEAN_REVERSION_ZSCORE_HIGH" if direction == "SHORT" else
-                    "MEAN_REVERSION_ZSCORE_LOW" if direction == "LONG" else
-                    "MEAN_REVERSION_WITHIN_FIXED_THRESHOLD"
-                )
-                mean_reversion.update({
-                    "direction": direction,
-                    "signal_reason": reason,
-                    "score": D(str(abs(z_score))),
-                    "features": {
-                        "window_bars": 24,
-                        "z_score_threshold": 2.0,
-                        "z_score": round(z_score, 8),
-                        "moving_average": str(D(str(average))),
-                        "population_stddev": str(D(str(deviation))),
-                    },
-                })
+            extreme = "SHORT" if z_score >= 2.0 else "LONG" if z_score <= -2.0 else "NONE"
+            direction = extreme if path_efficiency <= 0.25 else "NONE"
+            reason = (
+                "MEAN_REVERSION_ZSCORE_HIGH_RANGE_REGIME" if direction == "SHORT" else
+                "MEAN_REVERSION_ZSCORE_LOW_RANGE_REGIME" if direction == "LONG" else
+                "MEAN_REVERSION_FILTERED_TRENDING_REGIME"
+                if extreme != "NONE" else "MEAN_REVERSION_WITHIN_FIXED_THRESHOLD"
+            )
+            mean_reversion.update({
+                "direction": direction, "signal_reason": reason,
+                "score": D(str(abs(z_score))),
+                "features": {"window_bars": 24, "z_score_threshold": 2.0,
+                             "z_score": round(z_score, 8), "normalization": "LOG_CLOSE",
+                             "path_efficiency_24h": round(path_efficiency, 8),
+                             "maximum_path_efficiency": 0.25},
+            })
         else:
             mean_reversion["signal_reason"] = "MEAN_REVERSION_ZERO_OR_INVALID_VOLATILITY"
+
+    breakout: dict[str, Any] = {
+        "candidate_name": "volatility_breakout",
+        "candidate_version": LIVE_SHADOW_CANDIDATE_VERSIONS["volatility_breakout"],
+        "direction": "NONE", "signal_reason": "BREAKOUT_NOT_CONFIRMED",
+        "score": D(0),
+        "features": {"lookback_bars": 24, "minimum_volume_ratio": 1.2, "trend_confirmation_bars": 72},
+    }
+    if current_index >= 72 and _feature_vector(candles, current_index, 3600) is not None:
+        prior = candles[current_index - 24:current_index]
+        prior_high, prior_low = max(x.high for x in prior), min(x.low for x in prior)
+        prior_volumes = [float(x.volume) for x in prior if x.volume > 0]
+        median_volume = median(prior_volumes) if prior_volumes else 0.0
+        current_volume = float(candles[current_index].volume)
+        volume_ratio = current_volume / median_volume if median_volume > 0 else 0.0
+        trend_72_bps = float(closes[-1] / closes[-73] - D(1)) * 10000.0
+        breakout_direction = (
+            "LONG" if closes[-1] > prior_high and trend_72_bps > 0 else
+            "SHORT" if closes[-1] < prior_low and trend_72_bps < 0 else "NONE"
+        )
+        direction = breakout_direction if volume_ratio >= 1.2 else "NONE"
+        reason = (
+            "BREAKOUT_LONG_VOLUME_CONFIRMED" if direction == "LONG" else
+            "BREAKOUT_SHORT_VOLUME_CONFIRMED" if direction == "SHORT" else
+            "BREAKOUT_VOLUME_CONFIRMATION_MISSING" if breakout_direction != "NONE"
+            else "BREAKOUT_NOT_CONFIRMED"
+        )
+        breakout.update({
+            "direction": direction, "signal_reason": reason,
+            "score": D(str(round(volume_ratio, 8))),
+            "features": {"lookback_bars": 24, "prior_high": str(prior_high),
+                         "prior_low": str(prior_low), "volume_ratio": round(volume_ratio, 8),
+                         "minimum_volume_ratio": 1.2, "trend_72_bps": round(trend_72_bps, 6),
+                         "trend_confirmation_bars": 72},
+        })
+    else:
+        breakout["signal_reason"] = "BREAKOUT_REQUIRES_72_CONTIGUOUS_BARS"
 
     logistic: dict[str, Any] = {
         "candidate_name": "logistic_regression_wf",
@@ -943,7 +977,7 @@ def generate_live_shadow_candidate_signals(
             })
             logistic["features"] = logistic_features
 
-    return [tsm_candidate, mean_reversion, logistic]
+    return [tsm_candidate, mean_reversion, logistic, breakout]
 
 
 def strategy_candidate_observation_id(

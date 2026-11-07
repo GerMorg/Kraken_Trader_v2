@@ -26,6 +26,8 @@ from app.entry_guards import entry_pair_exposure
 from app.history_sync import history_sources_ready, reconcile_trade_ledger_coverage, sync_history_source
 from app.market import closed_bar_is_fresh, executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
 from app.market_microstructure import MarketMicrostructureCollector
+from app.microstructure_research import match_microstructure_target_horizons
+from app.joint_portfolio import simulate_shared_equity_candidate_portfolio
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
 from app.position_management import evaluate_position_exits
@@ -1701,7 +1703,7 @@ class TraderRuntime:
                         -60 <= shadow_bar_age <= 3900
                         and not self.persistence.strategy_candidate_bar_is_complete(
                             instrument.pair_id, shadow_bar_ts, interval_minutes=60,
-                            expected_candidate_count=3,
+                            expected_candidate_count=4,
                         )
                     ):
                         try:
@@ -2350,15 +2352,66 @@ class TraderRuntime:
             self.persistence.record_event("SHADOW_RESEARCH_SUMMARY", research_summary)
             self.audit.emit("SHADOW_RESEARCH_SUMMARY", **research_summary)
             failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_READ"
-            strategy_lab_summary = summarize_strategy_candidate_research(
-                self.persistence.strategy_candidate_observations(limit=100000)
-            )
+            strategy_candidate_rows = self.persistence.strategy_candidate_observations(limit=100000)
+            strategy_lab_summary = summarize_strategy_candidate_research(strategy_candidate_rows)
             strategy_lab_summary["enabled"] = self.settings.shadow_strategy_lab_enabled
             failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_WRITE"
             self.persistence.record_event("SHADOW_STRATEGY_LAB_SUMMARY", strategy_lab_summary)
             self.audit.emit("SHADOW_STRATEGY_LAB_SUMMARY", **strategy_lab_summary)
             self.microstructure.flush_due()
             microstructure_status = self.microstructure.status()
+            microstructure_quality = self.persistence.microstructure_quality_summary(now_epoch=int(time.time()))
+            microstructure_forward_tsm: dict[str, Any] = {"status": "NOT_AVAILABLE"}
+            microstructure_forward_candidates: dict[str, Any] = {"status": "NOT_AVAILABLE"}
+            joint_candidate_portfolio: dict[str, Any] = {"status": "NOT_AVAILABLE"}
+            try:
+                pair_aliases: dict[str, str] = {
+                    str(instrument.pair_id): str(instrument.wsname)
+                    for instrument in portfolio_instruments.values()
+                }
+                microstructure_history: dict[str, list[dict[str, Any]]] = {
+                    symbol: self.persistence.microstructure_bars(symbol, limit=10000)
+                    for symbol in sorted(set(pair_aliases.values()))
+                }
+                microstructure_forward_tsm = match_microstructure_target_horizons(
+                    research_observations, microstructure_history, pair_aliases
+                )
+                microstructure_forward_candidates = match_microstructure_target_horizons(
+                    strategy_candidate_rows, microstructure_history, pair_aliases
+                )
+                candidate_match_rows = microstructure_forward_candidates.pop("matched_observations", [])
+                microstructure_forward_tsm.pop("matched_observations", None)
+                eligible_margin_shorts = {
+                    pair for pair, costs in portfolio_market_costs.items()
+                    if costs.get("margin_sell_supported") is True
+                }
+                filtered_rows = [
+                    item for item in candidate_match_rows
+                    if item["direction"] != "SHORT" or item["pair"] in eligible_margin_shorts
+                ]
+                joint_candidate_portfolio = simulate_shared_equity_candidate_portfolio(
+                    filtered_rows, initial_equity_usd=D("10000"),
+                    max_gross_pct=D("80"), max_net_pct=D("50"),
+                    max_position_pct=D("20"), max_open_positions=4,
+                )
+                joint_candidate_portfolio["margin_ineligible_short_rows_excluded"] = (
+                    len(candidate_match_rows)-len(filtered_rows)
+                )
+                horizon_payload = {"cycle_id":cycle_id,"tsm":microstructure_forward_tsm,
+                                   "strategy_candidates":microstructure_forward_candidates,
+                                   "actual_fills":False,"release_gate_eligible":False}
+                self.persistence.record_event("MICROSTRUCTURE_FORWARD_HORIZON_SUMMARY",horizon_payload)
+                self.audit.emit("MICROSTRUCTURE_FORWARD_HORIZON_SUMMARY",**horizon_payload)
+                portfolio_payload={"cycle_id":cycle_id,**joint_candidate_portfolio}
+                self.persistence.record_event("JOINT_STRATEGY_PORTFOLIO_BACKTEST",portfolio_payload)
+                self.audit.emit("JOINT_STRATEGY_PORTFOLIO_BACKTEST",**portfolio_payload)
+            except Exception as exc:
+                self.audit.emit("MICROSTRUCTURE_RESEARCH_DIAGNOSTIC_ERROR",cycle_id=cycle_id,
+                                exception_type=type(exc).__name__,reason=str(exc)[:120],
+                                primary_shadow_outcomes_unchanged=True,release_gate_eligible=False)
+            quality_payload={"cycle_id":cycle_id,**microstructure_quality}
+            self.persistence.record_event("MICROSTRUCTURE_DATA_QUALITY_SUMMARY",quality_payload)
+            self.audit.emit("MICROSTRUCTURE_DATA_QUALITY_SUMMARY",**quality_payload)
             final_breaker_rows = self.persistence.circuit_breakers()
             final_breaker_diagnostics = _circuit_breaker_diagnostics(final_breaker_rows, persistence=self.persistence)
             result = {
@@ -2408,6 +2461,15 @@ class TraderRuntime:
                 "microstructure_trades": microstructure_status["trades"],
                 "microstructure_minute_bars_saved_total": microstructure_status["minute_bars_saved"],
                 "microstructure_persisted_minute_bars": self.persistence.microstructure_bar_count(),
+                "microstructure_valid_minute_bars": microstructure_quality["status_counts"]["VALID"],
+                "microstructure_recent_usable_valid_minute_bars": microstructure_quality["recent_usable_valid_bar_count"],
+                "microstructure_partial_minute_bars": microstructure_quality["status_counts"]["PARTIAL"],
+                "microstructure_recent_legacy_unqualified_valid_bars": microstructure_quality["recent_legacy_or_unqualified_valid_bar_count"],
+                "microstructure_recent_valid_minute_bars": microstructure_quality["recent_status_counts"]["VALID"],
+                "microstructure_recent_partial_minute_bars": microstructure_quality["recent_status_counts"]["PARTIAL"],
+                "microstructure_forward_tsm_matched_count": microstructure_forward_tsm.get("matched_observation_count",0),
+                "microstructure_forward_candidate_matched_count": microstructure_forward_candidates.get("matched_observation_count",0),
+                "joint_candidate_portfolio_scenario_count": len(joint_candidate_portfolio.get("scenarios",[])),
                 "microstructure_checksum_failures": microstructure_status["checksum_failures"],
                 "microstructure_trade_id_gaps": microstructure_status["trade_id_gaps"],
                 "microstructure_connection_gaps": microstructure_status["connection_gaps"],

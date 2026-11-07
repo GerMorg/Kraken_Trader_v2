@@ -1084,6 +1084,136 @@ class Persistence:
             )
             return cursor.rowcount == 1
 
+    def microstructure_quality_summary(
+        self, *, now_epoch: int | None = None, recent_window_minutes: int = 1440
+    ) -> dict[str, Any]:
+        """Aggregate lifetime counts in SQL and inspect JSON quality only in the recent window."""
+        now = int(time.time()) if now_epoch is None else int(now_epoch)
+        if recent_window_minutes < 1:
+            raise ValueError("MICROSTRUCTURE_QUALITY_WINDOW_INVALID")
+        recent_start = now - recent_window_minutes * 60
+        with self.lock:
+            aggregate_rows = self.connection.execute(
+                "SELECT pair,COUNT(*) AS total_count,"
+                "SUM(CASE WHEN quality_status='VALID' THEN 1 ELSE 0 END) AS valid_count,"
+                "SUM(CASE WHEN quality_status='PARTIAL' THEN 1 ELSE 0 END) AS partial_count,"
+                "MIN(minute_ts) AS first_minute_ts,MAX(minute_ts) AS latest_minute_ts "
+                "FROM microstructure_bars GROUP BY pair"
+            ).fetchall()
+            latest_rows = self.connection.execute(
+                "SELECT b.pair,b.minute_ts,b.quality_status,b.payload_json "
+                "FROM microstructure_bars AS b JOIN ("
+                "SELECT pair,MAX(minute_ts) AS latest_ts FROM microstructure_bars GROUP BY pair"
+                ") AS latest ON latest.pair=b.pair AND latest.latest_ts=b.minute_ts"
+            ).fetchall()
+            recent_rows = self.connection.execute(
+                "SELECT pair,minute_ts,quality_status,payload_json FROM microstructure_bars "
+                "WHERE minute_ts>=? ORDER BY pair,minute_ts",
+                (recent_start,),
+            ).fetchall()
+
+        by_pair: dict[str, dict[str, Any]] = {}
+        valid_total = partial_total = 0
+        for row in aggregate_rows:
+            pair = str(row["pair"])
+            by_pair[pair] = {
+                "total_count": int(row["total_count"]),
+                "valid_count": int(row["valid_count"] or 0),
+                "partial_count": int(row["partial_count"] or 0),
+                "recent_valid_count": 0,
+                "recent_partial_count": 0,
+                "recent_usable_valid_count": 0,
+                "recent_legacy_or_unqualified_valid_count": 0,
+                "first_minute_ts": int(row["first_minute_ts"]),
+                "latest_minute_ts": int(row["latest_minute_ts"]),
+                "latest_quality_status": None,
+                "latest_book_event_ts": None,
+                "latest_book_age_seconds": None,
+            }
+            valid_total += int(row["valid_count"] or 0)
+            partial_total += int(row["partial_count"] or 0)
+
+        for row in latest_rows:
+            pair = str(row["pair"])
+            summary = by_pair[pair]
+            summary["latest_quality_status"] = str(row["quality_status"]).upper()
+            try:
+                decoded = json.loads(str(row["payload_json"]))
+                payload = decoded if isinstance(decoded, dict) else {}
+            except (json.JSONDecodeError, TypeError, ValueError):
+                payload = {}
+            try:
+                event_ts = int(
+                    payload.get("last_book_event_ts")
+                    or payload.get("book_event_ts")
+                    or 0
+                )
+            except (TypeError, ValueError, OverflowError):
+                event_ts = 0
+            if event_ts > 0:
+                summary["latest_book_event_ts"] = event_ts
+                summary["latest_book_age_seconds"] = now - event_ts
+
+        recent_valid = recent_partial = 0
+        recent_usable = recent_legacy = 0
+        for row in recent_rows:
+            pair = str(row["pair"])
+            status = str(row["quality_status"]).upper()
+            summary = by_pair[pair]
+            try:
+                decoded = json.loads(str(row["payload_json"]))
+                payload = decoded if isinstance(decoded, dict) else {}
+            except (json.JSONDecodeError, TypeError, ValueError):
+                payload = {}
+            if status == "VALID":
+                recent_valid += 1
+                summary["recent_valid_count"] += 1
+                try:
+                    first_ts = int(payload.get("first_book_event_ts", 0))
+                    last_ts = int(payload.get("last_book_event_ts", 0))
+                    usable = (
+                        int(payload.get("book_sample_count", 0)) >= 2
+                        and first_ts > 0
+                        and last_ts - first_ts >= 10
+                        and int(payload.get("checksum_checks", 0)) > 0
+                        and int(payload.get("checksum_failures", 0)) == 0
+                        and int(payload.get("trade_id_gaps", 0)) == 0
+                        and int(payload.get("connection_gap_count", 0)) == 0
+                        and not payload.get("quality_flags")
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    usable = False
+                if usable:
+                    recent_usable += 1
+                    summary["recent_usable_valid_count"] += 1
+                else:
+                    recent_legacy += 1
+                    summary["recent_legacy_or_unqualified_valid_count"] += 1
+            elif status == "PARTIAL":
+                recent_partial += 1
+                summary["recent_partial_count"] += 1
+
+        for summary in by_pair.values():
+            summary["valid_pct"] = (
+                round(summary["valid_count"] / summary["total_count"] * 100.0, 2)
+                if summary["total_count"] else None
+            )
+        return {
+            "total_bar_count": sum(item["total_count"] for item in by_pair.values()),
+            "status_counts": {"VALID": valid_total, "PARTIAL": partial_total},
+            "recent_window_minutes": recent_window_minutes,
+            "recent_status_counts": {"VALID": recent_valid, "PARTIAL": recent_partial},
+            "recent_usable_valid_bar_count": recent_usable,
+            "recent_legacy_or_unqualified_valid_bar_count": recent_legacy,
+            # Compatibility aliases are explicitly scoped to the recent window.
+            "usable_valid_bar_count": recent_usable,
+            "legacy_or_unqualified_valid_bar_count": recent_legacy,
+            "usable_quality_count_scope": "RECENT_WINDOW_ONLY",
+            "pair_count": len(by_pair),
+            "by_pair": by_pair,
+            "quality_scope": "VALID_REQUIRES_V0_1_61_VERIFIED_MULTI_SAMPLE_COVERAGE",
+        }
+
     def microstructure_bar_count(self, pair: str | None = None) -> int:
         """Count persisted one-minute WS v2 feature aggregates."""
         with self.lock:
