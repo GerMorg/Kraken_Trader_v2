@@ -2,7 +2,7 @@ from __future__ import annotations
 from bisect import bisect_left
 from decimal import Decimal
 from statistics import median
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 D=Decimal
 
 def _d(value:Any)->Decimal|None:
@@ -31,7 +31,7 @@ def _mark(row:dict[str,Any])->tuple[int,Decimal,Decimal|None]|None:
     return last,mid,spread
 
 def match_microstructure_target_horizons(
- observations:Sequence[dict[str,Any]], bars_by_market_pair:dict[str,Sequence[dict[str,Any]]],
+ observations:Sequence[dict[str,Any]], bars_by_market_pair:Mapping[str, Sequence[dict[str, Any]]],
  pair_aliases:dict[str,str], *, max_time_error_seconds:int=60,
  slippage_bps_per_side:Decimal=D("5")
 )->dict[str,Any]:
