@@ -90,3 +90,10 @@ Forward-Beobachtungen werden zusätzlich getrennt von der bisherigen H1-Schlussk
 Die gemeinsame Strategie-Simulation verarbeitet nur gematchte, vollständig kostenbewertete Kandidaten. Kapital, Markt-Exklusivität, Brutto-/Nettoexposure, Positionsgröße und Positionsanzahl gelten gemeinsam. Konfligierende Kandidaten desselben Marktes zur selben Entscheidungszeit werden sämtlich ausgeschlossen statt nachträglich den Gewinner auszuwählen. Shorts werden nur auf Märkten einbezogen, deren aktuelle Kraken-Instrumentmetadaten Margin-Sells erlauben. Zusätzliche Margin-Kostenbudgets sind Sensitivitätsannahmen und keine Kraken-Fee-Quotes.
 
 Die Simulation berechnet hypothetische, realisierte Label-PnL auf normiertem Research-Kapital. Sie ist noch kein vollständiger Portfolio-Backtest: Cross-Asset-Korrelation, Intratrade-Marktwertpfad, Stop-/Take-Profit-Ausführung, Margin-Collateral, tatsächliche Finanzierungskosten, Liquidationen und Orderbuch-Fills fehlen. Es gibt keine Strategiepromotion und keine Orderfreigabe.
+
+
+## v0.1.63 — Causalitäts- und Laufzeitkorrektur
+
+Die Forward-Auswertung verwendet ausschließlich qualifizierte Minuten-Book-Marks, deren Zeitstempel zwischen Signalentscheidung und Zielzeitpunkt liegt. Marks vor der Entscheidung dürfen keinen Exit-Preis liefern. Zielzeitpunkte vor dem ersten lokal gespeicherten qualifizierten Book-Mark werden separat gezählt; das ist fehlende historische WS-L2-Abdeckung und kein normaler Marktverlust. Die Datenquelle liefert keine rückwirkende vollständige L2-Tape-Historie.
+
+Die Laufzeit fragt die Mikrostruktur-Historie nur noch für Paare ab, für die tatsächlich Minutenbalken in SQLite existieren. Damit entfällt das Abfragen jedes Instruments des gesamten Spot-Universums. Der Cycle-Summary protokolliert Anzahl gespeicherter Märkte und geladener Minutenbalken.

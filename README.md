@@ -1,4 +1,6 @@
-## Aktueller Status — 0.1.62
+## Aktueller Status — 0.1.63
+
+**Version 0.1.63 lädt Mikrostruktur-Historie nur noch für tatsächlich gespeicherte Märkte und schließt Book-Marks vor der Signalentscheidung aus der Forward-Bewertung aus. Zielzeitpunkte außerhalb der verfügbaren WS-L2-Historie werden separat ausgewiesen. SHADOW und Live-Sperren bleiben unverändert.**
 
 **Version 0.1.62 ergänzt zeitlich eng gematchte WS-v2-Minuten-Book-Marks, eine VALID/PARTIAL-Qualitätsübersicht, einen regimegefilterten Mean-Reversion-Kandidaten, einen bestätigten Breakout-Kandidaten und eine gemeinsame hypothetische Kapital-/Positionssimulation. Sämtliche Ergebnisse sind Research-only; historische Ausführungsfills, bestätigte Margin-Kosten und Live-Freigabe werden nicht behauptet.**
 

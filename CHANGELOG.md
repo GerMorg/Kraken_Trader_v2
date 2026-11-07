@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.63 — Mikrostruktur-Historie effizient abfragen und Forward-Causality absichern
+
+- Runtime lädt Minutenbalken nur noch für tatsächlich in SQLite vorhandene Mikrostruktur-Paare statt für alle Instrumente des Spot-Universums; zusätzliche Cycle-Zähler zeigen die geladene Historie.
+- Forward-Labels verwenden nur Book-Marks nach der Signalentscheidung und spätestens am Zielzeitpunkt. Marks vor dem Einstieg können nicht mehr als Ausstieg verwendet werden.
+- Zielzeitpunkte vor dem ersten qualifizierten lokalen Book-Mark werden als fehlende historische WS-L2-Abdeckung ausgewiesen; die tatsächliche qualifizierte Historien-Spanne je Paar wird protokolliert.
+- Widersprüchliche Limitations-Angabe zum Look-ahead entfernt; keine nach dem Zielzeitpunkt entstandenen Book-Marks werden verwendet.
+- SHADOW, Live-Order-Sperre, historische Datenbank und alle bestehenden Strategiepromotion-Gates bleiben unverändert.
+
 ## 0.1.62 — Zeitgenaue Mikrostruktur-Auswertung und gemeinsames Strategie-Research
 
 - Ergänzt einen getrennten Forward-Marker: Zielzeitpunkte werden gegen den letzten qualitätsgeprüften WS-v2-Minuten-Book-Midpoint zum oder vor dem Zielzeitpunkt abgeglichen; maximal 60 Sekunden Rückstand, kein Look-ahead auf spätere Samples. Alte Stundenkerzen-Ergebnisse bleiben unverändert; unqualifizierte historische VALID-Balken werden nicht nachträglich als neue Datenqualität gewertet.
