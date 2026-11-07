@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import math
 from hashlib import sha256
 from statistics import median
 from typing import Any, Sequence
