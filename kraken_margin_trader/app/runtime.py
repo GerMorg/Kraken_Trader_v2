@@ -2365,8 +2365,11 @@ class TraderRuntime:
             microstructure_forward_candidates: dict[str, Any] = {"status": "NOT_AVAILABLE"}
             joint_candidate_portfolio: dict[str, Any] = {"status": "NOT_AVAILABLE"}
             try:
-                pair_aliases = {instrument.pair_id: instrument.wsname for instrument in portfolio_instruments.values()}
-                microstructure_history = {
+                pair_aliases: dict[str, str] = {
+                    str(instrument.pair_id): str(instrument.wsname)
+                    for instrument in portfolio_instruments.values()
+                }
+                microstructure_history: dict[str, list[dict[str, Any]]] = {
                     symbol: self.persistence.microstructure_bars(symbol, limit=10000)
                     for symbol in sorted(set(pair_aliases.values()))
                 }

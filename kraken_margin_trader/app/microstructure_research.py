@@ -38,11 +38,16 @@ def match_microstructure_target_horizons(
     """Match labels to qualified minute midpoints; this is not an executable fill."""
     if max_time_error_seconds<0 or not slippage_bps_per_side.is_finite() or slippage_bps_per_side<0:
         raise ValueError("MICROSTRUCTURE_TARGET_INPUT_INVALID")
-    indexed={}
+    indexed: dict[str, tuple[list[int], list[tuple[int, Decimal, Decimal | None]]]] = {}
     for pair,bars in bars_by_market_pair.items():
         marks=sorted((m for b in bars if (m:=_mark(b)) is not None),key=lambda x:x[0])
         indexed[pair.strip().upper()]=([m[0] for m in marks],marks)
-    matched=[]; reasons={}; gross=[]; net=[]; offsets=[]; directional=costed=0
+    matched: list[dict[str, Any]] = []
+    reasons: dict[str, int] = {}
+    gross: list[Decimal] = []
+    net: list[Decimal] = []
+    offsets: list[int] = []
+    directional = costed = 0
     for row in observations:
         direction=str(row.get("direction","")).upper()
         if direction not in {"LONG","SHORT"}: continue
@@ -79,12 +84,12 @@ def match_microstructure_target_horizons(
             "pair":pair,"direction":direction,"decision_ts":decision,"target_epoch":target,
             "mark_event_ts":mt,"target_time_offset_seconds":offset,"gross_return_bps":str(gr),
             "spot_net_return_bps":str(nr) if nr is not None else None,"actual_fill":False,"portfolio_pnl":False})
-    groups={}
+    groups: dict[str, dict[str, list[Decimal]]] = {}
     for row in matched:
         key=f"{row['candidate_name']}:{row['candidate_version']}"
         grp=groups.setdefault(key,{"gross":[],"net":[]})
-        grp["gross"].append(D(row["gross_return_bps"]))
-        if row["spot_net_return_bps"] is not None: grp["net"].append(D(row["spot_net_return_bps"]))
+        grp["gross"].append(D(str(row["gross_return_bps"])))
+        if row["spot_net_return_bps"] is not None: grp["net"].append(D(str(row["spot_net_return_bps"])))
     abs_offsets=[abs(x) for x in offsets]
     return {"status":"MINUTE_BOOK_MARKS_AVAILABLE" if matched else "WAITING_FOR_QUALIFIED_MINUTE_BOOK_MARKS",
         "method":"NEAREST_VALID_CHECKSUM_BOOK_MARK_WITHIN_TARGET_TOLERANCE",

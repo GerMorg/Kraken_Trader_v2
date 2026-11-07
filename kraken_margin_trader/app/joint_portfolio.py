@@ -25,7 +25,10 @@ def _scenario(rows:Sequence[dict[str,Any]],equity0:Decimal,budget:Decimal,
         events.extend([(int(row["decision_ts"]),1,cid,row),(int(row["mark_event_ts"]),0,cid,row)])
         eligible+=1
     events.sort(key=lambda x:(x[0],x[1],x[2]))
-    equity=peak=equity0; gross_exp=net_exp=D(0); positions={}; pairs=set(); pnl_rows=[]
+    equity=peak=equity0; gross_exp=net_exp=D(0)
+    positions: dict[str, dict[str, Any]] = {}
+    pairs: set[str] = set()
+    pnl_rows: list[Decimal] = []
     skipped:Counter[str]=Counter(); max_dd=D(0); accepted=0
     for _,kind,cid,row in events:
         if kind==0:
