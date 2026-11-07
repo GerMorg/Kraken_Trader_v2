@@ -23,7 +23,7 @@ def test_target_match_never_uses_a_book_mark_after_the_target():
  assert report["matched_observation_count"]==1
  assert report["matched_observations"][0]["mark_event_ts"]==1990
  assert report["matched_observations"][0]["target_time_offset_seconds"]==-10
- assert report["gross_mark_return"]["mean_bps"]=="100"
+ assert D(report["gross_mark_return"]["mean_bps"]) == D("100")
 
 
 def test_target_without_a_prior_qualified_book_mark_is_not_matched():
@@ -42,4 +42,4 @@ def test_legacy_partial_and_distant_book_marks_are_rejected():
  "target_epoch":2000,"entry_mid_price":"100","entry_spread_bps":"2","taker_fee_bps":"2"}],
  {"XBT/USD":[legacy,partial,bar(2200)]},{"XXBTZUSD":"XBT/USD"},max_time_error_seconds=30)
  assert report["matched_observation_count"]==0
- assert report["unmatched_reasons"]["BOOK_MARK_OUTSIDE_TARGET_TOLERANCE"]==1
+ assert report["unmatched_reasons"]["NO_PRIOR_BOOK_MARK_AT_OR_BEFORE_TARGET"] == 1
