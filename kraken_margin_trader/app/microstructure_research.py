@@ -69,7 +69,7 @@ def _cohort_coverage(
     tolerance_seconds: int,
 ) -> dict[str, Any]:
     """Separate pre-collection labels from matured, observable in-feed targets."""
-    overall = {
+    overall: dict[str, Any] = {
         "directional_observation_count": 0,
         "decision_before_first_qualified_mark": 0,
         "decision_in_feed_count": 0,
@@ -79,11 +79,11 @@ def _cohort_coverage(
         "matured_unmatched_count": 0,
         "matured_match_coverage_pct": None,
     }
-    by_pair: dict[str, dict[str, int]] = {}
-    by_candidate: dict[str, dict[str, int]] = {}
+    by_pair: dict[str, dict[str, Any]] = {}
+    by_candidate: dict[str, dict[str, Any]] = {}
     matched_ids = {str(row.get("candidate_id", "")) for row in matched}
 
-    def bucket(target: dict[str, int], key: str) -> None:
+    def bucket(target: dict[str, Any], key: str) -> None:
         target[key] = target.get(key, 0) + 1
 
     for row in observations:
