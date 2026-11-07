@@ -2369,9 +2369,10 @@ class TraderRuntime:
                     str(instrument.pair_id): str(instrument.wsname)
                     for instrument in portfolio_instruments.values()
                 }
+                persisted_microstructure_pairs = self.persistence.microstructure_pairs()
                 microstructure_history: dict[str, list[dict[str, Any]]] = {
                     symbol: self.persistence.microstructure_bars(symbol, limit=10000)
-                    for symbol in sorted(set(pair_aliases.values()))
+                    for symbol in persisted_microstructure_pairs
                 }
                 microstructure_forward_tsm = match_microstructure_target_horizons(
                     research_observations, microstructure_history, pair_aliases
@@ -2467,6 +2468,8 @@ class TraderRuntime:
                 "microstructure_recent_legacy_unqualified_valid_bars": microstructure_quality["recent_legacy_or_unqualified_valid_bar_count"],
                 "microstructure_recent_valid_minute_bars": microstructure_quality["recent_status_counts"]["VALID"],
                 "microstructure_recent_partial_minute_bars": microstructure_quality["recent_status_counts"]["PARTIAL"],
+                "microstructure_history_pair_count": len(microstructure_history),
+                "microstructure_history_bars_loaded": sum(len(rows) for rows in microstructure_history.values()),
                 "microstructure_forward_tsm_matched_count": microstructure_forward_tsm.get("matched_observation_count",0),
                 "microstructure_forward_candidate_matched_count": microstructure_forward_candidates.get("matched_observation_count",0),
                 "joint_candidate_portfolio_scenario_count": len(joint_candidate_portfolio.get("scenarios",[])),

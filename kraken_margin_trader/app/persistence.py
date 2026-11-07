@@ -1228,6 +1228,17 @@ class Persistence:
                 ).fetchone()
         return int(row["n"]) if row is not None else 0
 
+    def microstructure_pairs(self, *, limit: int = 1000) -> list[str]:
+        """Return only markets that actually have persisted microstructure bars."""
+        if limit < 1:
+            raise ValueError("MICROSTRUCTURE_PAIR_LIMIT_INVALID")
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT DISTINCT pair FROM microstructure_bars ORDER BY pair LIMIT ?",
+                (min(int(limit), 10000),),
+            ).fetchall()
+        return [str(row["pair"]) for row in rows]
+
     def microstructure_bars(
         self, pair: str, *, limit: int = 1000
     ) -> list[dict[str, Any]]:

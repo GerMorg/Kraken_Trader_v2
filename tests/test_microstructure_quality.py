@@ -34,3 +34,21 @@ def test_lifetime_counts_do_not_require_recent_json_quality_fields():
  assert report["recent_status_counts"]=={"VALID":0,"PARTIAL":0}
  assert report["recent_usable_valid_bar_count"]==0
  db.close()
+
+
+def test_microstructure_pair_inventory_is_distinct_sorted_and_bounded():
+    db = Persistence(":memory:")
+    common = {
+        "trade_count": 1, "book_update_count": 1, "checksum_checks": 1,
+        "checksum_failures": 0, "trade_id_gaps": 0, "connection_gap_count": 0,
+        "buy_notional_usd": "10", "sell_notional_usd": "0",
+        "signed_trade_notional_usd": "10", "spread_bps": "1",
+    }
+    for pair, minute in [("XBT/USD", 60), ("ETH/USD", 60), ("XBT/USD", 120)]:
+        assert db.record_microstructure_bar({
+            "pair": pair, "minute_ts": minute, "source": "KRAKEN_SPOT_WS_V2",
+            "quality_status": "PARTIAL", **common, "quality_flags": ["TEST"],
+        })
+    assert db.microstructure_pairs() == ["ETH/USD", "XBT/USD"]
+    assert db.microstructure_pairs(limit=1) == ["ETH/USD"]
+    db.close()
