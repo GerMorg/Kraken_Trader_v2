@@ -1,6 +1,7 @@
 from decimal import Decimal as D
 
 from app.microstructure_research import match_microstructure_target_horizons
+from app.research import summarize_strategy_candidate_research
 
 
 def bar(ts: int, mid: str = "101") -> dict:
@@ -165,3 +166,39 @@ def test_cost_components_are_not_reported_when_required_inputs_are_missing():
     assert report["matched_observation_count"] == 1
     assert report["costed_match_count"] == 0
     assert report["matched_observations"][0]["cost_breakdown_bps"]["total_estimated_spot_cost_bps"] is None
+
+
+
+def test_mean_reversion_summary_splits_direction_and_recorded_regime_features():
+    observations = [
+        {
+            "candidate_id": "mr-long", "candidate_name": "mean_reversion_24h",
+            "candidate_version": "0.2.0", "direction": "LONG",
+            "signal_reason": "MEAN_REVERSION_ZSCORE_LOW_RANGE_REGIME",
+            "status": "SETTLED_COST_ESTIMATE", "spot_net_return_bps": "12",
+            "features": {"path_efficiency_24h": 0.1, "z_score": -2.3},
+        },
+        {
+            "candidate_id": "mr-short", "candidate_name": "mean_reversion_24h",
+            "candidate_version": "0.2.0", "direction": "SHORT",
+            "signal_reason": "MEAN_REVERSION_ZSCORE_HIGH_RANGE_REGIME",
+            "status": "SETTLED_COST_ESTIMATE", "spot_net_return_bps": "-5",
+            "features": {"path_efficiency_24h": 0.2, "z_score": 2.8},
+        },
+        {
+            "candidate_id": "mr-filtered", "candidate_name": "mean_reversion_24h",
+            "candidate_version": "0.2.0", "direction": "NONE",
+            "signal_reason": "MEAN_REVERSION_FILTERED_TRENDING_REGIME",
+            "status": "NO_DIRECTION", "features": {"path_efficiency_24h": 0.6},
+        },
+    ]
+    diagnostics = summarize_strategy_candidate_research(observations)["mean_reversion_diagnostics"]
+    assert diagnostics["candidate_observation_count"] == 3
+    assert diagnostics["directional_costed_outcome_count"] == 2
+    assert diagnostics["directional_costed_outcomes_by_direction"]["LONG"]["mean_bps"] == 12.0
+    assert diagnostics["directional_costed_outcomes_by_direction"]["SHORT"]["mean_bps"] == -5.0
+    assert diagnostics["path_efficiency_regime_observation_counts"] == {
+        "RANGE_FILTERED_IN": 2, "TRENDING_FILTERED_OUT": 1,
+    }
+    assert diagnostics["costed_outcomes_by_z_score_band"]["2_5_TO_3"]["sample_count"] == 1
+    assert diagnostics["release_gate_eligible"] is False
