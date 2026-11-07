@@ -1,5 +1,5 @@
 from __future__ import annotations
-from bisect import bisect_left
+from bisect import bisect_right
 from decimal import Decimal
 from statistics import median
 from typing import Any, Mapping, Sequence
@@ -64,10 +64,15 @@ def match_microstructure_target_horizons(
         ts,marks=indexed[pair]
         if not ts:
             reasons["NO_QUALIFIED_VALID_BOOK_MARKS"]=reasons.get("NO_QUALIFIED_VALID_BOOK_MARKS",0)+1; continue
-        pos=bisect_left(ts,target)
-        nearby=([marks[pos]] if pos<len(marks) else [])+([marks[pos-1]] if pos>0 else [])
-        mt,exit_mid,exit_spread=min(nearby,key=lambda x:abs(x[0]-target))
-        offset=mt-target
+        # Only use information available at or before the target; never look ahead.
+        pos = bisect_right(ts, target) - 1
+        if pos < 0:
+            reasons["NO_PRIOR_BOOK_MARK_AT_OR_BEFORE_TARGET"] = (
+                reasons.get("NO_PRIOR_BOOK_MARK_AT_OR_BEFORE_TARGET", 0) + 1
+            )
+            continue
+        mt, exit_mid, exit_spread = marks[pos]
+        offset = mt - target
         if abs(offset)>max_time_error_seconds:
             reasons["BOOK_MARK_OUTSIDE_TARGET_TOLERANCE"]=reasons.get("BOOK_MARK_OUTSIDE_TARGET_TOLERANCE",0)+1; continue
         sign=D(1) if direction=="LONG" else D(-1)
@@ -92,7 +97,7 @@ def match_microstructure_target_horizons(
         if row["spot_net_return_bps"] is not None: grp["net"].append(D(str(row["spot_net_return_bps"])))
     abs_offsets=[abs(x) for x in offsets]
     return {"status":"MINUTE_BOOK_MARKS_AVAILABLE" if matched else "WAITING_FOR_QUALIFIED_MINUTE_BOOK_MARKS",
-        "method":"NEAREST_VALID_CHECKSUM_BOOK_MARK_WITHIN_TARGET_TOLERANCE",
+        "method":"LAST_VALID_CHECKSUM_BOOK_MARK_AT_OR_BEFORE_TARGET",
         "target_tolerance_seconds":max_time_error_seconds,
         "slippage_bps_per_side_assumption":str(slippage_bps_per_side),
         "directional_observation_count":directional,"matched_observation_count":len(matched),
@@ -101,7 +106,8 @@ def match_microstructure_target_horizons(
         "gross_mark_return":_metrics(gross),"spot_net_cost_proxy":_metrics(net),"costed_match_count":costed,
         "target_time_error_seconds":{"mean_absolute":str(D(sum(abs_offsets))/D(len(abs_offsets))) if abs_offsets else None,
           "median_absolute":str(D(str(median(abs_offsets)))) if abs_offsets else None,
-          "maximum_absolute":max(abs_offsets) if abs_offsets else None},
+          "maximum_absolute":max(abs_offsets) if abs_offsets else None,
+          "mean_signed":str(D(sum(offsets))/D(len(offsets))) if offsets else None},
         "by_candidate":{k:{"gross":_metrics(v["gross"]),"spot_net_cost_proxy":_metrics(v["net"])} for k,v in groups.items()},
         "unmatched_reasons":reasons,"matched_observations":matched,
         "actual_fills":False,"historical_order_book_walk_simulated":False,
