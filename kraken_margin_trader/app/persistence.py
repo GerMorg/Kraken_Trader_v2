@@ -1084,6 +1084,89 @@ class Persistence:
             )
             return cursor.rowcount == 1
 
+    def microstructure_quality_summary(
+        self, *, now_epoch: int | None = None, recent_window_minutes: int = 1440
+    ) -> dict[str, Any]:
+        """Report VALID/PARTIAL coverage and distinguish legacy unqualified VALID rows."""
+        now = int(time.time()) if now_epoch is None else int(now_epoch)
+        if recent_window_minutes < 1:
+            raise ValueError("MICROSTRUCTURE_QUALITY_WINDOW_INVALID")
+        recent_start = now - recent_window_minutes * 60
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT pair,minute_ts,quality_status,payload_json FROM microstructure_bars "
+                "ORDER BY pair,minute_ts"
+            ).fetchall()
+        by_pair: dict[str, dict[str, Any]] = {}
+        valid_total = partial_total = usable_total = legacy_total = 0
+        recent_valid = recent_partial = 0
+        for row in rows:
+            pair, minute_ts = str(row["pair"]), int(row["minute_ts"])
+            status = str(row["quality_status"]).upper()
+            summary = by_pair.setdefault(pair, {
+                "total_count": 0, "valid_count": 0, "partial_count": 0,
+                "usable_valid_count": 0, "legacy_or_unqualified_valid_count": 0,
+                "recent_valid_count": 0, "recent_partial_count": 0,
+                "first_minute_ts": minute_ts, "latest_minute_ts": minute_ts,
+                "latest_quality_status": status, "latest_book_event_ts": None,
+                "latest_book_age_seconds": None,
+            })
+            summary["total_count"] += 1
+            summary["latest_minute_ts"] = minute_ts
+            summary["latest_quality_status"] = status
+            try:
+                decoded = json.loads(str(row["payload_json"]))
+                payload = decoded if isinstance(decoded, dict) else {}
+            except (json.JSONDecodeError, TypeError, ValueError):
+                payload = {}
+            if status == "VALID":
+                valid_total += 1
+                summary["valid_count"] += 1
+                try:
+                    first_ts, last_ts = int(payload.get("first_book_event_ts", 0)), int(payload.get("last_book_event_ts", 0))
+                    usable = (
+                        int(payload.get("book_sample_count", 0)) >= 2 and first_ts > 0
+                        and last_ts-first_ts >= 10 and int(payload.get("checksum_checks", 0)) > 0
+                        and int(payload.get("checksum_failures", 0)) == 0
+                        and int(payload.get("trade_id_gaps", 0)) == 0
+                        and int(payload.get("connection_gap_count", 0)) == 0
+                        and not payload.get("quality_flags")
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    usable = False
+                if usable:
+                    usable_total += 1
+                    summary["usable_valid_count"] += 1
+                else:
+                    legacy_total += 1
+                    summary["legacy_or_unqualified_valid_count"] += 1
+                if minute_ts >= recent_start:
+                    recent_valid += 1
+                    summary["recent_valid_count"] += 1
+            elif status == "PARTIAL":
+                partial_total += 1
+                summary["partial_count"] += 1
+                if minute_ts >= recent_start:
+                    recent_partial += 1
+                    summary["recent_partial_count"] += 1
+            try:
+                event_ts = int(payload.get("last_book_event_ts") or payload.get("book_event_ts") or 0)
+            except (TypeError, ValueError, OverflowError):
+                event_ts = 0
+            if event_ts > 0:
+                summary["latest_book_event_ts"] = event_ts
+                summary["latest_book_age_seconds"] = now-event_ts
+        for summary in by_pair.values():
+            summary["valid_pct"] = round(summary["valid_count"]/summary["total_count"]*100.0,2) if summary["total_count"] else None
+        return {
+            "total_bar_count":len(rows),"status_counts":{"VALID":valid_total,"PARTIAL":partial_total},
+            "usable_valid_bar_count":usable_total,"legacy_or_unqualified_valid_bar_count":legacy_total,
+            "recent_window_minutes":recent_window_minutes,
+            "recent_status_counts":{"VALID":recent_valid,"PARTIAL":recent_partial},
+            "pair_count":len(by_pair),"by_pair":by_pair,
+            "quality_scope":"VALID_REQUIRES_V0_1_61_VERIFIED_MULTI_SAMPLE_COVERAGE",
+        }
+
     def microstructure_bar_count(self, pair: str | None = None) -> int:
         """Count persisted one-minute WS v2 feature aggregates."""
         with self.lock:
