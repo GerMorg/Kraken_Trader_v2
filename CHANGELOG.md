@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.62 — Zeitgenaue Mikrostruktur-Auswertung und gemeinsames Strategie-Research
+
+- Ergänzt einen getrennten Forward-Marker: Zielzeitpunkte werden gegen den nächsten qualitätsgeprüften WS-v2-Minuten-Book-Midpoint innerhalb von 60 Sekunden abgeglichen. Alte Stundenkerzen-Ergebnisse bleiben unverändert; unqualifizierte historische VALID-Balken werden nicht nachträglich als neue Datenqualität gewertet.
+- Macht je Markt VALID/PARTIAL-Abdeckung sichtbar und unterscheidet Legacy-VALID-Einträge ohne die seit 0.1.61 geforderte Mehrfach-Sample-Abdeckung.
+- Überarbeitet den Mean-Reversion-Researchkandidaten auf Logpreis-Z-Score mit Range-Regime-Filter und ergänzt einen 24-Bar-Ausbruchskandidaten mit 72-Bar-Trend- und Volumenbestätigung.
+- Ergänzt eine gemeinsame Event-Simulation mit einer Kapitalbasis, Positions-/Brutto-/Netto-Limits, Pair-Kollisionsschutz und Szenarien für unbekannte Margin-Kosten. Ergebnisse bleiben hypothetisch, keine Fills, kein Intratrade-Liquidationsmodell und keine automatische Promotion.
+- SHADOW, Live-Order-Sperre, DB-Bestand und bisherige Forward-Ergebnisse bleiben unverändert.
+
 ## 0.1.61 — Erweiterte Mikrostruktur-Minutenbeobachtungen
 
 - Ergänzt Trade-OHLC, Basisvolumen und Zeitstempel je WS-v2-Minute sowie den letzten verifizierten Midprice und die letzten bis zu zehn Bid-/Ask-Level.

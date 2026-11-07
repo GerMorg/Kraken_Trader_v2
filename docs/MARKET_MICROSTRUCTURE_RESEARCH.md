@@ -81,3 +81,12 @@ Die WS-v2-Minutenaggregate speichern zusätzlich Trade-OHLC (aus beobachteten ö
 Ein Minutenbalken wird nur dann als `VALID` markiert, wenn mindestens zwei verifizierte Book-Ereignisse mindestens zehn Sekunden auseinanderliegen und alle bisherigen Integritätsbedingungen erfüllt sind. Andernfalls ist er `PARTIAL`. Das ist eine Mindestabdeckung, kein Beweis kontinuierlicher Feed-Abdeckung.
 
 **Wichtige Grenze:** Der gespeicherte L2-Snapshot ist der letzte verifizierte Zustand innerhalb der Minute, kein vollständiger zeitaufgelöster Orderbook-Tape. Er erlaubt daher noch keinen exakten historischen Book-Walk zum nächsten Minuten-Open. Ein späterer Research-Runner muss Snapshot-Zeitstempel, Alter, Sequenz, Fill-Quote und Datenqualität explizit prüfen. Die neuen Felder sind Datengrundlage, keine Strategie, kein Fill, kein Portfolio-PnL und keine Live-Freigabe.
+
+
+## v0.1.62 — Zielzeit-Markierungen und Research-Portfolios
+
+Forward-Beobachtungen werden zusätzlich getrennt von der bisherigen H1-Schlusskursauswertung bewertet. Als Referenz dient der zeitlich nächste Minuten-Midprice aus einem `VALID`-Balken, dessen Book-Samples, zeitlicher Abstand, CRC-Prüfungen und Feed-Qualität die v0.1.61-Anforderungen erfüllen. Der Book-Zeitstempel muss höchstens 60 Sekunden vom prognostizierten Zielzeitpunkt abweichen. Der Bericht misst die Abweichung und Match-Abdeckung; ein Treffer ist weiterhin ein Midprice-Mark, kein ausführbarer Fill. Historische `VALID`-Zeilen ohne die neuen Sample-Felder werden nicht nachträglich als qualifiziert behandelt.
+
+Die gemeinsame Strategie-Simulation verarbeitet nur gematchte, vollständig kostenbewertete Kandidaten. Kapital, Markt-Exklusivität, Brutto-/Nettoexposure, Positionsgröße und Positionsanzahl gelten gemeinsam. Konfligierende Kandidaten desselben Marktes zur selben Entscheidungszeit werden sämtlich ausgeschlossen statt nachträglich den Gewinner auszuwählen. Shorts werden nur auf Märkten einbezogen, deren aktuelle Kraken-Instrumentmetadaten Margin-Sells erlauben. Zusätzliche Margin-Kostenbudgets sind Sensitivitätsannahmen und keine Kraken-Fee-Quotes.
+
+Die Simulation berechnet hypothetische, realisierte Label-PnL auf normiertem Research-Kapital. Sie ist noch kein vollständiger Portfolio-Backtest: Cross-Asset-Korrelation, Intratrade-Marktwertpfad, Stop-/Take-Profit-Ausführung, Margin-Collateral, tatsächliche Finanzierungskosten, Liquidationen und Orderbuch-Fills fehlen. Es gibt keine Strategiepromotion und keine Orderfreigabe.
