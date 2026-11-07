@@ -195,8 +195,8 @@ def test_mean_reversion_summary_splits_direction_and_recorded_regime_features():
     diagnostics = summarize_strategy_candidate_research(observations)["mean_reversion_diagnostics"]
     assert diagnostics["candidate_observation_count"] == 3
     assert diagnostics["directional_costed_outcome_count"] == 2
-    assert diagnostics["directional_costed_outcomes_by_direction"]["LONG"]["mean_bps"] == 12.0
-    assert diagnostics["directional_costed_outcomes_by_direction"]["SHORT"]["mean_bps"] == -5.0
+    assert diagnostics["directional_costed_outcomes_by_direction"]["LONG"]["mean_net_return_bps"] == 12.0
+    assert diagnostics["directional_costed_outcomes_by_direction"]["SHORT"]["mean_net_return_bps"] == -5.0
     assert diagnostics["path_efficiency_regime_observation_counts"] == {
         "RANGE_FILTERED_IN": 2, "TRENDING_FILTERED_OUT": 1,
     }
