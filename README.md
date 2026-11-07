@@ -1,4 +1,6 @@
-## Aktueller Status — 0.1.60
+## Aktueller Status — 0.1.61
+
+**Version 0.1.61 erweitert die WS-v2-Mikrostruktur-Minutenbeobachtung um Trade-OHLCV, Midprice, L2-Level und eine Mindestabdeckung verifizierter Book-Samples. Diese Daten sind weiterhin Research-only und stellen keine historischen Ausführungsfills dar.**
 
 **Version 0.1.60 ergänzt eine eng begrenzte Recovery für den historischen `SQLITE_CANTOPEN`-Breaker.** Aufgelöst wird ausschließlich der exakt gespeicherte Fehler beim Lesen der Research-Beobachtungen, nachdem derselbe Lese-/Zusammenfassungsschritt erfolgreich war und die aktuelle Datenbank-, Verzeichnis-, Temp- und SQLite-PRAGMA-Prüfung bestanden wurde. Ein anderer Fehler mit gleichem Breaker-Namen wird nicht gelöscht. Das aktuelle Cycle bleibt bis zum nächsten Lauf entry-blocked; SHADOW-Modus und interne Live-Freigabe bleiben unverändert.
 

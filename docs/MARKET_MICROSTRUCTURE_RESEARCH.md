@@ -72,3 +72,12 @@ Eine positive Mikrostruktur-Metrik allein ist kein Beleg für Profitabilität. E
 - WebSocket v2 Book Checksum Guide: https://docs.kraken.com/api/docs/guides/spot-ws-book-v2/
 - Kraken WebSocket FAQ: https://support.kraken.com/articles/360022326871-websocket-api-frequently-asked-questions-faq-
 
+
+
+## v0.1.61 — Erweiterte, qualitätsbegrenzte Minutenbeobachtungen
+
+Die WS-v2-Minutenaggregate speichern zusätzlich Trade-OHLC (aus beobachteten öffentlichen Trades), Basisvolumen, erste/letzte Trade-Zeit, den letzten verifizierten Midprice, die letzten bis zu zehn Bid-/Ask-Level sowie Anzahl und Zeitspanne verifizierter Book-Ereignisse. Die Level werden als Dezimalstrings in derselben unveränderlichen JSON-Nutzlast persistiert; bestehende Zeilen bleiben unverändert lesbar und es ist keine Schema-Migration erforderlich.
+
+Ein Minutenbalken wird nur dann als `VALID` markiert, wenn mindestens zwei verifizierte Book-Ereignisse mindestens zehn Sekunden auseinanderliegen und alle bisherigen Integritätsbedingungen erfüllt sind. Andernfalls ist er `PARTIAL`. Das ist eine Mindestabdeckung, kein Beweis kontinuierlicher Feed-Abdeckung.
+
+**Wichtige Grenze:** Der gespeicherte L2-Snapshot ist der letzte verifizierte Zustand innerhalb der Minute, kein vollständiger zeitaufgelöster Orderbook-Tape. Er erlaubt daher noch keinen exakten historischen Book-Walk zum nächsten Minuten-Open. Ein späterer Research-Runner muss Snapshot-Zeitstempel, Alter, Sequenz, Fill-Quote und Datenqualität explizit prüfen. Die neuen Felder sind Datengrundlage, keine Strategie, kein Fill, kein Portfolio-PnL und keine Live-Freigabe.

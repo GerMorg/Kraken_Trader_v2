@@ -70,6 +70,13 @@ class _Minute:
     pair: str
     minute_ts: int
     trade_count: int = 0
+    trade_open: Decimal | None = None
+    trade_high: Decimal | None = None
+    trade_low: Decimal | None = None
+    trade_close: Decimal | None = None
+    trade_base_volume: Decimal = D(0)
+    first_trade_ts: int = 0
+    last_trade_ts: int = 0
     buy_notional_usd: Decimal = D(0)
     sell_notional_usd: Decimal = D(0)
     signed_trade_notional_usd: Decimal = D(0)
@@ -88,6 +95,12 @@ class _Minute:
     last_event_ts: int = 0
     book_verified: bool = False
     book_event_ts: int = 0
+    book_sample_count: int = 0
+    first_book_event_ts: int = 0
+    last_book_event_ts: int = 0
+    midprice_usd: Decimal | None = None
+    top10_bids: list[dict[str, str]] = field(default_factory=list)
+    top10_asks: list[dict[str, str]] = field(default_factory=list)
     quality_flags: set[str] = field(default_factory=set)
 
 
@@ -497,6 +510,10 @@ class MarketMicrostructureCollector:
             current_minute.book_verified = True
             current_minute.book_event_ts = timestamp
             current_minute.last_event_ts = max(current_minute.last_event_ts, timestamp)
+            current_minute.book_sample_count += 1
+            if current_minute.first_book_event_ts == 0:
+                current_minute.first_book_event_ts = timestamp
+            current_minute.last_book_event_ts = timestamp
             if is_snapshot:
                 self._metrics["book_snapshots"] += 1
             else:
@@ -534,6 +551,15 @@ class MarketMicrostructureCollector:
 
             current_minute.bid_depth_usd = bid_depth
             current_minute.ask_depth_usd = ask_depth
+            current_minute.midprice_usd = mid
+            current_minute.top10_bids = [
+                {"price": str(price), "qty": str(quantity)}
+                for price, quantity in sorted(book.bids.items(), reverse=True)[:MAX_BOOK_DEPTH]
+            ]
+            current_minute.top10_asks = [
+                {"price": str(price), "qty": str(quantity)}
+                for price, quantity in sorted(book.asks.items())[:MAX_BOOK_DEPTH]
+            ]
             current_minute.spread_bps = spread_bps
             current_minute.depth_imbalance = (
                 (bid_depth - ask_depth) / total_depth if total_depth > 0 else None
@@ -562,6 +588,15 @@ class MarketMicrostructureCollector:
             current = self._minute(pair, epoch)
             current.trade_count += 1
             current.last_event_ts = max(current.last_event_ts, epoch)
+            current.trade_base_volume += quantity
+            if current.first_trade_ts == 0 or epoch < current.first_trade_ts:
+                current.first_trade_ts = epoch
+                current.trade_open = price
+            if epoch >= current.last_trade_ts:
+                current.last_trade_ts = epoch
+                current.trade_close = price
+            current.trade_high = price if current.trade_high is None else max(current.trade_high, price)
+            current.trade_low = price if current.trade_low is None else min(current.trade_low, price)
             if side == "buy":
                 current.buy_notional_usd += notional
                 current.signed_trade_notional_usd += notional
@@ -624,6 +659,9 @@ class MarketMicrostructureCollector:
             )
             quality_status = (
                 "VALID" if aggregate.book_verified and book_fresh
+                and aggregate.book_sample_count >= 2
+                and aggregate.first_book_event_ts > 0
+                and aggregate.last_book_event_ts - aggregate.first_book_event_ts >= 10
                 and aggregate.checksum_checks > 0
                 and aggregate.checksum_failures == 0
                 and aggregate.trade_id_gaps == 0
@@ -636,6 +674,13 @@ class MarketMicrostructureCollector:
                 "minute_ts": aggregate.minute_ts,
                 "source": SOURCE,
                 "trade_count": aggregate.trade_count,
+                "trade_open_usd": str(aggregate.trade_open) if aggregate.trade_open is not None else None,
+                "trade_high_usd": str(aggregate.trade_high) if aggregate.trade_high is not None else None,
+                "trade_low_usd": str(aggregate.trade_low) if aggregate.trade_low is not None else None,
+                "trade_close_usd": str(aggregate.trade_close) if aggregate.trade_close is not None else None,
+                "trade_base_volume": str(aggregate.trade_base_volume),
+                "first_trade_ts": aggregate.first_trade_ts or None,
+                "last_trade_ts": aggregate.last_trade_ts or None,
                 "buy_notional_usd": str(aggregate.buy_notional_usd),
                 "sell_notional_usd": str(aggregate.sell_notional_usd),
                 "signed_trade_notional_usd": str(aggregate.signed_trade_notional_usd),
@@ -654,6 +699,12 @@ class MarketMicrostructureCollector:
                 ),
                 "bid_depth_usd": str(aggregate.bid_depth_usd) if aggregate.bid_depth_usd is not None else None,
                 "ask_depth_usd": str(aggregate.ask_depth_usd) if aggregate.ask_depth_usd is not None else None,
+                "midprice_usd": str(aggregate.midprice_usd) if aggregate.midprice_usd is not None else None,
+                "top10_bids": aggregate.top10_bids,
+                "top10_asks": aggregate.top10_asks,
+                "book_sample_count": aggregate.book_sample_count,
+                "first_book_event_ts": aggregate.first_book_event_ts or None,
+                "last_book_event_ts": aggregate.last_book_event_ts or None,
                 "checksum_checks": aggregate.checksum_checks,
                 "checksum_failures": aggregate.checksum_failures,
                 "trade_id_gaps": aggregate.trade_id_gaps,

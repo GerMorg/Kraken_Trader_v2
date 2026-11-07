@@ -1020,7 +1020,8 @@ class Persistence:
             "buy_notional_usd", "sell_notional_usd", "signed_trade_notional_usd",
             "trade_imbalance", "ofi_l1_base", "ofi_l1_imbalance", "spread_bps",
             "depth_imbalance", "microprice_deviation_bps", "bid_depth_usd",
-            "ask_depth_usd",
+            "ask_depth_usd", "trade_open_usd", "trade_high_usd",
+            "trade_low_usd", "trade_close_usd", "trade_base_volume", "midprice_usd",
         )
         for field in numeric_fields:
             value = bar.get(field)
@@ -1035,6 +1036,7 @@ class Persistence:
         for field in (
             "trade_count", "book_update_count", "checksum_checks",
             "checksum_failures", "trade_id_gaps", "connection_gap_count",
+            "book_sample_count",
         ):
             try:
                 value = int(bar.get(field, 0))
@@ -1042,6 +1044,36 @@ class Persistence:
                 raise ValueError("MICROSTRUCTURE_COUNT_INVALID:" + field) from exc
             if value < 0:
                 raise ValueError("MICROSTRUCTURE_COUNT_INVALID:" + field)
+        for field in ("first_trade_ts", "last_trade_ts", "first_book_event_ts", "last_book_event_ts"):
+            value = bar.get(field)
+            if value is not None:
+                try:
+                    parsed_timestamp = int(value)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ValueError("MICROSTRUCTURE_TIMESTAMP_INVALID:" + field) from exc
+                if parsed_timestamp <= 0:
+                    raise ValueError("MICROSTRUCTURE_TIMESTAMP_INVALID:" + field)
+        for field, descending in (("top10_bids", True), ("top10_asks", False)):
+            levels = bar.get(field, [])
+            if not isinstance(levels, list) or len(levels) > 10:
+                raise ValueError("MICROSTRUCTURE_BOOK_LEVELS_INVALID:" + field)
+            previous_price: Decimal | None = None
+            for level in levels:
+                if not isinstance(level, dict):
+                    raise ValueError("MICROSTRUCTURE_BOOK_LEVELS_INVALID:" + field)
+                try:
+                    price = Decimal(str(level["price"]))
+                    quantity = Decimal(str(level["qty"]))
+                except (KeyError, ArithmeticError, TypeError, ValueError) as exc:
+                    raise ValueError("MICROSTRUCTURE_BOOK_LEVELS_INVALID:" + field) from exc
+                if not price.is_finite() or not quantity.is_finite() or price <= 0 or quantity <= 0:
+                    raise ValueError("MICROSTRUCTURE_BOOK_LEVELS_INVALID:" + field)
+                if previous_price is not None and (
+                    (descending and price >= previous_price)
+                    or (not descending and price <= previous_price)
+                ):
+                    raise ValueError("MICROSTRUCTURE_BOOK_LEVELS_INVALID:" + field)
+                previous_price = price
         now = _now()
         with self.lock:
             cursor = self.connection.execute(
