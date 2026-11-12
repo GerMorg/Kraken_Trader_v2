@@ -289,3 +289,39 @@ def test_minute_bar_is_partial_without_minimum_book_coverage():
     assert collector.flush_due(1_800_000_100) == 1
     assert db.microstructure_bars("ETH/USD")[0]["quality_status"] == "PARTIAL"
     db.close()
+
+
+
+def test_websocket_keepalive_timeout_is_classified_and_preserved_safely():
+    from app.market_microstructure import (
+        WS_CLOSE_TIMEOUT_SECONDS,
+        WS_PING_INTERVAL_SECONDS,
+        WS_PING_TIMEOUT_SECONDS,
+        _websocket_error_details,
+    )
+
+    error = RuntimeError(
+        "sent 1011 (internal error) keepalive ping timeout; no close frame received"
+    )
+    details = _websocket_error_details(error)
+
+    assert details == {
+        "error_type": "RuntimeError",
+        "error_message": (
+            "sent 1011 (internal error) keepalive ping timeout; no close frame received"
+        ),
+        "keepalive_ping_timeout": True,
+    }
+    assert WS_PING_INTERVAL_SECONDS == 20
+    assert WS_PING_TIMEOUT_SECONDS == 60
+    assert WS_CLOSE_TIMEOUT_SECONDS == 10
+
+
+def test_websocket_error_message_is_bounded_and_url_is_not_repeated():
+    from app.market_microstructure import WS_URL, _websocket_error_details
+
+    details = _websocket_error_details(RuntimeError(f"disconnect {WS_URL} " + "x" * 400))
+    assert details["error_type"] == "RuntimeError"
+    assert "wss://" not in details["error_message"]
+    assert len(details["error_message"]) <= 240
+    assert details["keepalive_ping_timeout"] is False

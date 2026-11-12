@@ -15,7 +15,7 @@ from app.audit import AuditLogger
 from app.config import INTERNAL_LIVE_EXECUTION_RELEASED, Settings
 from app.costs import (
     cost_diagnostic, estimate_round_trip_cost, maker_fee_from_trade_volume,
-    select_costed_plan, taker_fee_from_trade_volume,
+    select_costed_plan, taker_fee_from_trade_volume, trade_volume_fee_diagnostics,
 )
 from app.kraken import (
     KrakenAPIError, KrakenAmbiguousError, KrakenClient,
@@ -824,6 +824,15 @@ class TraderRuntime:
                     for instrument in ranked[:self.settings.microstructure_max_symbols]
                 ])
             account=None; snapshot=None; trade_volume={}
+            fee_schedule_diagnostics: dict[str, Any] = {
+                "status": "NOT_QUERIED",
+                "source": "KRAKEN_PRIVATE_TRADE_VOLUME",
+                "pair_count": len(candidates),
+                "taker_fee_pair_count": 0,
+                "maker_fee_pair_count": 0,
+                "fees_by_pair": {},
+                "maker_rates_are_fill_assumptions": False,
+            }
             if self.settings.credentials_present:
                 # GetApiKeyInfo is explicitly permissioned for none of the data scopes.
                 # Use an allowlisted assessment: the API response includes the API key
@@ -1395,14 +1404,51 @@ class TraderRuntime:
                         cycle_id=cycle_id,
                         **decision,
                     )
-                trade_volume = (
-                    self.client.trade_volume(
-                        [i.altname for i in candidates], fee_schedule=True
-                    )
-                    if api_permissions_ready and history_ready_for_entries else {}
-                )
+                if api_permissions_ready and history_ready_for_entries:
+                    try:
+                        trade_volume = self.client.trade_volume(
+                            [i.altname for i in candidates], fee_schedule=True
+                        )
+                        fee_schedule_diagnostics = trade_volume_fee_diagnostics(
+                            trade_volume,
+                            {
+                                instrument.wsname: (
+                                    instrument.pair_id, instrument.altname, instrument.wsname
+                                )
+                                for instrument in candidates
+                            },
+                        )
+                    except KrakenAPIError as exc:
+                        # Fee enrichment is diagnostic and optional. An unavailable
+                        # quote remains missing evidence; cost gates still fail closed.
+                        trade_volume = {}
+                        fee_schedule_diagnostics = {
+                            "status": "QUERY_FAILED",
+                            "source": "KRAKEN_PRIVATE_TRADE_VOLUME",
+                            "query_error_code": exc.code,
+                            "pair_count": len(candidates),
+                            "taker_fee_pair_count": 0,
+                            "maker_fee_pair_count": 0,
+                            "fees_by_pair": {},
+                            "maker_rates_are_fill_assumptions": False,
+                        }
+                        self.audit.emit(
+                            "KRAKEN_TRADE_FEE_SCHEDULE_QUERY_FAILED",
+                            cycle_id=cycle_id,
+                            code=exc.code,
+                            new_entries_require_complete_cost_evidence=True,
+                        )
+                else:
+                    fee_schedule_diagnostics["status"] = "NOT_QUERIED_ACCOUNT_OR_HISTORY_GATE"
             else:
-                self.audit.emit("ACCOUNT_UNAVAILABLE_PUBLIC_ONLY",reason="API_CREDENTIALS_NOT_CONFIGURED")
+                fee_schedule_diagnostics["status"] = "NOT_QUERIED_NO_CREDENTIALS"
+                self.audit.emit("ACCOUNT_UNAVAILABLE_PUBLIC_ONLY",reason="KRAKEN_API_CREDENTIALS_NOT_CONFIGURED")
+            fee_schedule_diagnostics["observed_at_epoch"] = int(time.time())
+            self.audit.emit(
+                "KRAKEN_TRADE_FEE_SCHEDULE_DIAGNOSTIC",
+                cycle_id=cycle_id,
+                **fee_schedule_diagnostics,
+            )
             recovered_transient_public_network_breaker = _recover_transient_public_network_breaker(
                 self.persistence,
                 self.audit,
@@ -1910,6 +1956,15 @@ class TraderRuntime:
                     spread_bps=ticker.spread_bps,slippage_bps_per_side=D(5),
                     holding_hours=self.settings.expected_holding_hours,
                     leverage=int(margin_leverage or 1),margin_open_bps=None,margin_rollover_bps=None)
+                margin_fee_context = {
+                    "margin_fee_borrow_currency": (
+                        instrument.quote if signal.direction == "LONG" else instrument.base
+                    ),
+                    "margin_open_fee_status": "DYNAMIC_RATE_NOT_CAPTURED",
+                    "margin_rollover_fee_status": "DYNAMIC_ORDER_FORM_RATE_REQUIRED",
+                    "margin_fee_source": "KRAKEN_MARGIN_ORDER_FORM_OR_EXISTING_POSITION",
+                    "margin_fee_rates_confirmed": False,
+                }
                 spot_cost=estimate_round_trip_cost(is_margin=False,taker_fee_bps=fee,
                     spread_bps=ticker.spread_bps,slippage_bps_per_side=D(5),
                     holding_hours=self.settings.expected_holding_hours,leverage=1) if signal.direction=="LONG" else None
@@ -1942,7 +1997,8 @@ class TraderRuntime:
                         gross_edge_proxy_bps=gross_edge_proxy,
                         gross_edge_proxy_kind=gross_edge_proxy_kind,
                         gross_edge_proxy_is_expected_return=False,
-                        edge_is_calibrated=False,margin_fee_rates_confirmed=False,
+                        edge_is_calibrated=False,
+                        **margin_fee_context,
                         release_gate_eligible=False)
                     continue
                 is_margin=plan.product_type=="SPOT_MARGIN"
@@ -1958,7 +2014,8 @@ class TraderRuntime:
                         gross_edge_proxy_bps=gross_edge_proxy,
                         gross_edge_proxy_kind=gross_edge_proxy_kind,
                         gross_edge_proxy_is_expected_return=False,
-                        edge_is_calibrated=False,release_gate_eligible=False)
+                        edge_is_calibrated=False,
+                        **margin_fee_context,release_gate_eligible=False)
                 if not cost.complete or cost.total_round_trip_bps is None:
                     counts["blocked"]+=1
                     self.audit.emit("NO_TRADE",cycle_id=cycle_id,pair=instrument.wsname,
@@ -2413,6 +2470,54 @@ class TraderRuntime:
             quality_payload={"cycle_id":cycle_id,**microstructure_quality}
             self.persistence.record_event("MICROSTRUCTURE_DATA_QUALITY_SUMMARY",quality_payload)
             self.audit.emit("MICROSTRUCTURE_DATA_QUALITY_SUMMARY",**quality_payload)
+            candidate_cohort = (
+                microstructure_forward_candidates.get("cohort_coverage", {}).get("overall", {})
+                if isinstance(microstructure_forward_candidates.get("cohort_coverage"), dict)
+                else {}
+            )
+            candidate_cost_breakdown = microstructure_forward_candidates.get("cost_breakdown_bps", {})
+            strategy_candidate_compact: list[dict[str, Any]] = []
+            for candidate in strategy_lab_summary.get("candidates", []):
+                splits = candidate.get("chronological_costed_splits_with_target_horizon_purge", {})
+                test_metrics = splits.get("test_last_20_percent", {}) if isinstance(splits, dict) else {}
+                non_overlapping = candidate.get("non_overlapping_costed_diagnostic", {})
+                non_overlapping_metrics = (
+                    non_overlapping.get("metrics", {}) if isinstance(non_overlapping, dict) else {}
+                )
+                overall_metrics = candidate.get("spot_net_cost_proxy", {})
+                strategy_candidate_compact.append({
+                    "candidate": (
+                        str(candidate.get("candidate_name", "unknown")) + ":"
+                        + str(candidate.get("candidate_version", "unknown"))
+                    ),
+                    "costed_n": overall_metrics.get("sample_count", 0),
+                    "mean_net_bps": overall_metrics.get("mean_net_return_bps"),
+                    "profit_factor": overall_metrics.get("profit_factor"),
+                    "win_rate_pct": overall_metrics.get("win_rate_pct"),
+                    "test_n": test_metrics.get("sample_count", 0),
+                    "test_mean_net_bps": test_metrics.get("mean_net_return_bps"),
+                    "non_overlapping_n": non_overlapping_metrics.get("sample_count", 0),
+                    "non_overlapping_mean_net_bps": non_overlapping_metrics.get("mean_net_return_bps"),
+                    "actual_fills": False,
+                    "release_gate_eligible": False,
+                })
+            def _mean_cost(component: str) -> Any:
+                value = candidate_cost_breakdown.get(component, {})
+                return value.get("mean_bps") if isinstance(value, dict) else None
+            compact_candidate_cohort = {
+                "directional_observations": candidate_cohort.get("directional_observation_count", 0),
+                "pre_history": candidate_cohort.get("decision_before_first_qualified_mark", 0),
+                "in_feed": candidate_cohort.get("decision_in_feed_count", 0),
+                "matured": candidate_cohort.get("matured_in_feed_count", 0),
+                "matched": candidate_cohort.get("matured_matched_count", 0),
+                "unmatched": candidate_cohort.get("matured_unmatched_count", 0),
+                "not_yet_matured": candidate_cohort.get("target_not_yet_matured_count", 0),
+                "matured_match_coverage_pct": candidate_cohort.get("matured_match_coverage_pct"),
+                "costed_matches": microstructure_forward_candidates.get("costed_match_count", 0),
+                "mean_round_trip_taker_fee_bps": _mean_cost("round_trip_taker_fee_bps"),
+                "mean_round_trip_spread_bps": _mean_cost("entry_exit_spread_bps"),
+                "mean_round_trip_slippage_bps": _mean_cost("round_trip_slippage_bps"),
+            }
             final_breaker_rows = self.persistence.circuit_breakers()
             final_breaker_diagnostics = _circuit_breaker_diagnostics(final_breaker_rows, persistence=self.persistence)
             result = {
@@ -2437,6 +2542,9 @@ class TraderRuntime:
                 "shadow_strategy_lab_candidate_count": strategy_lab_summary["candidate_count"],
                 "shadow_strategy_lab_status": strategy_lab_summary["status"],
                 "shadow_strategy_lab_release_gate_eligible": strategy_lab_summary["release_gate_eligible"],
+                "shadow_strategy_lab_candidate_metrics": strategy_candidate_compact,
+                "kraken_fee_schedule_diagnostics": fee_schedule_diagnostics,
+                "microstructure_candidate_cohort_summary": compact_candidate_cohort,
                 "multi_asset_research_status": multi_asset_research_summary.get("status"),
                 "multi_asset_research_key": multi_asset_research_summary.get("research_key"),
                 "multi_asset_research_symbols": multi_asset_research_summary.get("symbols", []),
@@ -2479,6 +2587,11 @@ class TraderRuntime:
                 "microstructure_reconnects": microstructure_status["reconnects"],
                 "microstructure_last_message_epoch": microstructure_status["last_message_epoch"],
                 "microstructure_last_error_type": microstructure_status["last_error_type"],
+                "microstructure_last_error_message": microstructure_status["last_error_message"],
+                "microstructure_last_disconnect_epoch": microstructure_status["last_disconnect_epoch"],
+                "microstructure_ping_timeout_count": microstructure_status["ping_timeout_count"],
+                "microstructure_ping_interval_seconds": microstructure_status["ping_interval_seconds"],
+                "microstructure_ping_timeout_seconds": microstructure_status["ping_timeout_seconds"],
                 "multi_asset_variant_a_status": (
                     multi_asset_research_summary.get("variant_a_volatility_harvesting", {}).get("status")
                     if isinstance(multi_asset_research_summary.get("variant_a_volatility_harvesting"), dict)

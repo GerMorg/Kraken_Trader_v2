@@ -157,3 +157,64 @@ def test_maker_fee_parser_reads_only_pair_specific_maker_rates():
     }
     assert maker_fee_from_trade_volume(result, ("XXBTZUSD",)) == D("25")
     assert maker_fee_from_trade_volume({"fees": result["fees"]}, ("XXBTZUSD",)) is None
+
+
+
+def test_trade_volume_fee_diagnostics_summarize_pair_rates_without_raw_payload():
+    from app.costs import trade_volume_fee_diagnostics
+
+    report = trade_volume_fee_diagnostics(
+        {
+            "currency": "ZUSD",
+            "volume": "12450.25",
+            "fees": {
+                "XXBTZUSD": {"fee": "0.80"},
+                "XETHZUSD": {"fee": "0.60"},
+            },
+            "fees_maker": {
+                "XXBTZUSD": {"fee": "0.40"},
+                "XETHZUSD": {"fee": "0.30"},
+            },
+            "schedules": {"some_private_schedule_detail": "must-not-be-copied"},
+        },
+        {
+            "XBT/USD": ("XXBTZUSD", "XBTUSD"),
+            "ETH/USD": ("XETHZUSD", "ETHUSD"),
+        },
+    )
+
+    assert report["status"] == "AVAILABLE"
+    assert report["pair_count"] == 2
+    assert report["taker_fee_pair_count"] == 2
+    assert report["maker_fee_pair_count"] == 2
+    assert report["taker_fee_bps_min"] == "60.00"
+    assert report["taker_fee_bps_max"] == "80.00"
+    assert report["maker_fee_bps_min"] == "30.00"
+    assert report["maker_fee_bps_max"] == "40.00"
+    assert report["account_volume_30d"] == "12450.25"
+    assert report["account_volume_currency"] == "ZUSD"
+    assert report["fees_by_pair"]["XBT/USD"]["taker_fee_bps"] == "80.00"
+    assert report["maker_rates_are_fill_assumptions"] is False
+    assert report["raw_schedule_payload_logged"] is False
+    assert "some_private_schedule_detail" not in str(report)
+
+
+def test_trade_volume_fee_diagnostics_marks_missing_pair_rates_as_partial():
+    from app.costs import trade_volume_fee_diagnostics
+
+    report = trade_volume_fee_diagnostics(
+        {"fees": {"XXBTZUSD": {"fee": "0.80"}}},
+        {"XBT/USD": ("XXBTZUSD",), "ETH/USD": ("XETHZUSD",)},
+    )
+    assert report["status"] == "PARTIAL"
+    assert report["taker_fee_pair_count"] == 1
+    assert report["fees_by_pair"]["ETH/USD"]["taker_fee_bps"] is None
+
+
+def test_trade_volume_fee_diagnostics_does_not_treat_missing_result_as_zero():
+    from app.costs import trade_volume_fee_diagnostics
+
+    report = trade_volume_fee_diagnostics(None, {"XBT/USD": ("XXBTZUSD",)})
+    assert report["status"] == "NO_FEE_RESPONSE"
+    assert report["taker_fee_pair_count"] == 0
+    assert report["fees_by_pair"]["XBT/USD"]["taker_fee_bps"] is None

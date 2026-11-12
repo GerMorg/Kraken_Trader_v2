@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_FLOOR
-from typing import Any
+from typing import Any, Mapping
 
 D=Decimal
 
@@ -139,6 +139,75 @@ def maker_fee_from_trade_volume(
             if rate is not None:
                 return rate
     return None
+
+
+def trade_volume_fee_diagnostics(
+    result: Mapping[str, Any] | None,
+    pair_aliases: Mapping[str, tuple[str, ...]],
+) -> dict[str, Any]:
+    """Return bounded, pair-specific Kraken TradeVolume fee evidence.
+
+    Maker rates are references only, not evidence that an order would execute
+    passively or receive maker pricing. The complete schedule payload is omitted.
+    """
+    payload = result if isinstance(result, Mapping) else {}
+    by_pair: dict[str, dict[str, str | None]] = {}
+    taker_rates: list[Decimal] = []
+    maker_rates: list[Decimal] = []
+    for pair, aliases in sorted(pair_aliases.items()):
+        keys = tuple(str(alias) for alias in aliases if str(alias).strip())
+        taker = taker_fee_from_trade_volume(dict(payload), keys)
+        maker = maker_fee_from_trade_volume(dict(payload), keys)
+        by_pair[str(pair)] = {
+            "taker_fee_bps": str(taker) if taker is not None else None,
+            "maker_fee_bps": str(maker) if maker is not None else None,
+        }
+        if taker is not None:
+            taker_rates.append(taker)
+        if maker is not None:
+            maker_rates.append(maker)
+
+    requested_pairs = len(by_pair)
+    if not payload:
+        status = "NO_FEE_RESPONSE"
+    elif taker_rates and len(taker_rates) == requested_pairs:
+        status = "AVAILABLE"
+    elif taker_rates:
+        status = "PARTIAL"
+    else:
+        status = "NO_PAIR_FEES_RETURNED"
+
+    raw_volume = payload.get("volume")
+    volume_value: str | None = None
+    if raw_volume is not None:
+        try:
+            parsed_volume = Decimal(str(raw_volume))
+            if parsed_volume.is_finite() and parsed_volume >= 0:
+                volume_value = str(parsed_volume)
+        except (ArithmeticError, TypeError, ValueError):
+            pass
+    currency = payload.get("currency")
+    safe_currency = (
+        str(currency)[:16] if isinstance(currency, str) and currency.strip() else None
+    )
+    return {
+        "status": status,
+        "source": "KRAKEN_PRIVATE_TRADE_VOLUME",
+        "fee_schedule_requested": True,
+        "fee_schedule_present": bool(payload.get("schedules")),
+        "pair_count": requested_pairs,
+        "taker_fee_pair_count": len(taker_rates),
+        "maker_fee_pair_count": len(maker_rates),
+        "taker_fee_bps_min": str(min(taker_rates)) if taker_rates else None,
+        "taker_fee_bps_max": str(max(taker_rates)) if taker_rates else None,
+        "maker_fee_bps_min": str(min(maker_rates)) if maker_rates else None,
+        "maker_fee_bps_max": str(max(maker_rates)) if maker_rates else None,
+        "account_volume_30d": volume_value,
+        "account_volume_currency": safe_currency,
+        "fees_by_pair": by_pair,
+        "maker_rates_are_fill_assumptions": False,
+        "raw_schedule_payload_logged": False,
+    }
 
 
 @dataclass(frozen=True)

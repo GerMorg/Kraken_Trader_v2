@@ -15,6 +15,22 @@ D = Decimal
 WS_URL = "wss://ws.kraken.com/v2"
 SOURCE = "KRAKEN_SPOT_WS_V2"
 MAX_BOOK_DEPTH = 10
+WS_PING_INTERVAL_SECONDS = 20
+WS_PING_TIMEOUT_SECONDS = 60
+WS_CLOSE_TIMEOUT_SECONDS = 10
+
+
+def _websocket_error_details(exc: Exception) -> dict[str, Any]:
+    """Classify a bounded, credential-safe WebSocket disconnect diagnostic."""
+    try:
+        message = " ".join(str(exc).replace(WS_URL, "kraken_ws_v2").split())
+    except Exception:
+        message = ""
+    return {
+        "error_type": type(exc).__name__,
+        "error_message": message[:240] or None,
+        "keepalive_ping_timeout": "keepalive ping timeout" in message.casefold(),
+    }
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -151,6 +167,11 @@ class MarketMicrostructureCollector:
             "last_subscription_symbol": None,
             "last_message_epoch": None,
             "last_error_type": None,
+            "last_error_message": None,
+            "last_disconnect_epoch": None,
+            "ping_timeout_count": 0,
+            "ping_interval_seconds": WS_PING_INTERVAL_SECONDS,
+            "ping_timeout_seconds": WS_PING_TIMEOUT_SECONDS,
         }
         self._thread: threading.Thread | None = None
         if enabled:
@@ -747,9 +768,9 @@ class MarketMicrostructureCollector:
                 with connect(
                     WS_URL,
                     open_timeout=10,
-                    close_timeout=5,
-                    ping_interval=20,
-                    ping_timeout=20,
+                    close_timeout=WS_CLOSE_TIMEOUT_SECONDS,
+                    ping_interval=WS_PING_INTERVAL_SECONDS,
+                    ping_timeout=WS_PING_TIMEOUT_SECONDS,
                     max_size=4_194_304,
                     proxy=None,
                 ) as websocket:
@@ -804,12 +825,19 @@ class MarketMicrostructureCollector:
                             backoff = 1.0
                         self.flush_due()
             except Exception as exc:
+                details = _websocket_error_details(exc)
                 with self._lock:
-                    self._metrics["last_error_type"] = type(exc).__name__
+                    self._metrics["last_error_type"] = details["error_type"]
+                    self._metrics["last_error_message"] = details["error_message"]
+                    if details["keepalive_ping_timeout"]:
+                        self._metrics["ping_timeout_count"] += 1
+                    self._metrics["last_disconnect_epoch"] = int(time.time())
             finally:
                 with self._lock:
                     was_connected = bool(self._metrics["connected"])
                     self._metrics["connected"] = False
+                    if was_connected and not self._stop.is_set():
+                        self._metrics["last_disconnect_epoch"] = int(time.time())
                     self._metrics["connection_state"] = (
                         "STOPPING" if self._stop.is_set() else "RECONNECTING"
                     )

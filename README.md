@@ -1,6 +1,6 @@
-## Aktueller Status — 0.1.64
+## Aktueller Status — 0.1.65
 
-**Version 0.1.64 trennt vor Beginn der lokalen WS-L2-Aufzeichnung liegende Beobachtungen von tatsächlich ausgereiften In-Feed-Zielhorizonten. Die Match-Quote wird zusätzlich nur für diese auswertbare Kohorte berechnet. Spot-Kosten werden in Taker-Gebühren, Spread und angenommene Slippage zerlegt; Mean-Reversion-Ergebnisse werden nach Richtung und aufgezeichnetem Marktregime aufgeschlüsselt. Alles bleibt Research-only; SHADOW, Live-Order-Sperre und Strategiepromotion-Gates bleiben unverändert.**
+**Version 0.1.65 ergänzt eine paarbezogene Auswertung der tatsächlich von Kraken gelieferten Taker-/Maker-Sätze, ohne Maker-Preise als garantierte Ausführung zu werten. Die `CYCLE_SUMMARY` weist jetzt die ausgereifte Mikrostruktur-In-Feed-Abdeckung, mittlere beobachtete Spot-Kosten sowie Nettoergebnisse, chronologische Test-Splits und nicht überlappende Stichproben der Shadow-Kandidaten kompakt aus. Dynamische Margin-Opening-/Rollover-Sätze bleiben ausdrücklich unbestätigt, bis sie aus der Kraken-Ordermaske bzw. einer bestehenden Position belegt sind. WebSocket-Keepalive-/Ping-Timeouts und Disconnect-Details werden nachvollziehbarer erfasst. Alles bleibt Research-only; SHADOW, Live-Order-Sperre und Strategiepromotion-Gates bleiben unverändert.**
 
 **Version 0.1.63 lädt Mikrostruktur-Historie nur noch für tatsächlich gespeicherte Märkte und schließt Book-Marks vor der Signalentscheidung aus der Forward-Bewertung aus. Zielzeitpunkte außerhalb der verfügbaren WS-L2-Historie werden separat ausgewiesen. SHADOW und Live-Sperren bleiben unverändert.**
 
