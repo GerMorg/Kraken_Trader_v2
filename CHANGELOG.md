@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.65 — Gebühren-, Mikrostruktur- und Research-Telemetrie
+
+- Ergänzt eine kompakte, paarbezogene Kraken-TradeVolume-Auswertung mit Taker-/Maker-Sätzen in Basispunkten, Gebührenstufen-Metadaten und expliziter Kennzeichnung, dass Maker-Sätze keine garantierten Ausführungskosten sind.
+- Behandelt einen fehlgeschlagenen TradeVolume-Abruf als fehlende Kostenevidenz statt den gesamten Research-Zyklus abzubrechen; neue Positionen bleiben bei unvollständigen Kosten weiterhin gesperrt.
+- Ergänzt Margin-Borrow-Währung sowie den Hinweis, dass dynamische Opening-/Rollover-Sätze aus der Kraken-Ordermaske erforderlich sind und nicht aus TradeVolume abgeleitet werden.
+- Verdichtet In-Feed-Mikrostruktur-Abdeckung, Kosten und Kandidaten-Nettoresultate inklusive chronologischem Testsplit in die CYCLE_SUMMARY.
+- Erhöht die WebSocket-Keepalive-Toleranz und protokolliert Ping-Timeouts, Fehlertext und letzten Disconnect. Kein Datenbank-Reset, keine Schemaänderung und keine Änderung an Strategie oder Order Authority.
+- SHADOW und sämtliche Live-/Order-Sperren bleiben unverändert.
+
 ## 0.1.64 — Reifegrad-Kohorten und Kostenzerlegung im Mikrostruktur-Research
 
 - Trennt historische Beobachtungen vor Beginn der qualifizierten WS-L2-Aufzeichnung von Entscheidungen innerhalb der tatsächlich beobachteten Feed-Periode.
