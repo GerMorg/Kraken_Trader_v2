@@ -202,3 +202,30 @@ def test_mean_reversion_summary_splits_direction_and_recorded_regime_features():
     }
     assert diagnostics["costed_outcomes_by_z_score_band"]["2_5_TO_3"]["sample_count"] == 1
     assert diagnostics["release_gate_eligible"] is False
+
+
+
+def test_cohort_coverage_matches_tsm_observation_id_without_candidate_id():
+    report = match_microstructure_target_horizons(
+        [{
+            "observation_id": "tsm-observation-1",
+            "pair": "XXBTZUSD",
+            "direction": "SHORT",
+            "decision_ts": 1100,
+            "target_epoch": 2000,
+            "entry_mid_price": "100",
+            "entry_spread_bps": "2",
+            "taker_fee_bps": "2",
+        }],
+        {"XBT/USD": [bar(1000, "100"), bar(1995, "99")]},
+        {"XXBTZUSD": "XBT/USD"},
+        max_time_error_seconds=10,
+    )
+
+    overall = report["cohort_coverage"]["overall"]
+    assert report["matched_observation_count"] == 1
+    assert report["matched_observations"][0]["candidate_id"] == "tsm-observation-1"
+    assert overall["matured_in_feed_count"] == 1
+    assert overall["matured_matched_count"] == 1
+    assert overall["matured_unmatched_count"] == 0
+    assert overall["matured_match_coverage_pct"] == "100"

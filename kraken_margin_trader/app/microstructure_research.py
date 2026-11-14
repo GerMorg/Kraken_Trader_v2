@@ -60,6 +60,11 @@ def _mark(row: dict[str, Any]) -> tuple[int, Decimal, Decimal | None] | None:
     return last, mid, spread
 
 
+def _observation_key(row: Mapping[str, Any]) -> str:
+    """Return the stable identity shared by TSM and strategy-candidate labels."""
+    return str(row.get("candidate_id") or row.get("observation_id") or "").strip()
+
+
 def _cohort_coverage(
     observations: Sequence[dict[str, Any]],
     indexed: Mapping[str, tuple[list[int], list[tuple[int, Decimal, Decimal | None]]]],
@@ -81,7 +86,9 @@ def _cohort_coverage(
     }
     by_pair: dict[str, dict[str, Any]] = {}
     by_candidate: dict[str, dict[str, Any]] = {}
-    matched_ids = {str(row.get("candidate_id", "")) for row in matched}
+    matched_ids = {
+        key for row in matched if (key := _observation_key(row))
+    }
 
     def bucket(target: dict[str, Any], key: str) -> None:
         target[key] = target.get(key, 0) + 1
@@ -126,7 +133,7 @@ def _cohort_coverage(
         overall["matured_in_feed_count"] += 1
         bucket(pair_stats, "matured_in_feed_count")
         bucket(candidate_stats, "matured_in_feed_count")
-        if str(row.get("candidate_id", "")) in matched_ids:
+        if _observation_key(row) in matched_ids and _observation_key(row):
             overall["matured_matched_count"] += 1
             bucket(pair_stats, "matured_matched_count")
             bucket(candidate_stats, "matured_matched_count")
@@ -264,7 +271,7 @@ def match_microstructure_target_horizons(
         gross.append(gross_return)
         offsets.append(offset)
         matched.append({
-            "candidate_id": str(row.get("candidate_id", row.get("observation_id", ""))),
+            "candidate_id": _observation_key(row),
             "candidate_name": str(row.get("candidate_name", row.get("strategy_version", "unknown"))),
             "candidate_version": str(row.get("candidate_version", row.get("strategy_version", "unknown"))),
             "pair": pair,

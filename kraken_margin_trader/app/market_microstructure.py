@@ -15,8 +15,8 @@ D = Decimal
 WS_URL = "wss://ws.kraken.com/v2"
 SOURCE = "KRAKEN_SPOT_WS_V2"
 MAX_BOOK_DEPTH = 10
-WS_PING_INTERVAL_SECONDS = 20
-WS_PING_TIMEOUT_SECONDS = 60
+APPLICATION_PING_INTERVAL_SECONDS = 20
+APPLICATION_PING_TIMEOUT_SECONDS = 15
 WS_CLOSE_TIMEOUT_SECONDS = 10
 
 
@@ -26,10 +26,12 @@ def _websocket_error_details(exc: Exception) -> dict[str, Any]:
         message = " ".join(str(exc).replace(WS_URL, "kraken_ws_v2").split())
     except Exception:
         message = ""
+    normalized = message.casefold()
     return {
         "error_type": type(exc).__name__,
         "error_message": message[:240] or None,
-        "keepalive_ping_timeout": "keepalive ping timeout" in message.casefold(),
+        "keepalive_ping_timeout": "keepalive ping timeout" in normalized,
+        "application_ping_timeout": "kraken_application_ping_timeout" in normalized,
     }
 
 
@@ -143,6 +145,9 @@ class MarketMicrostructureCollector:
         self._books: dict[str, _Book] = {}
         self._minutes: dict[tuple[str, int], _Minute] = {}
         self._last_trade_id: dict[str, int] = {}
+        self._next_application_ping_req_id = 1
+        self._pending_application_ping_id: int | None = None
+        self._pending_application_ping_sent_monotonic: float | None = None
         self._metrics: dict[str, Any] = {
             "connection_state": "DISABLED" if not enabled else "WAITING_FOR_SYMBOLS",
             "connected": False,
@@ -170,8 +175,19 @@ class MarketMicrostructureCollector:
             "last_error_message": None,
             "last_disconnect_epoch": None,
             "ping_timeout_count": 0,
-            "ping_interval_seconds": WS_PING_INTERVAL_SECONDS,
-            "ping_timeout_seconds": WS_PING_TIMEOUT_SECONDS,
+            "websocket_control_ping_enabled": False,
+            "websocket_ping_interval_seconds": None,
+            "websocket_ping_timeout_seconds": None,
+            "application_ping_interval_seconds": APPLICATION_PING_INTERVAL_SECONDS,
+            "application_ping_timeout_seconds": APPLICATION_PING_TIMEOUT_SECONDS,
+            "application_ping_sent_count": 0,
+            "application_pong_received_count": 0,
+            "application_ping_timeout_count": 0,
+            "application_ping_rejected_count": 0,
+            "application_ping_unmatched_pong_count": 0,
+            "last_application_ping_rtt_ms": None,
+            "last_application_ping_error": None,
+            "last_application_ping_response_epoch": None,
         }
         self._thread: threading.Thread | None = None
         if enabled:
@@ -235,7 +251,8 @@ class MarketMicrostructureCollector:
             elif expected and acknowledged == expected:
                 self._metrics["connection_state"] = "CONNECTED"
                 if self._metrics["last_error_type"] in {
-                    None, "SUBSCRIPTION_REJECTED", "SUBSCRIPTION_ACK_TIMEOUT"
+                    None, "SUBSCRIPTION_REJECTED", "SUBSCRIPTION_ACK_TIMEOUT",
+                    "KRAKEN_APPLICATION_PING_TIMEOUT", "KRAKEN_APPLICATION_PING_REJECTED",
                 }:
                     self._metrics["last_error_type"] = None
                     self._metrics["last_subscription_error"] = None
@@ -300,6 +317,76 @@ class MarketMicrostructureCollector:
                 "release_gate_eligible": False,
             }
 
+
+    def _begin_application_ping(self) -> dict[str, Any]:
+        """Register and return one Kraken WS v2 application-level ping request."""
+        with self._lock:
+            if self._pending_application_ping_id is not None:
+                return {}
+            req_id = self._next_application_ping_req_id
+            self._next_application_ping_req_id += 1
+            self._pending_application_ping_id = req_id
+            self._pending_application_ping_sent_monotonic = time.monotonic()
+            self._metrics["application_ping_sent_count"] += 1
+            return {"method": "ping", "req_id": req_id}
+
+    def _check_application_ping_timeout(self, *, now_monotonic: float | None = None) -> bool:
+        """Return true and record a timeout when the outstanding Kraken pong is overdue."""
+        now = time.monotonic() if now_monotonic is None else now_monotonic
+        with self._lock:
+            sent_at = self._pending_application_ping_sent_monotonic
+            if (
+                self._pending_application_ping_id is None
+                or sent_at is None
+                or now - sent_at < APPLICATION_PING_TIMEOUT_SECONDS
+            ):
+                return False
+            self._pending_application_ping_id = None
+            self._pending_application_ping_sent_monotonic = None
+            self._metrics["application_ping_timeout_count"] += 1
+            self._metrics["last_application_ping_error"] = "KRAKEN_APPLICATION_PING_TIMEOUT"
+            self._metrics["last_error_type"] = "KRAKEN_APPLICATION_PING_TIMEOUT"
+            self._metrics["last_error_message"] = "Kraken WS v2 application ping timed out"
+            return True
+
+    def _handle_application_pong(self, message: dict[str, Any]) -> bool:
+        """Accept only the pong matching the outstanding request id."""
+        req_id = message.get("req_id")
+        with self._lock:
+            pending_id = self._pending_application_ping_id
+            sent_at = self._pending_application_ping_sent_monotonic
+            if (
+                pending_id is None
+                or not isinstance(req_id, int)
+                or isinstance(req_id, bool)
+                or req_id != pending_id
+            ):
+                self._metrics["application_ping_unmatched_pong_count"] += 1
+                return True
+            self._pending_application_ping_id = None
+            self._pending_application_ping_sent_monotonic = None
+            self._metrics["last_application_ping_response_epoch"] = int(time.time())
+            if message.get("success") is not True:
+                error = str(message.get("error") or "KRAKEN_APPLICATION_PING_REJECTED")[:240]
+                self._metrics["application_ping_rejected_count"] += 1
+                self._metrics["last_application_ping_error"] = error
+                self._metrics["last_error_type"] = "KRAKEN_APPLICATION_PING_REJECTED"
+                self._metrics["last_error_message"] = error
+                return False
+            self._metrics["application_pong_received_count"] += 1
+            if sent_at is not None:
+                self._metrics["last_application_ping_rtt_ms"] = round(
+                    max(0.0, time.monotonic() - sent_at) * 1000.0, 3
+                )
+            self._metrics["last_application_ping_error"] = None
+            if self._metrics["last_error_type"] in {
+                "KRAKEN_APPLICATION_PING_TIMEOUT",
+                "KRAKEN_APPLICATION_PING_REJECTED",
+            }:
+                self._metrics["last_error_type"] = None
+                self._metrics["last_error_message"] = None
+            return True
+
     def process_message(self, raw: str | bytes | dict[str, Any]) -> bool:
         """Process one server message. False means reconnect for a clean snapshot."""
         if isinstance(raw, bytes):
@@ -329,6 +416,9 @@ class MarketMicrostructureCollector:
         with self._lock:
             self._metrics["messages"] += 1
             self._metrics["last_message_epoch"] = int(time.time())
+
+        if message.get("method") == "pong":
+            return self._handle_application_pong(message)
 
         if message.get("method") == "subscribe" and isinstance(message.get("success"), bool):
             result = message.get("result")
@@ -769,8 +859,10 @@ class MarketMicrostructureCollector:
                     WS_URL,
                     open_timeout=10,
                     close_timeout=WS_CLOSE_TIMEOUT_SECONDS,
-                    ping_interval=WS_PING_INTERVAL_SECONDS,
-                    ping_timeout=WS_PING_TIMEOUT_SECONDS,
+                    # Kraken WS v2 application pings below are authoritative here.
+                    # Disable the separate RFC control-ping mechanism of this library.
+                    ping_interval=None,
+                    ping_timeout=None,
                     max_size=4_194_304,
                     proxy=None,
                 ) as websocket:
@@ -781,6 +873,12 @@ class MarketMicrostructureCollector:
                         if had_connection:
                             self._metrics["reconnects"] += 1
                     had_connection = True
+                    with self._lock:
+                        self._pending_application_ping_id = None
+                        self._pending_application_ping_sent_monotonic = None
+                    next_application_ping_at = (
+                        time.monotonic() + APPLICATION_PING_INTERVAL_SECONDS
+                    )
                     subscription_started = time.monotonic()
                     websocket.send(json.dumps({
                         "method": "subscribe",
@@ -812,6 +910,15 @@ class MarketMicrostructureCollector:
                         if self._symbols_changed.is_set():
                             self._symbols_changed.clear()
                             break
+                        if self._check_application_ping_timeout():
+                            raise RuntimeError("KRAKEN_APPLICATION_PING_TIMEOUT")
+                        if time.monotonic() >= next_application_ping_at:
+                            ping_request = self._begin_application_ping()
+                            if ping_request:
+                                websocket.send(json.dumps(ping_request))
+                                next_application_ping_at = (
+                                    time.monotonic() + APPLICATION_PING_INTERVAL_SECONDS
+                                )
                         try:
                             raw = websocket.recv(timeout=1.0)
                         except TimeoutError:
@@ -831,9 +938,14 @@ class MarketMicrostructureCollector:
                     self._metrics["last_error_message"] = details["error_message"]
                     if details["keepalive_ping_timeout"]:
                         self._metrics["ping_timeout_count"] += 1
+                    if details["application_ping_timeout"]:
+                        self._metrics["last_error_type"] = "KRAKEN_APPLICATION_PING_TIMEOUT"
+                        self._metrics["last_application_ping_error"] = "KRAKEN_APPLICATION_PING_TIMEOUT"
                     self._metrics["last_disconnect_epoch"] = int(time.time())
             finally:
                 with self._lock:
+                    self._pending_application_ping_id = None
+                    self._pending_application_ping_sent_monotonic = None
                     was_connected = bool(self._metrics["connected"])
                     self._metrics["connected"] = False
                     if was_connected and not self._stop.is_set():

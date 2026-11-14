@@ -1,6 +1,6 @@
-## Aktueller Status — 0.1.65
+## Aktueller Status — 0.1.66
 
-**Version 0.1.65 ergänzt eine paarbezogene Auswertung der tatsächlich von Kraken gelieferten Taker-/Maker-Sätze, ohne Maker-Preise als garantierte Ausführung zu werten. Die `CYCLE_SUMMARY` weist jetzt die ausgereifte Mikrostruktur-In-Feed-Abdeckung, mittlere beobachtete Spot-Kosten sowie Nettoergebnisse, chronologische Test-Splits und nicht überlappende Stichproben der Shadow-Kandidaten kompakt aus. Dynamische Margin-Opening-/Rollover-Sätze bleiben ausdrücklich unbestätigt, bis sie aus der Kraken-Ordermaske bzw. einer bestehenden Position belegt sind. WebSocket-Keepalive-/Ping-Timeouts und Disconnect-Details werden nachvollziehbarer erfasst. Alles bleibt Research-only; SHADOW, Live-Order-Sperre und Strategiepromotion-Gates bleiben unverändert.**
+**Version 0.1.66 korrigiert die TSM-Mikrostruktur-Kohortenquote: TSM-Beobachtungen werden über ihre `observation_id` gezählt, Strategie-Lab-Kandidaten über `candidate_id`. Der Kraken-WS-v2-Feed verwendet jetzt den dokumentierten JSON-Ping/Pong-Mechanismus mit eigener Antwortzeit- und Timeout-Erfassung; die separaten RFC-Control-Pings der WebSocket-Bibliothek sind deaktiviert. Zwei ausschließlich exakt passende, alte Datenfehler-Sperren können nach vollständiger erfolgreicher aktueller Markt-/Account-Prüfung gezielt aufgelöst werden. Alle übrigen Sperren, unbekannte Margin-Kosten, SHADOW und die interne Live-Order-Sperre bleiben unverändert.**
 
 **Version 0.1.63 lädt Mikrostruktur-Historie nur noch für tatsächlich gespeicherte Märkte und schließt Book-Marks vor der Signalentscheidung aus der Forward-Bewertung aus. Zielzeitpunkte außerhalb der verfügbaren WS-L2-Historie werden separat ausgewiesen. SHADOW und Live-Sperren bleiben unverändert.**
 

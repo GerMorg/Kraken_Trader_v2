@@ -1,3 +1,4 @@
+import time
 from decimal import Decimal
 
 import pytest
@@ -294,9 +295,9 @@ def test_minute_bar_is_partial_without_minimum_book_coverage():
 
 def test_websocket_keepalive_timeout_is_classified_and_preserved_safely():
     from app.market_microstructure import (
+        APPLICATION_PING_INTERVAL_SECONDS,
+        APPLICATION_PING_TIMEOUT_SECONDS,
         WS_CLOSE_TIMEOUT_SECONDS,
-        WS_PING_INTERVAL_SECONDS,
-        WS_PING_TIMEOUT_SECONDS,
         _websocket_error_details,
     )
 
@@ -311,9 +312,10 @@ def test_websocket_keepalive_timeout_is_classified_and_preserved_safely():
             "sent 1011 (internal error) keepalive ping timeout; no close frame received"
         ),
         "keepalive_ping_timeout": True,
+        "application_ping_timeout": False,
     }
-    assert WS_PING_INTERVAL_SECONDS == 20
-    assert WS_PING_TIMEOUT_SECONDS == 60
+    assert APPLICATION_PING_INTERVAL_SECONDS == 20
+    assert APPLICATION_PING_TIMEOUT_SECONDS == 15
     assert WS_CLOSE_TIMEOUT_SECONDS == 10
 
 
@@ -325,3 +327,71 @@ def test_websocket_error_message_is_bounded_and_url_is_not_repeated():
     assert "wss://" not in details["error_message"]
     assert len(details["error_message"]) <= 240
     assert details["keepalive_ping_timeout"] is False
+    assert details["application_ping_timeout"] is False
+
+
+
+def test_kraken_application_ping_pong_requires_matching_request_id():
+    collector = MarketMicrostructureCollector(Persistence(":memory:"), enabled=False)
+    try:
+        request = collector._begin_application_ping()
+        assert request["method"] == "ping"
+        assert isinstance(request["req_id"], int)
+
+        assert collector.process_message({
+            "method": "pong", "req_id": request["req_id"] + 1, "success": True,
+        }) is True
+        status = collector.status()
+        assert status["application_ping_unmatched_pong_count"] == 1
+        assert status["application_pong_received_count"] == 0
+
+        assert collector.process_message({
+            "method": "pong", "req_id": request["req_id"], "success": True,
+            "time_in": "2026-11-14T17:00:00.000000Z",
+            "time_out": "2026-11-14T17:00:00.001000Z",
+        }) is True
+        status = collector.status()
+        assert status["application_ping_sent_count"] == 1
+        assert status["application_pong_received_count"] == 1
+        assert status["last_application_ping_rtt_ms"] is not None
+        assert status["last_application_ping_error"] is None
+    finally:
+        collector.close()
+        collector.persistence.close()
+
+
+def test_kraken_application_ping_timeout_is_detected_without_control_ping():
+    collector = MarketMicrostructureCollector(Persistence(":memory:"), enabled=False)
+    try:
+        request = collector._begin_application_ping()
+        assert request
+        collector._pending_application_ping_sent_monotonic = time.monotonic() - 20
+
+        assert collector._check_application_ping_timeout() is True
+        status = collector.status()
+        assert status["application_ping_timeout_count"] == 1
+        assert status["last_application_ping_error"] == "KRAKEN_APPLICATION_PING_TIMEOUT"
+        assert status["last_error_type"] == "KRAKEN_APPLICATION_PING_TIMEOUT"
+        assert status["websocket_control_ping_enabled"] is False
+        assert status["websocket_ping_interval_seconds"] is None
+        assert status["websocket_ping_timeout_seconds"] is None
+    finally:
+        collector.close()
+        collector.persistence.close()
+
+
+def test_kraken_application_ping_rejection_forces_reconnect():
+    collector = MarketMicrostructureCollector(Persistence(":memory:"), enabled=False)
+    try:
+        request = collector._begin_application_ping()
+        assert collector.process_message({
+            "method": "pong", "req_id": request["req_id"],
+            "success": False, "error": "temporarily unavailable",
+        }) is False
+        status = collector.status()
+        assert status["application_ping_rejected_count"] == 1
+        assert status["last_error_type"] == "KRAKEN_APPLICATION_PING_REJECTED"
+        assert status["last_application_ping_error"] == "temporarily unavailable"
+    finally:
+        collector.close()
+        collector.persistence.close()
