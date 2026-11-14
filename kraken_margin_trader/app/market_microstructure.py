@@ -252,7 +252,7 @@ class MarketMicrostructureCollector:
                 self._metrics["connection_state"] = "CONNECTED"
                 if self._metrics["last_error_type"] in {
                     None, "SUBSCRIPTION_REJECTED", "SUBSCRIPTION_ACK_TIMEOUT",
-                    "KRAKEN_APPLICATION_PING_TIMEOUT",
+                    "KRAKEN_APPLICATION_PING_TIMEOUT", "KRAKEN_APPLICATION_PING_REJECTED",
                 }:
                     self._metrics["last_error_type"] = None
                     self._metrics["last_subscription_error"] = None

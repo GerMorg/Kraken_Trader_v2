@@ -2668,8 +2668,19 @@ class TraderRuntime:
                 "microstructure_last_error_message": microstructure_status["last_error_message"],
                 "microstructure_last_disconnect_epoch": microstructure_status["last_disconnect_epoch"],
                 "microstructure_ping_timeout_count": microstructure_status["ping_timeout_count"],
-                "microstructure_ping_interval_seconds": microstructure_status["ping_interval_seconds"],
-                "microstructure_ping_timeout_seconds": microstructure_status["ping_timeout_seconds"],
+                "microstructure_websocket_control_ping_enabled": microstructure_status["websocket_control_ping_enabled"],
+                "microstructure_websocket_ping_interval_seconds": microstructure_status["websocket_ping_interval_seconds"],
+                "microstructure_websocket_ping_timeout_seconds": microstructure_status["websocket_ping_timeout_seconds"],
+                "microstructure_application_ping_interval_seconds": microstructure_status["application_ping_interval_seconds"],
+                "microstructure_application_ping_timeout_seconds": microstructure_status["application_ping_timeout_seconds"],
+                "microstructure_application_ping_sent_count": microstructure_status["application_ping_sent_count"],
+                "microstructure_application_pong_received_count": microstructure_status["application_pong_received_count"],
+                "microstructure_application_ping_timeout_count": microstructure_status["application_ping_timeout_count"],
+                "microstructure_application_ping_rejected_count": microstructure_status["application_ping_rejected_count"],
+                "microstructure_application_ping_unmatched_pong_count": microstructure_status["application_ping_unmatched_pong_count"],
+                "microstructure_last_application_ping_rtt_ms": microstructure_status["last_application_ping_rtt_ms"],
+                "microstructure_last_application_ping_error": microstructure_status["last_application_ping_error"],
+                "microstructure_last_application_ping_response_epoch": microstructure_status["last_application_ping_response_epoch"],
                 "multi_asset_variant_a_status": (
                     multi_asset_research_summary.get("variant_a_volatility_harvesting", {}).get("status")
                     if isinstance(multi_asset_research_summary.get("variant_a_volatility_harvesting"), dict)
