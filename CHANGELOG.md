@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.66 — Mikrostruktur-Kohorte, Kraken-WS-Ping und gezielte Recovery
+
+- Korrigiert die TSM-Mikrostruktur-Abdeckung: Die Kohortenlogik vergleicht jetzt die gemeinsame Beobachtungs-ID (`candidate_id` oder `observation_id`) und zählt TSM-Matches korrekt.
+- Nutzt Kraken WebSocket v2 JSON `ping`/`pong` mit Request-ID, Round-trip-Latenz und eigenem Timeout. Die unabhängigen WebSocket-RFC-Kontroll-Pings sind deaktiviert, um die bisherigen `keepalive ping timeout`-Abbrüche nicht mehr mit dem Kraken-Anwendungsprotokoll zu verwechseln.
+- Erlaubt die Recovery des exakt bekannten `KRAKEN_PUBLIC:EGeneral:Internal error`-Breakers erst nach vollständiger erfolgreicher Aktualisierung aller aktuellen Kandidatenmärkte und abgeschlossener Account-/Historienprüfung.
+- Löst den exakt bekannten `MARKET_DATA:MARKET_TICKER_REFRESH_EMPTY`-Breaker erst auf, wenn jeder aktuelle Kandidatenmarkt einen frischen gültigen Ticker geliefert hat. Teilabdeckung lässt die Sperre aktiv.
+- Ergänzt Regressionstests für TSM-ID-Zuordnung, Ping/Pong, Ping-Timeouts und beide engen Recovery-Fälle.
+- Keine Datenbankänderung, kein Reset, keine Strategiepromotion, keine Änderung von Risiko-Limits oder Order Authority. SHADOW und alle Live-/Order-Sperren bleiben unverändert.
+
 ## 0.1.65 — Gebühren-, Mikrostruktur- und Research-Telemetrie
 
 - Ergänzt eine kompakte, paarbezogene Kraken-TradeVolume-Auswertung mit Taker-/Maker-Sätzen in Basispunkten, Gebührenstufen-Metadaten und expliziter Kennzeichnung, dass Maker-Sätze keine garantierten Ausführungskosten sind.

@@ -254,17 +254,22 @@ def _recover_transient_public_network_breaker(
     history_ready_for_entries: bool,
     history_evidence_gaps: list[str],
     account_snapshot_available: bool,
+    expected_candidate_count: int = 0,
 ) -> bool:
-    """Resolve only a stale public-network breaker after a successful account-read cycle.
+    """Resolve only known transient public errors after a clean account/market refresh.
 
-    This narrowly handles KRAKEN_PUBLIC_NETWORK_ERROR. Auth, history, account,
-    reconciliation, cost, strategy and other risk gates remain independently active.
+    Authentication, history, account, reconciliation, cost, strategy and other risk
+    gates remain independently active. Generic and order-related API errors never clear.
     """
+    candidate_refresh_complete = (
+        refreshed_ticker_count == expected_candidate_count
+        if expected_candidate_count > 0 else refreshed_ticker_count > 0
+    )
     checks = {
         "system_status_online": str(system_status).lower() == "online",
         "usd_instruments_available": instruments_count > 0,
         "initial_ticker_snapshot_nonempty": initial_ticker_count > 0,
-        "refreshed_ticker_snapshot_nonempty": refreshed_ticker_count > 0,
+        "candidate_ticker_refresh_complete": candidate_refresh_complete,
         "api_credentials_present": credentials_present,
         "private_api_permissions_ready": api_permissions_ready,
         "history_ready_for_entries": history_ready_for_entries,
@@ -277,7 +282,10 @@ def _recover_transient_public_network_breaker(
     for breaker in persistence.circuit_breakers():
         if (
             breaker.get("name") != "KRAKEN_API"
-            or breaker.get("reason") != "KRAKEN_PUBLIC_NETWORK_ERROR"
+            or breaker.get("reason") not in {
+                "KRAKEN_PUBLIC_NETWORK_ERROR",
+                "KRAKEN_PUBLIC:EGeneral:Internal error",
+            }
         ):
             continue
         verified_checks = [name for name, passed in checks.items() if passed]
@@ -286,16 +294,17 @@ def _recover_transient_public_network_breaker(
             "recovery_method": "SUCCESSFUL_PUBLIC_AND_ACCOUNT_READ_CYCLE",
             "verified_checks": verified_checks,
         }
+        previous_reason = str(breaker.get("reason", ""))
         if persistence.resolve_circuit_breaker(
             "KRAKEN_API",
-            "KRAKEN_PUBLIC_NETWORK_ERROR",
+            previous_reason,
             recovery_detail,
         ):
             audit.emit(
                 "CIRCUIT_BREAKER_RECOVERED",
                 cycle_id=cycle_id,
                 name="KRAKEN_API",
-                previous_reason="KRAKEN_PUBLIC_NETWORK_ERROR",
+                previous_reason=previous_reason,
                 recovery_method="SUCCESSFUL_PUBLIC_AND_ACCOUNT_READ_CYCLE",
                 verified_checks=verified_checks,
                 other_entry_gates_remain_in_force=True,
@@ -367,6 +376,59 @@ def _sqlite_storage_diagnostics_are_healthy(snapshot: dict[str, Any]) -> tuple[b
     failed = [name for name, passed in checks.items() if not passed]
     return not failed, failed
 
+def _recover_transient_market_data_breaker(
+    persistence: Persistence,
+    audit: AuditLogger,
+    *,
+    cycle_id: str,
+    initial_ticker_count: int,
+    candidate_count: int,
+    refreshed_candidate_count: int,
+    invalid_candidate_count: int,
+    account_snapshot_available: bool,
+) -> bool:
+    """Resolve only the exact empty-ticker breaker after every current candidate refreshes."""
+    checks = {
+        "initial_ticker_snapshot_nonempty": initial_ticker_count > 0,
+        "candidate_universe_nonempty": candidate_count > 0,
+        "all_candidate_tickers_refreshed": (
+            refreshed_candidate_count == candidate_count
+            and invalid_candidate_count == 0
+        ),
+        "account_snapshot_available": account_snapshot_available,
+    }
+    if not all(checks.values()):
+        return False
+
+    expected_name = "MARKET_DATA"
+    expected_reason = "MARKET_TICKER_REFRESH_EMPTY"
+    for breaker in persistence.circuit_breakers():
+        if (
+            breaker.get("name") != expected_name
+            or breaker.get("reason") != expected_reason
+        ):
+            continue
+        recovery_detail = {
+            "cycle_id": cycle_id,
+            "recovery_method": "ALL_CURRENT_CANDIDATE_TICKERS_REFRESHED",
+            "verified_checks": [name for name, passed in checks.items() if passed],
+            "refreshed_candidate_count": refreshed_candidate_count,
+        }
+        if persistence.resolve_circuit_breaker(
+            expected_name, expected_reason, recovery_detail
+        ):
+            audit.emit(
+                "CIRCUIT_BREAKER_RECOVERED",
+                cycle_id=cycle_id,
+                name=expected_name,
+                previous_reason=expected_reason,
+                recovery_method="ALL_CURRENT_CANDIDATE_TICKERS_REFRESHED",
+                verified_checks=recovery_detail["verified_checks"],
+                refreshed_candidate_count=refreshed_candidate_count,
+                other_entry_gates_remain_in_force=True,
+            )
+            return True
+    return False
 
 def _recover_transient_sqlite_cantopen_research_read_breaker(
     persistence: Persistence,
@@ -778,7 +840,7 @@ class TraderRuntime:
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
         failure_stage = "CYCLE_INITIALIZATION"
-        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0,"strategy_lab_observations_recorded":0,"strategy_lab_outcomes_settled":0,"strategy_lab_outcomes_incomplete":0,"multi_asset_research_runs_recorded":0,"market_depth_snapshots_recorded":0}
+        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0,"strategy_lab_observations_recorded":0,"strategy_lab_outcomes_settled":0,"strategy_lab_outcomes_incomplete":0,"multi_asset_research_runs_recorded":0,"market_depth_snapshots_recorded":0,"market_ticker_refresh_succeeded":0,"market_ticker_refresh_failed":0}
         history_ready_for_entries = False
         history_evidence_gaps = ["ACCOUNT_HISTORY_NOT_CHECKED"]
         api_permissions_ready = False
@@ -788,6 +850,8 @@ class TraderRuntime:
         closed_history_snapshot_allowed = False
         multi_asset_research_summary: dict[str, Any] = {"status": "NOT_RUN", "release_gate_eligible": False}
         recovered_transient_sqlite_cantopen_breaker = False
+        recovered_transient_public_network_breaker = False
+        recovered_transient_market_data_breaker = False
         wallet_reconciliation: dict[str, Any] | None = None
         order_reconciliation: dict[str, Any] | None = None
         position_reconciliation: dict[str, Any] | None = None
@@ -1449,20 +1513,6 @@ class TraderRuntime:
                 cycle_id=cycle_id,
                 **fee_schedule_diagnostics,
             )
-            recovered_transient_public_network_breaker = _recover_transient_public_network_breaker(
-                self.persistence,
-                self.audit,
-                cycle_id=cycle_id,
-                system_status=status,
-                instruments_count=len(instruments),
-                initial_ticker_count=initial_ticker_count,
-                refreshed_ticker_count=len(tickers),
-                credentials_present=self.settings.credentials_present,
-                api_permissions_ready=api_permissions_ready,
-                history_ready_for_entries=history_ready_for_entries,
-                history_evidence_gaps=history_evidence_gaps,
-                account_snapshot_available=account is not None,
-            )
             active_breaker_rows = self.persistence.circuit_breakers()
             active_breaker_diagnostics = _circuit_breaker_diagnostics(active_breaker_rows, persistence=self.persistence)
             self.audit.emit(
@@ -1485,6 +1535,7 @@ class TraderRuntime:
                     except KrakenAPIError:
                         raise
                     if fresh_ticker is None:
+                        counts["market_ticker_refresh_failed"] += 1
                         counts["blocked"] += 1
                         self.audit.emit(
                             "NO_TRADE",
@@ -1493,6 +1544,7 @@ class TraderRuntime:
                             reason="MARKET_TICKER_REFRESH_INVALID",
                         )
                         continue
+                    counts["market_ticker_refresh_succeeded"] += 1
                     ticker = fresh_ticker
                     ticker_times[instrument.pair_id] = time.time()
                     tickers[instrument.pair_id] = fresh_ticker
@@ -2160,6 +2212,31 @@ class TraderRuntime:
                         state="SHADOW_ONLY",
                         **intent,
                     )
+            recovered_transient_public_network_breaker = _recover_transient_public_network_breaker(
+                self.persistence,
+                self.audit,
+                cycle_id=cycle_id,
+                system_status=status,
+                instruments_count=len(instruments),
+                initial_ticker_count=initial_ticker_count,
+                refreshed_ticker_count=counts["market_ticker_refresh_succeeded"],
+                expected_candidate_count=len(candidates),
+                credentials_present=self.settings.credentials_present,
+                api_permissions_ready=api_permissions_ready,
+                history_ready_for_entries=history_ready_for_entries,
+                history_evidence_gaps=history_evidence_gaps,
+                account_snapshot_available=account is not None,
+            )
+            recovered_transient_market_data_breaker = _recover_transient_market_data_breaker(
+                self.persistence,
+                self.audit,
+                cycle_id=cycle_id,
+                initial_ticker_count=initial_ticker_count,
+                candidate_count=len(candidates),
+                refreshed_candidate_count=counts["market_ticker_refresh_succeeded"],
+                invalid_candidate_count=counts["market_ticker_refresh_failed"],
+                account_snapshot_available=account is not None,
+            )
             failure_stage = "FINALIZE_MULTI_ASSET_STRATEGY_RESEARCH"
             if self.settings.shadow_strategy_lab_enabled:
                 try:
@@ -2533,6 +2610,7 @@ class TraderRuntime:
                 "active_circuit_breaker_count": len(final_breaker_rows),
                 "active_circuit_breakers": final_breaker_diagnostics,
                 "recovered_transient_public_network_breaker": recovered_transient_public_network_breaker,
+                "recovered_transient_market_data_breaker": recovered_transient_market_data_breaker,
                 "recovered_transient_sqlite_cantopen_breaker": recovered_transient_sqlite_cantopen_breaker,
                 "shadow_research_validation_status": research_summary["validation_status"],
                 "shadow_research_costed_sample_count": research_summary["costed_spot_proxy_observations"],

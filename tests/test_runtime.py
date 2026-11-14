@@ -13,6 +13,7 @@ from app.runtime import (
     _circuit_breaker_diagnostics,
     _open_position_rows,
     _recover_transient_public_network_breaker,
+    _recover_transient_market_data_breaker,
     _recover_transient_sqlite_cantopen_research_read_breaker,
     _resolve_clean_reconciliation_breaker,
 )
@@ -1228,5 +1229,93 @@ def test_sqlite_cantopen_recovery_defers_when_storage_probe_raises(tmp_path, mon
     assert db.circuit_breakers()[0]["active"] is True
     assert "OSError" in audit.stream.getvalue()
     assert "filesystem probe unavailable" not in audit.stream.getvalue()
+    audit.close()
+    db.close()
+
+
+
+def test_exact_kraken_internal_error_breaker_recovers_after_complete_fresh_market_reads():
+    _runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker(
+        "KRAKEN_API", "KRAKEN_PUBLIC:EGeneral:Internal error",
+        {"cycle_id": "old-public-internal-error"},
+    )
+    db.trip_circuit_breaker("ORDER_SNAPSHOT", "ORDER_RESPONSE_SHAPE_INVALID", {})
+
+    recovered = _recover_transient_public_network_breaker(
+        db, audit, cycle_id="recovery-cycle", system_status="online",
+        instruments_count=615, initial_ticker_count=615, refreshed_ticker_count=12,
+        expected_candidate_count=12, credentials_present=True,
+        api_permissions_ready=True, history_ready_for_entries=True,
+        history_evidence_gaps=[], account_snapshot_available=True,
+    )
+
+    assert recovered is True
+    assert [(row["name"], row["reason"]) for row in db.circuit_breakers()] == [
+        ("ORDER_SNAPSHOT", "ORDER_RESPONSE_SHAPE_INVALID")
+    ]
+    audit.close()
+    db.close()
+
+
+def test_exact_kraken_internal_error_breaker_stays_when_candidate_refresh_is_partial():
+    _runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker(
+        "KRAKEN_API", "KRAKEN_PUBLIC:EGeneral:Internal error", {}
+    )
+
+    recovered = _recover_transient_public_network_breaker(
+        db, audit, cycle_id="partial-cycle", system_status="online",
+        instruments_count=615, initial_ticker_count=615, refreshed_ticker_count=11,
+        expected_candidate_count=12, credentials_present=True,
+        api_permissions_ready=True, history_ready_for_entries=True,
+        history_evidence_gaps=[], account_snapshot_available=True,
+    )
+
+    assert recovered is False
+    assert [(row["name"], row["reason"]) for row in db.circuit_breakers()] == [
+        ("KRAKEN_API", "KRAKEN_PUBLIC:EGeneral:Internal error")
+    ]
+    audit.close()
+    db.close()
+
+
+def test_market_data_empty_breaker_recovers_only_after_every_candidate_quote_refreshes():
+    _runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker(
+        "MARKET_DATA", "MARKET_TICKER_REFRESH_EMPTY", {"cycle_id": "old-empty-snapshot"}
+    )
+    db.trip_circuit_breaker("ORDER_SNAPSHOT", "ORDER_RESPONSE_SHAPE_INVALID", {})
+
+    recovered = _recover_transient_market_data_breaker(
+        db, audit, cycle_id="complete-market-cycle",
+        initial_ticker_count=615, candidate_count=12,
+        refreshed_candidate_count=12, invalid_candidate_count=0,
+        account_snapshot_available=True,
+    )
+
+    assert recovered is True
+    assert [(row["name"], row["reason"]) for row in db.circuit_breakers()] == [
+        ("ORDER_SNAPSHOT", "ORDER_RESPONSE_SHAPE_INVALID")
+    ]
+    audit.close()
+    db.close()
+
+
+def test_market_data_empty_breaker_stays_when_any_candidate_refresh_is_invalid():
+    _runtime, db, audit = make_runtime()
+    db.trip_circuit_breaker("MARKET_DATA", "MARKET_TICKER_REFRESH_EMPTY", {})
+
+    recovered = _recover_transient_market_data_breaker(
+        db, audit, cycle_id="partial-market-cycle",
+        initial_ticker_count=615, candidate_count=12,
+        refreshed_candidate_count=11, invalid_candidate_count=1,
+        account_snapshot_available=True,
+    )
+
+    assert recovered is False
+    assert [(row["name"], row["reason"]) for row in db.circuit_breakers()] == [
+        ("MARKET_DATA", "MARKET_TICKER_REFRESH_EMPTY")
+    ]
     audit.close()
     db.close()
