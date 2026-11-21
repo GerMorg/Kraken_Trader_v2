@@ -97,6 +97,150 @@ def _decimal(value: Any) -> Decimal | None:
     except (ArithmeticError,TypeError,ValueError):
         return None
 
+def _futures_account_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    """Summarize the documented REST /accounts response without mixing wallet classes.
+
+    Kraken returns a mapping of wallet names (for example cash, flex and
+    single-collateral margin wallets). The multi-collateral wallet is 'flex';
+    its collateral assets are under flex.currencies. The cash holding wallet
+    and legacy single-collateral wallets are reported separately.
+    """
+    accounts = payload.get("accounts")
+    if not isinstance(accounts, dict):
+        return {
+            "account_schema_status": "ACCOUNTS_MAPPING_MISSING",
+            "account_wallet_count": None,
+            "account_type_counts": {},
+            "multi_collateral_wallet_present": False,
+            "collateral_currency_count": None,
+            "funded_collateral_currency_count": None,
+            "flex_account_metrics": {},
+            "flex_currency_details": {},
+            "cash_currency_count": None,
+            "cash_balance_details": {},
+            "single_collateral_account_count": 0,
+            "single_collateral_currency_count": 0,
+        }
+
+    account_type_counts: dict[str, int] = {}
+    for wallet in accounts.values():
+        if isinstance(wallet, dict):
+            wallet_type = str(wallet.get("type", "UNKNOWN")).strip() or "UNKNOWN"
+            account_type_counts[wallet_type] = account_type_counts.get(wallet_type, 0) + 1
+
+    flex = accounts.get("flex")
+    flex = flex if isinstance(flex, dict) else None
+    flex_currencies = flex.get("currencies") if flex is not None else None
+    flex_currency_details: dict[str, dict[str, str | None]] = {}
+    funded_currency_count = 0
+
+    if isinstance(flex_currencies, dict):
+        for currency, raw_details in sorted(flex_currencies.items(), key=lambda item: str(item[0])):
+            if not isinstance(raw_details, dict):
+                continue
+            quantity = _decimal(raw_details.get("quantity"))
+            if quantity is not None and quantity > 0:
+                funded_currency_count += 1
+            flex_currency_details[str(currency).upper()] = {
+                "quantity": str(quantity) if quantity is not None else None,
+                "value_usd": (
+                    str(_decimal(raw_details.get("value")))
+                    if _decimal(raw_details.get("value")) is not None else None
+                ),
+                "collateral_value_usd": (
+                    str(_decimal(raw_details.get("collateral_value", raw_details.get("collateralValue"))))
+                    if _decimal(raw_details.get("collateral_value", raw_details.get("collateralValue"))) is not None
+                    else None
+                ),
+                "available": (
+                    str(_decimal(raw_details.get("available")))
+                    if _decimal(raw_details.get("available")) is not None else None
+                ),
+                "haircut": (
+                    str(_decimal(raw_details.get("haircut")))
+                    if _decimal(raw_details.get("haircut")) is not None else None
+                ),
+                "conversion_spread": (
+                    str(_decimal(raw_details.get("conversion_spread", raw_details.get("conversionSpread"))))
+                    if _decimal(raw_details.get("conversion_spread", raw_details.get("conversionSpread"))) is not None
+                    else None
+                ),
+            }
+
+    metric_aliases = {
+        "balance_value_usd": ("balanceValue", "balance_value"),
+        "portfolio_value_usd": ("portfolioValue", "portfolio_value"),
+        "collateral_value_usd": ("collateralValue", "collateral_value"),
+        "margin_equity_usd": ("marginEquity", "margin_equity"),
+        "available_margin_usd": ("availableMargin", "available_margin"),
+        "initial_margin_usd": ("initialMargin", "initial_margin"),
+        "maintenance_margin_usd": ("maintenanceMargin", "maintenance_margin"),
+        "unrealized_pnl_usd": ("pnl",),
+        "unrealized_funding_usd": ("unrealizedFunding", "unrealized_funding"),
+        "total_position_size_usd": ("totalPositionSize", "total_position_size"),
+    }
+    flex_account_metrics: dict[str, str | None] = {}
+    if flex is not None:
+        for output_key, candidates in metric_aliases.items():
+            raw_value = next((flex[key] for key in candidates if key in flex), None)
+            parsed_value = _decimal(raw_value)
+            flex_account_metrics[output_key] = (
+                str(parsed_value) if parsed_value is not None else None
+            )
+
+    cash = accounts.get("cash")
+    cash = cash if isinstance(cash, dict) else None
+    cash_balances = cash.get("balances") if cash is not None else None
+    cash_balance_details: dict[str, str | None] = {}
+    if isinstance(cash_balances, dict):
+        for currency, raw_value in sorted(cash_balances.items(), key=lambda item: str(item[0])):
+            parsed_value = _decimal(raw_value)
+            cash_balance_details[str(currency).upper()] = (
+                str(parsed_value) if parsed_value is not None else None
+            )
+
+    single_collateral_count = 0
+    single_collateral_currency_count = 0
+    for wallet_name, wallet in accounts.items():
+        if wallet_name in {"cash", "flex"} or not isinstance(wallet, dict):
+            continue
+        if str(wallet.get("type", "")).strip() == "marginAccount":
+            single_collateral_count += 1
+            balances = wallet.get("balances")
+            if isinstance(balances, dict):
+                single_collateral_currency_count += len(balances)
+
+    if flex is None:
+        schema_status = "FLEX_WALLET_MISSING"
+    elif not isinstance(flex_currencies, dict):
+        schema_status = "FLEX_CURRENCIES_MISSING"
+    elif not flex_currencies:
+        schema_status = "FLEX_WALLET_PRESENT_EMPTY"
+    else:
+        schema_status = "FLEX_SCHEMA_RECOGNIZED"
+
+    return {
+        "account_schema_status": schema_status,
+        "account_wallet_count": len(accounts),
+        "account_type_counts": account_type_counts,
+        "multi_collateral_wallet_present": flex is not None,
+        "collateral_currency_count": (
+            len(flex_currencies) if isinstance(flex_currencies, dict) else None
+        ),
+        "funded_collateral_currency_count": (
+            funded_currency_count if isinstance(flex_currencies, dict) else None
+        ),
+        "flex_account_metrics": flex_account_metrics,
+        "flex_currency_details": flex_currency_details,
+        "cash_currency_count": (
+            len(cash_balances) if isinstance(cash_balances, dict) else None
+        ),
+        "cash_balance_details": cash_balance_details,
+        "single_collateral_account_count": single_collateral_count,
+        "single_collateral_currency_count": single_collateral_currency_count,
+    }
+
+
 def _external_flow_adjustment(
     ledger_events: list[dict[str, Any]],
     start_epoch: Decimal | None,
@@ -876,22 +1020,8 @@ class TraderRuntime:
                 ),
             }
 
-        counts["account_wallet_count"] = (
-            len(data["accounts"].get("accounts", {}))
-            if isinstance(data["accounts"].get("accounts"), dict) else None
-        )
-        account_block = data["accounts"].get("accounts", {})
-        multi_collateral = (
-            account_block.get("multiCollateral", {})
-            if isinstance(account_block, dict) else {}
-        )
-        balances = (
-            multi_collateral.get("balances", {})
-            if isinstance(multi_collateral, dict) else {}
-        )
-        counts["collateral_currency_count"] = (
-            len(balances) if isinstance(balances, dict) else None
-        )
+        account_summary = _futures_account_summary(data["accounts"])
+        counts.update(account_summary)
 
         endpoint_error_count = sum(
             value != "SUCCESS" for value in endpoint_status.values()
@@ -922,6 +1052,7 @@ class TraderRuntime:
         final_status = result_status if persisted else "PERSISTENCE_FAILED"
         summary = {
             "status": final_status,
+            "account_status": account_summary["account_schema_status"],
             "snapshot_id": snapshot_id if persisted else None,
             "endpoint_error_count": endpoint_error_count,
         }
@@ -934,6 +1065,7 @@ class TraderRuntime:
             "transfer_permission": transfer_permission,
             "endpoint_status": endpoint_status,
             "counts": counts,
+            **account_summary,
             "endpoint_error_count": endpoint_error_count,
             "persistence_succeeded": persisted,
         })
@@ -945,6 +1077,7 @@ class TraderRuntime:
             snapshot_id=summary["snapshot_id"],
             endpoint_status=endpoint_status,
             counts=counts,
+            **account_summary,
             endpoint_error_count=endpoint_error_count,
             account_read_authenticated=True,
             orders_submitted=False,

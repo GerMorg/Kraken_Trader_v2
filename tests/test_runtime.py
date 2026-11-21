@@ -8,6 +8,7 @@ from app.config import Settings
 from app.persistence import Persistence
 from app.runtime import (
     TraderRuntime,
+    _futures_account_summary,
     _runtime_failure_context,
     _resolve_online_kraken_status_breaker,
     _circuit_breaker_diagnostics,
@@ -1347,7 +1348,45 @@ def test_futures_readonly_runtime_checks_permissions_then_persists_separate_snap
 
         def get_accounts(self):
             self.calls.append("accounts")
-            return {"accounts": {"multiCollateral": {"balances": {"eur": "100", "usd": "0"}}}}
+            return {
+                "accounts": {
+                    "cash": {
+                        "balances": {"eur": "2.5", "usd": "10"},
+                        "type": "cashAccount",
+                    },
+                    "flex": {
+                        "currencies": {
+                            "EUR": {
+                                "quantity": "100",
+                                "value": "108",
+                                "collateral_value": "108",
+                                "available": "108",
+                                "haircut": "0",
+                                "conversion_spread": "0",
+                            },
+                            "USD": {
+                                "quantity": "25",
+                                "value": "25",
+                                "collateralValue": "25",
+                                "available": "25",
+                                "haircut": "0",
+                                "conversionSpread": "0",
+                            },
+                        },
+                        "balanceValue": "133",
+                        "portfolioValue": "133",
+                        "collateralValue": "133",
+                        "availableMargin": "133",
+                        "marginEquity": "133",
+                        "type": "multiCollateralMarginAccount",
+                    },
+                    "fi_xbtusd": {
+                        "balances": {"xbt": "0.02"},
+                        "currency": "xbt",
+                        "type": "marginAccount",
+                    },
+                }
+            }
 
         def get_open_positions(self):
             self.calls.append("open_positions")
@@ -1397,10 +1436,26 @@ def test_futures_readonly_runtime_checks_permissions_then_persists_separate_snap
     assert latest["general_permission"] == "READ_ONLY"
     assert latest["transfer_permission"] == "NO_ACCESS"
     assert latest["counts"]["open_positions"] == 0
+    assert latest["counts"]["account_wallet_count"] == 3
     assert latest["counts"]["collateral_currency_count"] == 2
+    assert latest["counts"]["funded_collateral_currency_count"] == 2
+    assert latest["counts"]["cash_currency_count"] == 2
+    assert latest["counts"]["single_collateral_account_count"] == 1
+    assert latest["counts"]["single_collateral_currency_count"] == 1
+    assert latest["counts"]["account_type_counts"] == {
+        "cashAccount": 1,
+        "multiCollateralMarginAccount": 1,
+        "marginAccount": 1,
+    }
     assert "account-uid-not-logged" not in str(latest["data"])
     assert "future-private-secret" not in str(latest)
     assert "future-public-key" not in str(latest)
+    assert latest["data"]["accounts"]["accounts"]["flex"]["currencies"]["EUR"]["quantity"] == "100"
+    assert '"collateral_currency_count":2' in audit.stream.getvalue()
+    assert '"cash_currency_count":2' in audit.stream.getvalue()
+    assert '"available_margin_usd":"133"' in audit.stream.getvalue()
+    assert latest["counts"]["account_schema_status"] == "FLEX_SCHEMA_RECOGNIZED"
+    assert latest["counts"]["flex_account_metrics"]["available_margin_usd"] == "133"
     assert "FUTURES_READONLY_DATA_SYNC" in audit.stream.getvalue()
     audit.close()
     db.close()
@@ -1455,3 +1510,51 @@ def test_futures_readonly_runtime_stays_disabled_by_default(monkeypatch):
     }
     audit.close()
     db.close()
+
+
+
+def test_futures_account_summary_keeps_cash_and_flex_collateral_separate():
+    summary = _futures_account_summary({
+        "accounts": {
+            "cash": {
+                "type": "cashAccount",
+                "balances": {"eur": "100"},
+            },
+            "flex": {
+                "type": "multiCollateralMarginAccount",
+                "currencies": {
+                    "EUR": {
+                        "quantity": "0",
+                        "value": "0",
+                        "collateral_value": "0",
+                        "available": "0",
+                    },
+                },
+                "balanceValue": "0",
+                "availableMargin": "0",
+            },
+        },
+    })
+
+    assert summary["account_schema_status"] == "FLEX_SCHEMA_RECOGNIZED"
+    assert summary["collateral_currency_count"] == 1
+    assert summary["funded_collateral_currency_count"] == 0
+    assert summary["cash_currency_count"] == 1
+    assert summary["cash_balance_details"] == {"EUR": "100"}
+    assert summary["flex_account_metrics"]["available_margin_usd"] == "0"
+
+
+def test_futures_account_summary_reports_missing_flex_wallet_without_claiming_zero_collateral():
+    summary = _futures_account_summary({
+        "accounts": {
+            "cash": {
+                "type": "cashAccount",
+                "balances": {"eur": "100"},
+            },
+        },
+    })
+
+    assert summary["account_schema_status"] == "FLEX_WALLET_MISSING"
+    assert summary["multi_collateral_wallet_present"] is False
+    assert summary["collateral_currency_count"] is None
+    assert summary["funded_collateral_currency_count"] is None

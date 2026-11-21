@@ -73,6 +73,11 @@ _COMPACT_FIELDS: dict[str, tuple[str, ...]] = {
     "FUTURES_READONLY_DATA_SYNC": (
         "cycle_id", "status", "environment", "snapshot_id", "endpoint_status",
         "counts", "endpoint_error_count", "account_read_authenticated",
+        "account_schema_status", "account_wallet_count", "account_type_counts",
+        "multi_collateral_wallet_present", "collateral_currency_count",
+        "funded_collateral_currency_count", "flex_account_metrics",
+        "flex_currency_details", "cash_currency_count", "cash_balance_details",
+        "single_collateral_account_count", "single_collateral_currency_count",
         "orders_submitted", "account_mutations_sent", "transfers_sent",
     ),
 }
