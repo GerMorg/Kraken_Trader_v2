@@ -405,3 +405,76 @@ def match_microstructure_target_horizons(
             "Spot costs are proxies; margin open, rollover, borrow and funding costs remain unknown and omitted.",
         ],
     }
+
+def summarize_early_microstructure_horizons(
+    observations: Sequence[dict[str, Any]],
+    bars_by_market_pair: Mapping[str, Sequence[dict[str, Any]]],
+    pair_aliases: dict[str, str],
+    *,
+    max_time_error_seconds: int = 60,
+    slippage_bps_per_side: Decimal = D("5"),
+) -> dict[str, Any]:
+    """Evaluate fixed early horizons without changing the configured holding period."""
+    if max_time_error_seconds < 0:
+        raise ValueError("MICROSTRUCTURE_EARLY_HORIZON_INPUT_INVALID")
+    horizons = (("15M", 15 * 60), ("1H", 60 * 60), ("4H", 4 * 60 * 60))
+    reports: dict[str, Any] = {}
+    for label, horizon_seconds in horizons:
+        horizon_observations: list[dict[str, Any]] = []
+        for source in observations:
+            row = dict(source)
+            try:
+                decision_ts = int(row["decision_ts"])
+            except (KeyError, TypeError, ValueError, OverflowError):
+                row["target_epoch"] = None
+            else:
+                row["target_epoch"] = decision_ts + horizon_seconds
+            horizon_observations.append(row)
+
+        report = match_microstructure_target_horizons(
+            horizon_observations,
+            bars_by_market_pair,
+            pair_aliases,
+            max_time_error_seconds=max_time_error_seconds,
+            slippage_bps_per_side=slippage_bps_per_side,
+        )
+        cohort = report.get("cohort_coverage", {}).get("overall", {})
+        reports[label] = {
+            "horizon_seconds": horizon_seconds,
+            "directional_observation_count": report["directional_observation_count"],
+            "matched_observation_count": report["matched_observation_count"],
+            "match_coverage_pct": report["match_coverage_pct"],
+            "matured_cohort": cohort,
+            "gross_mark_return": report["gross_mark_return"],
+            "spot_net_cost_proxy": report["spot_net_cost_proxy"],
+            "costed_match_count": report["costed_match_count"],
+            "cost_breakdown_bps": report["cost_breakdown_bps"],
+            "by_candidate": report["by_candidate"],
+            "unmatched_reasons": report["unmatched_reasons"],
+            "history_coverage_by_pair": report["history_coverage_by_pair"],
+        }
+
+    return {
+        "status": (
+            "AVAILABLE"
+            if any(row["matched_observation_count"] for row in reports.values())
+            else "WAITING_FOR_MATURED_QUALIFIED_BOOK_MARKS"
+        ),
+        "method": "DECISION_TIMESTAMP_PLUS_FIXED_HORIZON; LAST_QUALIFIED_BOOK_MARK_AT_OR_BEFORE_TARGET",
+        "target_time_tolerance_seconds": max_time_error_seconds,
+        "slippage_bps_per_side_assumption": str(slippage_bps_per_side),
+        "horizon_role": "EARLY_SIGNAL_DIAGNOSTIC_NOT_REPLACEMENT_FOR_CONFIGURED_HOLDING_PERIOD",
+        "horizons": reports,
+        "entry_reference": "SIGNAL_DECISION_SPOT_TICKER_MIDPOINT",
+        "exit_reference": "QUALIFIED_CHECKSUM_VERIFIED_BOOK_MIDPOINT",
+        "actual_fills": False,
+        "portfolio_pnl": False,
+        "release_gate_eligible": False,
+        "limitations": [
+            "These fixed horizons are diagnostic probes; they do not replace the configured primary holding-period outcome.",
+            "Entry uses the spot ticker midpoint stored with the signal, not a simultaneous executable order-book fill.",
+            "Exit uses a qualified midpoint mark, not an executable fill or order-book walk.",
+            "Spot fee and spread costs are proxies; Futures fees, funding, liquidation and slippage are not modeled.",
+            "Results do not promote strategy parameters or authorize orders.",
+        ],
+    }

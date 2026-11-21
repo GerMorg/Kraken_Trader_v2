@@ -1,6 +1,9 @@
 from decimal import Decimal as D
 
-from app.microstructure_research import match_microstructure_target_horizons
+from app.microstructure_research import (
+    match_microstructure_target_horizons,
+    summarize_early_microstructure_horizons,
+)
 from app.research import summarize_strategy_candidate_research
 
 
@@ -194,6 +197,62 @@ def test_cost_components_are_not_reported_when_required_inputs_are_missing():
     assert report["costed_match_count"] == 0
     assert report["matched_observations"][0]["cost_breakdown_bps"]["total_estimated_spot_cost_bps"] is None
 
+
+
+def test_early_horizon_diagnostics_measure_15m_1h_and_4h_without_changing_original_target():
+    observation = {
+        "candidate_id": "early-horizon",
+        "candidate_name": "example",
+        "candidate_version": "1.0",
+        "pair": "XBT/USD",
+        "direction": "LONG",
+        "decision_ts": 1000,
+        "target_epoch": 1000 + 8 * 60 * 60,
+        "entry_mid_price": "100",
+        "entry_spread_bps": "2",
+        "taker_fee_bps": "2",
+    }
+    bars = [
+        bar(1000, "100"),
+        bar(1895, "100.5"),
+        bar(4595, "101"),
+        bar(15395, "102"),
+    ]
+    report = summarize_early_microstructure_horizons(
+        [observation], {"XBT/USD": bars}, {}, max_time_error_seconds=10,
+    )
+
+    assert report["status"] == "AVAILABLE"
+    assert report["horizon_role"] == (
+        "EARLY_SIGNAL_DIAGNOSTIC_NOT_REPLACEMENT_FOR_CONFIGURED_HOLDING_PERIOD"
+    )
+    assert report["horizons"]["15M"]["horizon_seconds"] == 900
+    assert report["horizons"]["1H"]["horizon_seconds"] == 3600
+    assert report["horizons"]["4H"]["horizon_seconds"] == 14400
+    assert report["horizons"]["15M"]["matched_observation_count"] == 1
+    assert report["horizons"]["1H"]["matched_observation_count"] == 1
+    assert report["horizons"]["4H"]["matched_observation_count"] == 1
+    assert report["horizons"]["15M"]["matured_cohort"]["matured_matched_count"] == 1
+    assert report["horizons"]["1H"]["matured_cohort"]["matured_matched_count"] == 1
+    assert report["horizons"]["4H"]["matured_cohort"]["matured_matched_count"] == 1
+    assert observation["target_epoch"] == 1000 + 8 * 60 * 60
+    assert report["actual_fills"] is False
+    assert report["portfolio_pnl"] is False
+    assert report["release_gate_eligible"] is False
+
+
+def test_early_horizon_diagnostics_keep_invalid_decisions_unmatched():
+    report = summarize_early_microstructure_horizons(
+        [{
+            "candidate_id": "bad-time", "pair": "XBT/USD", "direction": "LONG",
+            "decision_ts": "invalid", "entry_mid_price": "100",
+        }],
+        {"XBT/USD": [bar(2000)]}, {},
+    )
+    for horizon in ("15M", "1H", "4H"):
+        assert report["horizons"][horizon]["matched_observation_count"] == 0
+        assert report["horizons"][horizon]["unmatched_reasons"]["INVALID_TARGET_TIMESTAMP"] == 1
+    assert report["release_gate_eligible"] is False
 
 
 def test_mean_reversion_summary_splits_direction_and_recorded_regime_features():
