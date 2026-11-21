@@ -1,6 +1,6 @@
-## Aktueller Status — 0.1.69
+## Aktueller Status — 0.1.70
 
-**Version 0.1.69 ergänzt einen getrennten Produktions-Read-only-Zugang für Kraken Futures.** Futures-API-Key und Secret sind in Home Assistant separat von Spot-Credentials konfigurierbar; der Modus ist standardmäßig deaktiviert. Der REST-Client akzeptiert ausschließlich die fest codierten Umgebungen `demo` und `production_read_only` und bleibt auf eine GET-Allowlist ohne Order-, Cancel-, Transfer- oder Einstellungsänderungen beschränkt. Die neue Produktionsschnittstelle ist zunächst ein isolierter Read-only-Adapter; Runtime-Sync, persistente Futures-Snapshots und Reconciliation sind noch nicht Bestandteil dieser Version. Spot-Strategie und Spot-Orderpfad bleiben unverändert.
+**Version 0.1.70 integriert den produktiven Kraken-Futures-Read-only-Sync.** Vor Kontoabfragen werden die API-Key-Rechte über den offiziellen Futures-Endpunkt geprüft. Akzeptiert wird ausschließlich `general=READ_ONLY`; `transfer=FULL_ACCESS`, eine abweichende Key-ID oder unvollständige Berechtigungsdaten führen zum Abbruch. Bei erfolgreicher Prüfung liest die Runtime getrennt Futures-Accounts, offene Positionen/Orders, Fills, Leverage-Präferenzen, Instrumente und Ticker. Ergebnisse werden in einer eigenen append-only SQLite-Tabelle gespeichert und im AppLog über `FUTURES_READONLY_API_KEY_CHECK` und `FUTURES_READONLY_DATA_SYNC` zusammengefasst. Kein Futures-Order-, Cancel-, Transfer- oder Einstellungsendpunkt ist implementiert. Die Option `futures_readonly_enabled` bleibt standardmäßig **false**; erst nach bewusstem Aktivieren wird der Produktions-Read-only-Sync ausgeführt. Spot bleibt unverändert und die interne Live-Orderfreigabe bleibt false.
 
 ## Vorversion — 0.1.68
 
