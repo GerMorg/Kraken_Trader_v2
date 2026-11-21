@@ -73,3 +73,26 @@ def test_position_exit_policy_settings_are_clamped_and_non_finite_values_fail_sa
     # A malformed decimal follows the documented configured default.
     assert config.position_stop_loss_pct == Decimal("3.0")
     assert config.safe_summary()["position_take_profit_pct"] == "20"
+
+
+def test_futures_credentials_are_separate_and_redacted_from_safe_summary():
+    config = Settings.from_mapping({
+        "kraken_futures_api_key": "futures-key-do-not-log",
+        "kraken_futures_api_secret": "futures-secret-do-not-log",
+        "futures_readonly_enabled": True,
+    })
+    summary = config.safe_summary()
+    assert config.futures_api_key == "futures-key-do-not-log"
+    assert config.futures_api_secret == "futures-secret-do-not-log"
+    assert config.futures_readonly_enabled is True
+    assert summary["futures_credentials_present"] is True
+    assert summary["futures_readonly_enabled"] is True
+    assert "futures-key-do-not-log" not in str(summary)
+    assert "futures-secret-do-not-log" not in str(summary)
+
+
+def test_futures_readonly_is_disabled_without_explicit_configuration():
+    config = Settings()
+    assert config.futures_readonly_enabled is False
+    assert config.futures_api_key == ""
+    assert config.futures_api_secret == ""
