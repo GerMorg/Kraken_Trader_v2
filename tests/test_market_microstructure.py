@@ -360,6 +360,42 @@ def test_kraken_application_ping_pong_requires_matching_request_id():
         collector.persistence.close()
 
 
+
+def test_kraken_application_ping_pong_accepts_omitted_optional_success_field():
+    collector = MarketMicrostructureCollector(Persistence(":memory:"), enabled=False)
+    try:
+        request = collector._begin_application_ping()
+        assert collector.process_message({
+            "method": "pong",
+            "req_id": request["req_id"],
+            "time_in": "2026-11-21T17:00:00.000000Z",
+            "time_out": "2026-11-21T17:00:00.001000Z",
+        }) is True
+        status = collector.status()
+        assert status["application_ping_sent_count"] == 1
+        assert status["application_pong_received_count"] == 1
+        assert status["application_pong_without_success_count"] == 1
+        assert status["application_ping_rejected_count"] == 0
+        assert status["last_application_pong_success_field_present"] is False
+        assert status["last_application_ping_rtt_ms"] is not None
+        assert status["last_application_ping_error"] is None
+    finally:
+        collector.close()
+        collector.persistence.close()
+
+
+def test_reconnect_backoff_resets_only_after_a_stable_connection():
+    from app.market_microstructure import (
+        WS_STABLE_CONNECTION_RESET_SECONDS,
+        _reset_reconnect_backoff_after_stable_connection,
+    )
+
+    assert _reset_reconnect_backoff_after_stable_connection(8.0, 59.9) == 8.0
+    assert _reset_reconnect_backoff_after_stable_connection(
+        8.0, WS_STABLE_CONNECTION_RESET_SECONDS
+    ) == 1.0
+
+
 def test_kraken_application_ping_timeout_is_detected_without_control_ping():
     collector = MarketMicrostructureCollector(Persistence(":memory:"), enabled=False)
     try:
