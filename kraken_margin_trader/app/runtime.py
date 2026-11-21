@@ -2678,6 +2678,8 @@ class TraderRuntime:
                 "microstructure_application_ping_timeout_count": microstructure_status["application_ping_timeout_count"],
                 "microstructure_application_ping_rejected_count": microstructure_status["application_ping_rejected_count"],
                 "microstructure_application_ping_unmatched_pong_count": microstructure_status["application_ping_unmatched_pong_count"],
+                "microstructure_application_pong_without_success_count": microstructure_status["application_pong_without_success_count"],
+                "microstructure_last_application_pong_success_field_present": microstructure_status["last_application_pong_success_field_present"],
                 "microstructure_last_application_ping_rtt_ms": microstructure_status["last_application_ping_rtt_ms"],
                 "microstructure_last_application_ping_error": microstructure_status["last_application_ping_error"],
                 "microstructure_last_application_ping_response_epoch": microstructure_status["last_application_ping_response_epoch"],
