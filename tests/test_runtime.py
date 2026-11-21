@@ -1347,7 +1347,45 @@ def test_futures_readonly_runtime_checks_permissions_then_persists_separate_snap
 
         def get_accounts(self):
             self.calls.append("accounts")
-            return {"accounts": {"multiCollateral": {"balances": {"eur": "100", "usd": "0"}}}}
+            return {
+                "accounts": {
+                    "cash": {
+                        "balances": {"eur": "2.5", "usd": "10"},
+                        "type": "cashAccount",
+                    },
+                    "flex": {
+                        "currencies": {
+                            "EUR": {
+                                "quantity": "100",
+                                "value": "108",
+                                "collateral_value": "108",
+                                "available": "108",
+                                "haircut": "0",
+                                "conversion_spread": "0",
+                            },
+                            "USD": {
+                                "quantity": "25",
+                                "value": "25",
+                                "collateralValue": "25",
+                                "available": "25",
+                                "haircut": "0",
+                                "conversionSpread": "0",
+                            },
+                        },
+                        "balanceValue": "133",
+                        "portfolioValue": "133",
+                        "collateralValue": "133",
+                        "availableMargin": "133",
+                        "marginEquity": "133",
+                        "type": "multiCollateralMarginAccount",
+                    },
+                    "fi_xbtusd": {
+                        "balances": {"xbt": "0.02"},
+                        "currency": "xbt",
+                        "type": "marginAccount",
+                    },
+                }
+            }
 
         def get_open_positions(self):
             self.calls.append("open_positions")
@@ -1397,10 +1435,24 @@ def test_futures_readonly_runtime_checks_permissions_then_persists_separate_snap
     assert latest["general_permission"] == "READ_ONLY"
     assert latest["transfer_permission"] == "NO_ACCESS"
     assert latest["counts"]["open_positions"] == 0
+    assert latest["counts"]["account_wallet_count"] == 3
     assert latest["counts"]["collateral_currency_count"] == 2
+    assert latest["counts"]["funded_collateral_currency_count"] == 2
+    assert latest["counts"]["cash_currency_count"] == 2
+    assert latest["counts"]["single_collateral_account_count"] == 1
+    assert latest["counts"]["single_collateral_currency_count"] == 1
+    assert latest["counts"]["account_type_counts"] == {
+        "cashAccount": 1,
+        "multiCollateralMarginAccount": 1,
+        "marginAccount": 1,
+    }
     assert "account-uid-not-logged" not in str(latest["data"])
     assert "future-private-secret" not in str(latest)
     assert "future-public-key" not in str(latest)
+    assert latest["data"]["accounts"]["accounts"]["flex"]["currencies"]["EUR"]["quantity"] == "100"
+    assert '"collateral_currency_count":2' in audit.stream.getvalue()
+    assert '"cash_currency_count":2' in audit.stream.getvalue()
+    assert '"flex_available_margin_usd":"133"' in audit.stream.getvalue()
     assert "FUTURES_READONLY_DATA_SYNC" in audit.stream.getvalue()
     audit.close()
     db.close()
