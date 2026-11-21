@@ -46,6 +46,9 @@ def _bool(raw: Mapping[str, Any], key: str, default: bool) -> bool:
 class Settings:
     api_key: str = ""
     api_secret: str = ""
+    futures_api_key: str = ""
+    futures_api_secret: str = ""
+    futures_readonly_enabled: bool = False
     mode: str = "SHADOW"
     live_enabled: bool = False
     kill_switch: bool = True
@@ -99,6 +102,9 @@ class Settings:
         return cls(
             api_key=str(raw.get("kraken_api_key", "") or ""),
             api_secret=str(raw.get("kraken_api_secret", "") or ""),
+            futures_api_key=str(raw.get("kraken_futures_api_key", "") or ""),
+            futures_api_secret=str(raw.get("kraken_futures_api_secret", "") or ""),
+            futures_readonly_enabled=_bool(raw, "futures_readonly_enabled", False),
             mode=mode, live_enabled=_bool(raw, "live_enabled", False),
             kill_switch=_bool(raw, "kill_switch", True),
             validate_shadow_orders=_bool(raw, "validate_shadow_orders", False),
@@ -143,7 +149,10 @@ class Settings:
             "shadow_strategy_lab_enabled": self.shadow_strategy_lab_enabled,
             "microstructure_enabled": self.microstructure_enabled,
             "microstructure_max_symbols": self.microstructure_max_symbols,
-            "credentials_present": self.credentials_present, "cycle_interval_seconds": self.cycle_interval_seconds,
+            "credentials_present": self.credentials_present,
+            "futures_readonly_enabled": self.futures_readonly_enabled,
+            "futures_credentials_present": bool(self.futures_api_key.strip() and self.futures_api_secret.strip()),
+            "cycle_interval_seconds": self.cycle_interval_seconds,
             "position_take_profit_pct": str(self.position_take_profit_pct),
             "position_take_profit_fraction": str(self.position_take_profit_fraction),
             "position_stop_loss_pct": str(self.position_stop_loss_pct),
