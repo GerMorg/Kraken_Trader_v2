@@ -15,7 +15,7 @@ Ich möchte bewusst ein höheres Handelsrisiko eingehen, um höhere Gewinnchance
 
 Das Ziel ist eine möglichst hohe robuste, kostenbereinigte Nettorendite innerhalb eines ausdrücklich aggressiven, aber begrenzten Risikoprofils. Die Strategie soll Margin bevorzugt einsetzen, wenn die erwartete Nettorendite, die Risikoprüfung und die verfügbare Finanzierung dies rechtfertigen.
 
-Futures und Perpetuals bleiben vorerst ausgeschlossen. Sie dürfen später als eigene Erweiterung untersucht werden.
+**Scope-Erweiterung vom 21.11.2026:** Die bestehende Spot-/Spot-Margin-Version bleibt eine eigenständige Produktstrecke. Kraken Derivatives EEA darf als spätere, separat entwickelte Erweiterung untersucht und integriert werden. Futures/Perpetuals dürfen niemals durch bloßes Ergänzen eines Hebelparameters in die Spot-Margin-API, Spot-Instrumentmodelle, Spot-Order-State-Machine oder Spot-Kostenrechnung eingebaut werden. Vor produktiver Nutzung sind eigener API-Client und eigene Credentials, das EEA-Multi-Collateral-Konto- und Marginmodell, Funding-/Fee-Buchhaltung, Instrument-/Positions-/Order-Reconciliation, Börsenschutzorders, persistente Futures-Identitäten sowie vollständige Demo- und Risikotests erforderlich. Der Futures-Bereich startet standardmäßig deaktiviert und ohne Live-Orderfreigabe.
 
 Die App soll dauerhaft auf Home Assistant OS laufen, ohne grafische Oberfläche und ohne HA-Sensoren. Der operative Zustand muss allein anhand strukturierter, verständlicher Logs im Home-Assistant-App-Log und einer persistenten Ereignishistorie nachvollziehbar sein.
 
@@ -87,7 +87,7 @@ Die erste Version handelt ausschließlich Kryptowährungen auf Kraken Spot und K
 - Alle regulär ausgewählten Märkte müssen ein echtes USD-Quote-Paar sein, zum Beispiel `BTC/USD`.
 - Das Instrumentuniversum wird dynamisch aus den aktuellen Kraken-Metadaten ermittelt.
 - Keine EUR-Quote-Paare und keine beliebigen anderen Quote-Währungen im produktiven Handelsuniversum.
-- Keine XStocks, tokenisierten Aktien, Futures oder Perpetuals.
+- Keine XStocks, tokenisierten Aktien, Futures oder Perpetuals im Spot-/Spot-Margin-Handelsuniversum. Kraken Derivatives darf ausschließlich über die separat spezifizierte Produktstrecke gemäß docs/DERIVATIVES_RESEARCH_EXTENSION.md entwickelt werden.
 - Kein HFT, kein erzwungener Umsatz und keine zweite, unabhängig handelnde Tactical-Strategie.
 - Keine manuell zu pflegende Coin-Whitelist als Voraussetzung für die Teilnahme eines neuen, geeigneten Marktes.
 
