@@ -95,6 +95,8 @@ def test_book_updates_trade_aggregation_and_minute_persistence():
     assert bar["book_update_count"] == 1
     assert bar["ofi_l1_base"] == "5"
     assert bar["quality_status"] == "PARTIAL"
+    assert bar["book_mark_eligible"] is True
+    assert bar["book_mark_quality"] == "CHECKSUM_VERIFIED_POINT_MARK"
     assert bar["actual_fills"] is False
     assert bar["order_creation_allowed"] is False
     db.close()
@@ -120,6 +122,11 @@ def test_checksum_mismatch_invalidates_book_and_requests_clean_resubscription():
     status = collector.status()
     assert status["checksum_failures"] == 1
     assert status["last_error_type"] == "BOOK_CHECKSUM_MISMATCH"
+    assert collector.flush_due(1_800_000_100) == 1
+    saved = db.microstructure_bars("ETH/USD")[0]
+    assert saved["quality_status"] == "PARTIAL"
+    assert saved["book_mark_eligible"] is False
+    assert "BOOK_NOT_CHECKSUM_VERIFIED" in saved["book_mark_ineligible_reasons"]
     db.close()
 
 
@@ -305,7 +312,13 @@ def test_minute_bar_is_partial_without_minimum_book_coverage():
     }
     assert collector.process_message(snapshot) is True
     assert collector.flush_due(1_800_000_100) == 1
-    assert db.microstructure_bars("ETH/USD")[0]["quality_status"] == "PARTIAL"
+    saved = db.microstructure_bars("ETH/USD")[0]
+    assert saved["quality_status"] == "PARTIAL"
+    assert saved["book_mark_eligible"] is True
+    quality = db.microstructure_quality_summary(now_epoch=1_800_000_100)
+    assert quality["recent_usable_valid_bar_count"] == 0
+    assert quality["recent_usable_book_mark_count"] == 1
+    assert quality["by_pair"]["ETH/USD"]["recent_usable_book_mark_count"] == 1
     db.close()
 
 

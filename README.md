@@ -1,4 +1,8 @@
-## Aktueller Status — 0.1.71
+## Aktueller Status — 0.1.72
+
+**Version 0.1.72 trennt checksum-geprüfte Book-Marken von vollständigen Mikrostruktur-Minuten.** Ein einzelnes gültiges Book-Event darf als zeitgestempelter Midprice-Messpunkt in die Forward-Mark-Auswertung eingehen, sofern Book-Checksum, Frische, Spread, Midprice und Verbindungsevidenz stimmen. Eine solche Marke stuft die zugehörige Minute ausdrücklich nicht zu `VALID` hoch: Die bisherige Multi-Sample-Anforderung für vollständige Feature-Minuten bleibt unverändert. Trade-ID-Lücken werden getrennt von der Gültigkeit einer Book-Marke behandelt; Book-Fehler, Checksum-Probleme und Connection-Gaps bleiben Ausschlussgründe. Das AppLog weist die Anzahl nutzbarer Point-in-Time-Book-Marken getrennt von vollständigen `VALID`-Minuten aus. Diese Marken bleiben Midprice-Diagnostik, keine ausführbaren Fills oder Portfolio-PnL. Futures bleibt Read-only; Spot-SHADOW und die interne Live-Order-Sperre bleiben unverändert.
+
+## Vorversion — 0.1.71
 
 **Version 0.1.71 korrigiert die Auswertung der Kraken-Futures-Accountantwort.** Die Multi-Collateral-Walletstruktur wird anhand von `accounts.flex.currencies` gelesen; `accounts.cash.balances` und Single-Collateral-Margin-Wallets werden ausdrücklich getrennt ausgewiesen. Das AppLog enthält Schema-Status, Wallet-Typen, Kollateralwährungen, finanzierte Währungen, EUR/USD-Bestände des Flex-Wallets sowie die von Kraken gelieferten Margin-/Kollateralwerte. Cash-/Holding-Bestände werden niemals als Futures-Margin addiert. Version 0.1.70 ergänzt weiterhin den produktiven, vor privaten Kontoabfragen rechtegeprüften Futures-Read-only-Sync mit separater Snapshot-Persistenz. Es existieren keine Futures-Order-, Cancel-, Transfer- oder Einstellungsänderungsendpunkte; `futures_readonly_enabled` bleibt standardmäßig **false** und Spot bleibt unverändert.
 

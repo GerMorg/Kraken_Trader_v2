@@ -3036,6 +3036,7 @@ class TraderRuntime:
                 "microstructure_persisted_minute_bars": self.persistence.microstructure_bar_count(),
                 "microstructure_valid_minute_bars": microstructure_quality["status_counts"]["VALID"],
                 "microstructure_recent_usable_valid_minute_bars": microstructure_quality["recent_usable_valid_bar_count"],
+                "microstructure_recent_usable_book_marks": microstructure_quality["recent_usable_book_mark_count"],
                 "microstructure_partial_minute_bars": microstructure_quality["status_counts"]["PARTIAL"],
                 "microstructure_recent_legacy_unqualified_valid_bars": microstructure_quality["recent_legacy_or_unqualified_valid_bar_count"],
                 "microstructure_recent_valid_minute_bars": microstructure_quality["recent_status_counts"]["VALID"],
