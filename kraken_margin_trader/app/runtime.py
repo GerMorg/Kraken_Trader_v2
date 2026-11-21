@@ -1059,6 +1059,7 @@ class TraderRuntime:
         final_status = result_status if persisted else "PERSISTENCE_FAILED"
         summary = {
             "status": final_status,
+            "account_status": account_summary["account_schema_status"],
             "snapshot_id": snapshot_id if persisted else None,
             "endpoint_error_count": endpoint_error_count,
         }
@@ -1072,6 +1073,7 @@ class TraderRuntime:
             "transfer_permission": transfer_permission,
             "endpoint_status": endpoint_status,
             "counts": counts,
+            **account_summary,
             "endpoint_error_count": endpoint_error_count,
             "persistence_succeeded": persisted,
         })
