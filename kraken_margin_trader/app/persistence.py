@@ -1056,6 +1056,32 @@ class Persistence:
                 raise ValueError("MICROSTRUCTURE_COUNT_INVALID:" + field) from exc
             if value < 0:
                 raise ValueError("MICROSTRUCTURE_COUNT_INVALID:" + field)
+        if "book_mark_eligible" in bar and not isinstance(bar.get("book_mark_eligible"), bool):
+            raise ValueError("MICROSTRUCTURE_BOOK_MARK_ELIGIBILITY_INVALID")
+        if bar.get("book_mark_eligible") is True:
+            try:
+                first_mark_ts = int(bar.get("first_book_event_ts", 0))
+                last_mark_ts = int(bar.get("last_book_event_ts", 0))
+                mark_samples = int(bar.get("book_sample_count", 0))
+                mark_checks = int(bar.get("checksum_checks", 0))
+                mark_failures = int(bar.get("checksum_failures", 0))
+                mark_gaps = int(bar.get("connection_gap_count", 0))
+                mark_flags = bar.get("quality_flags", [])
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("MICROSTRUCTURE_BOOK_MARK_EVIDENCE_INVALID") from exc
+            if (
+                mark_samples < 1 or first_mark_ts <= 0 or last_mark_ts < first_mark_ts
+                or mark_checks < 1 or mark_failures != 0 or mark_gaps != 0
+                or not isinstance(mark_flags, list)
+                or set(mark_flags) & {
+                    "INVALID_BOOK_SNAPSHOT", "UPDATE_WITHOUT_VALID_SNAPSHOT",
+                    "INVALID_BOOK_UPDATE", "CROSSED_OR_EMPTY_BOOK",
+                    "BOOK_CHECKSUM_MISSING", "BOOK_CHECKSUM_INVALID",
+                    "BOOK_CHECKSUM_MISMATCH", "CONNECTION_GAP",
+                }
+                or bar.get("midprice_usd") is None or bar.get("spread_bps") is None
+            ):
+                raise ValueError("MICROSTRUCTURE_BOOK_MARK_EVIDENCE_INVALID")
         for field in ("first_trade_ts", "last_trade_ts", "first_book_event_ts", "last_book_event_ts"):
             value = bar.get(field)
             if value is not None:
