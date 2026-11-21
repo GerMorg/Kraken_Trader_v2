@@ -36,26 +36,60 @@ def _mean(values: Sequence[Decimal]) -> str | None:
 
 
 def _mark(row: dict[str, Any]) -> tuple[int, Decimal, Decimal | None] | None:
-    if str(row.get("quality_status", "")).upper() != "VALID":
+    # New rows carry an explicit point-mark contract. A single checksum-verified
+    # book event is enough for a midpoint mark, but not for a VALID minute feature bar.
+    explicit_mark_contract = "book_mark_eligible" in row
+    if explicit_mark_contract:
+        if row.get("book_mark_eligible") is not True:
+            return None
+    elif str(row.get("quality_status", "")).upper() != "VALID":
+        # Backward compatibility: old rows are accepted only under the former
+        # strict multi-sample VALID rule. Legacy PARTIAL rows remain excluded.
         return None
     try:
         first = int(row.get("first_book_event_ts", 0))
         last = int(row.get("last_book_event_ts", 0))
-        valid = (
-            int(row.get("book_sample_count", 0)) >= 2
-            and first > 0
-            and last - first >= 10
-            and int(row.get("checksum_checks", 0)) > 0
-            and int(row.get("checksum_failures", 0)) == 0
-            and int(row.get("trade_id_gaps", 0)) == 0
-            and int(row.get("connection_gap_count", 0)) == 0
-            and not row.get("quality_flags")
-        )
+        samples = int(row.get("book_sample_count", 0))
+        checksum_checks = int(row.get("checksum_checks", 0))
+        checksum_failures = int(row.get("checksum_failures", 0))
+        connection_gaps = int(row.get("connection_gap_count", 0))
+        if explicit_mark_contract:
+            blocking_flags = {
+                "INVALID_BOOK_SNAPSHOT",
+                "UPDATE_WITHOUT_VALID_SNAPSHOT",
+                "INVALID_BOOK_UPDATE",
+                "CROSSED_OR_EMPTY_BOOK",
+                "BOOK_CHECKSUM_MISSING",
+                "BOOK_CHECKSUM_INVALID",
+                "BOOK_CHECKSUM_MISMATCH",
+                "CONNECTION_GAP",
+            }
+            flags = row.get("quality_flags", [])
+            valid = (
+                samples >= 1
+                and first > 0
+                and last >= first
+                and checksum_checks > 0
+                and checksum_failures == 0
+                and connection_gaps == 0
+                and not (set(flags) & blocking_flags if isinstance(flags, (list, tuple, set)) else True)
+            )
+        else:
+            valid = (
+                samples >= 2
+                and first > 0
+                and last - first >= 10
+                and checksum_checks > 0
+                and checksum_failures == 0
+                and int(row.get("trade_id_gaps", 0)) == 0
+                and connection_gaps == 0
+                and not row.get("quality_flags")
+            )
     except (TypeError, ValueError, OverflowError):
         return None
     mid = _d(row.get("midprice_usd"))
     spread = _d(row.get("spread_bps"))
-    if not valid or mid is None or mid <= 0 or (spread is not None and spread < 0):
+    if not valid or mid is None or mid <= 0 or spread is None or spread < 0:
         return None
     return last, mid, spread
 
