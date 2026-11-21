@@ -77,7 +77,8 @@ def build_futures_authent(
     """Create Kraken Futures REST v3 Authent using the documented REST-v3 scheme.
 
     post_data must be the exact URL-encoded query/body string sent with the request.
-    The /derivatives prefix is omitted from the endpoint path for signing.
+    The /derivatives prefix is omitted for derivatives API paths; the API-key
+    metadata endpoint is signed with its complete /api/auth/v1 path.
     """
     derivative_path = endpoint_path.startswith(API_PREFIX + "/")
     key_check_path = endpoint_path.startswith("/api/auth/v1/api-keys/v3/")
@@ -242,7 +243,7 @@ class FuturesAPIClient:
     ) -> dict[str, Any]:
         headers = {
             "Accept": "application/json",
-            "User-Agent": "KrakenTraderV2-FuturesReadOnly/0.1.69",
+            "User-Agent": "KrakenTraderV2-FuturesReadOnly/0.1.70",
         }
         if authenticated:
             if not self.credentials_present:
