@@ -232,3 +232,22 @@ Jeder erfolgreiche Account-Read-Zyklus wird mit Zeitstempel und Endpunktstatus i
 Der Stand ist weiterhin **Read-only**: Es existieren keine Futures-Sendorder-, Cancel-, Transfer-, Leverage-Änderungs- oder Stop-Änderungsfunktionen. Der initiale Snapshot ist noch keine vollständige historische Futures-Reconciliation. Funding-Historie, Account-Ledger-Paginierung, EUR-Bewertung, Futures-Steuerereignisse und unabhängige Wallet-/Fill-/Positionsabgleiche folgen in eigenen Entwicklungsstufen.
 
 Offizielle Referenz für den API-Key-Check: https://docs.kraken.com/api/docs/futures-api/auth/check-v-3-api-key
+
+
+## 13. Account-Response-Auswertung — Version 0.1.71
+
+Die Futures-REST-Antwort `GET /accounts` liefert unter `accounts` eine Map mit getrennten Wallet-Klassen. Der Multi-Collateral-Account ist in der aktuellen REST-Struktur der Eintrag `flex` mit `type=multiCollateralMarginAccount`; dessen unterstützte/gelistete Kollateralwährungen stehen unter `flex.currencies`. Der `cash`-Eintrag ist ein Holding-/Cash-Wallet mit `cash.balances`; Single-Collateral-Konten sind eigene Einträge vom Typ `marginAccount`.
+
+Die frühere Auswertung suchte irrtümlich nach `accounts.multiCollateral.balances`. Das konnte einen Null-Zähler liefern, obwohl die REST-Antwort ein Flex-Wallet enthielt. Version 0.1.71 wertet deshalb die REST-Walletstruktur aus und weist folgende Dinge getrennt aus:
+- Anzahl und Typen der von Kraken gelieferten Wallet-Einträge;
+- Flex-Kollateralwährungen sowie davon Währungen mit positiver Menge;
+- Flex-Währungsmenge, USD-Wert, Kollateralwert, verfügbare Margin, Haircut und Conversion Spread, soweit Kraken diese Felder liefert;
+- Flex-Account-Metriken wie Balance Value, Portfolio Value, Collateral Value, Margin Equity und Available Margin;
+- Cash-/Holding-Währungen und deren Salden;
+- Single-Collateral-Wallets und deren Balance-Einträge.
+
+Cash-/Holding-Salden und Single-Collateral-Konten werden nicht in die Flex-Kollateralwerte eingerechnet. Ein gelisteter Währungseintrag ist außerdem nicht automatisch ein finanzierter Saldo: `collateral_currency_count` zählt die Einträge, `funded_collateral_currency_count` nur Einträge mit positiver Quantity. Ein fehlender oder leerer Flex-Account wird ausdrücklich als eigener Schema-Status gemeldet; er wird nicht als erfolgreicher Kontostand von null interpretiert.
+
+Die Originalantwort bleibt im isolierten Futures-Snapshot gespeichert. Das AppLog zeigt nur die strukturierten Wallet-/Margin-Diagnosen und keine API-Keys, Account-UIDs oder IIBAN-Daten.
+
+Referenz für die REST-Walletbeispiele: https://python-kraken-sdk.readthedocs.io/en/stable/05_futures/rest.html
