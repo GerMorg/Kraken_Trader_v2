@@ -89,3 +89,8 @@ Die bestehende Implementierung in app/kraken.py, app/market.py, app/risk.py und 
 Der neue Produktbereich muss mindestens einen eigenen FuturesClient, getrennte API-Credentials und Authentifizierung, Futures-Instrument-/Wallet-/Position-/Order-/Fill-/Funding-Modelle, eigene Risiko- und Order-Authority-Gates sowie getrennte persistente Produktidentitäten erhalten. Gemeinsame Hilfsfunktionen sind nur zulässig, wenn Wertebereich, Einheiten, API-Semantik und Fehlerverhalten nachweislich übereinstimmen. Spot-Wallet-Bestände dürfen nie als Futures-Kollateral interpretiert werden.
 
 Bis zu einer vollständigen Demo-Integration bleibt die Erweiterung nicht aktiv. Die bestehende Spot-/Spot-Margin-Live-Sperre wird dadurch nicht verändert oder umgangen. Der Futures-Live-Schalter ist separat und bleibt ebenfalls code-seitig gesperrt.
+
+
+## Futures-Read-only-Adapter (Entwicklungsstand)
+
+Der separate Modulpfad app/futures_api.py stellt den ersten read-only Kraken-Derivatives-REST-Client bereit. In dieser Stufe ist der Host fest auf die öffentliche Demo gepinnt; zulässig sind ausschließlich GET-Anfragen zu öffentlichen Markt-/Instrumentdaten und authentifizierten Account-Lesedaten. Es gibt keine Send-/Cancel-/Transfer- oder Einstellungsänderungsfunktion und keine Runtime-Aufrufstelle. Das Modul wird zunächst isoliert mit deterministischen Transport-Fixtures getestet. Es verändert keine Spot-Tabellen, keine bestehende Order Authority und keine Live-Gates.
