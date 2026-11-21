@@ -11,6 +11,7 @@ from app.futures_api import (
     DEMO_BASE_URL,
     FuturesAPIClient,
     FuturesAPIError,
+    _NoRedirectHandler,
     build_futures_authent,
 )
 
@@ -257,3 +258,17 @@ def test_all_private_read_endpoints_are_authenticated_and_schema_checked(
     assert request.full_url == DEMO_BASE_URL + "/derivatives/api/v3" + path_suffix
     assert request.get_header("Apikey") == TEST_KEY
     assert request.get_header("Authent")
+
+
+
+def test_http_redirect_handler_refuses_cross_host_redirects() -> None:
+    handler = _NoRedirectHandler()
+    request = Request(DEMO_BASE_URL + "/derivatives/api/v3/accounts")
+    assert handler.redirect_request(
+        request,
+        None,
+        302,
+        "Found",
+        {},
+        "https://untrusted.example/collect",
+    ) is None
