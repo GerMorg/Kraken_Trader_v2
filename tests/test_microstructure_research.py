@@ -72,6 +72,34 @@ def test_target_without_a_prior_qualified_book_mark_is_not_matched():
     assert report["unmatched_reasons"]["TARGET_PRECEDES_FIRST_QUALIFIED_BOOK_MARK"] == 1
 
 
+def test_explicit_checksum_verified_point_mark_can_be_partial_without_promoting_feature_bar():
+    partial_point_mark = {
+        **bar(2000),
+        "quality_status": "PARTIAL",
+        "book_mark_eligible": True,
+        "book_sample_count": 1,
+        "first_book_event_ts": 2000,
+        "last_book_event_ts": 2000,
+        "checksum_checks": 1,
+        "trade_id_gaps": 2,
+        "quality_flags": ["TRADE_ID_BASELINE_UNAVAILABLE", "TRADE_ID_GAP"],
+    }
+    report = match_microstructure_target_horizons(
+        [{
+            "candidate_id": "point-mark", "pair": "XBT/USD", "direction": "LONG",
+            "decision_ts": 1000, "target_epoch": 2000, "entry_mid_price": "100",
+            "entry_spread_bps": "2", "taker_fee_bps": "2",
+        }],
+        {"XBT/USD": [partial_point_mark]}, {},
+        max_time_error_seconds=1,
+    )
+    assert report["matched_observation_count"] == 1
+    assert report["matched_observations"][0]["mark_event_ts"] == 2000
+    assert report["matched_observations"][0]["quality_status"] == "PARTIAL"
+    assert report["actual_fills"] is False
+    assert report["release_gate_eligible"] is False
+
+
 def test_legacy_partial_and_distant_book_marks_are_rejected():
     legacy = {"quality_status": "VALID", "midprice_usd": "100", "last_book_event_ts": 2000}
     partial = {**bar(2000), "quality_status": "PARTIAL"}
