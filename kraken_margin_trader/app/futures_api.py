@@ -85,7 +85,7 @@ def build_futures_authent(
     try:
         secret = base64.b64decode(api_secret.encode("ascii"), validate=True)
     except (binascii.Error, UnicodeEncodeError, ValueError) as exc:
-        raise ValueError("FUTURES_API_SECRET_INVALID") from exc
+        raise ValueError("FUTURES_API_SECRET_INVALID") from None
     if not secret:
         raise ValueError("FUTURES_API_SECRET_INVALID")
 
@@ -123,7 +123,7 @@ class FuturesAPIClient:
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         transport: Transport | None = None,
     ) -> None:
-        if environment.strip().lower() != "demo":
+        if not isinstance(environment, str) or environment.strip().lower() != "demo":
             raise ValueError("FUTURES_PRODUCTION_ENVIRONMENT_NOT_ENABLED")
         if not math.isfinite(timeout_seconds) or not 1.0 <= timeout_seconds <= 30.0:
             raise ValueError("FUTURES_TIMEOUT_OUT_OF_RANGE")
@@ -211,7 +211,7 @@ class FuturesAPIClient:
                     post_data=query_string,
                 )
             except ValueError as exc:
-                raise FuturesAPIError("FUTURES_AUTH_CONFIGURATION_INVALID") from exc
+                raise FuturesAPIError("FUTURES_AUTH_CONFIGURATION_INVALID") from None
             headers["APIKey"] = self._api_key
             headers["Authent"] = authent
 
@@ -222,11 +222,11 @@ class FuturesAPIClient:
         try:
             status_code, raw = self._transport(request, self._timeout_seconds)
         except (TimeoutError, URLError, OSError) as exc:
-            raise FuturesAPIError("FUTURES_NETWORK_ERROR") from exc
+            raise FuturesAPIError("FUTURES_NETWORK_ERROR") from None
         except Exception as exc:
             # Injected transports and platform URL handlers are not trusted to expose
             # raw exception text; it may contain request metadata.
-            raise FuturesAPIError("FUTURES_TRANSPORT_ERROR") from exc
+            raise FuturesAPIError("FUTURES_TRANSPORT_ERROR") from None
 
         if len(raw) > MAX_RESPONSE_BYTES:
             raise FuturesAPIError("FUTURES_RESPONSE_TOO_LARGE")
