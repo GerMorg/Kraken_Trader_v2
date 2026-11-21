@@ -229,8 +229,7 @@ class MarketMicrostructureCollector:
         if len(parts) != 2:
             return normalized
         base, quote = parts
-        if base == "XBT":
-            base = "BTC"
+        base = {"XBT": "BTC", "XDG": "DOGE"}.get(base, base)
         return f"{base}/{quote}"
 
     def _internal_symbol(self, ws_symbol: str) -> str:
@@ -241,6 +240,8 @@ class MarketMicrostructureCollector:
             return mapped
         if normalized.startswith("BTC/"):
             return "XBT/" + normalized.split("/", 1)[1]
+        if normalized.startswith("DOGE/"):
+            return "XDG/" + normalized.split("/", 1)[1]
         return normalized
 
     def _refresh_subscription_metrics_locked(self) -> None:
