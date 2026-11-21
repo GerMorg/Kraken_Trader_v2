@@ -801,6 +801,8 @@ def test_runtime_probes_history_when_key_metadata_is_missing_and_keeps_position_
     ]
     assert cycle_summaries
     assert cycle_summaries[-1]["payload"]["internal_live_release"] is False
+    assert cycle_summaries[-1]["payload"]["microstructure_application_pong_without_success_count"] == 0
+    assert cycle_summaries[-1]["payload"]["microstructure_last_application_pong_success_field_present"] is None
     audit.close()
     db.close()
 
