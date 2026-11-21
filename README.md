@@ -1,4 +1,8 @@
-## Aktueller Status — 0.1.68
+## Aktueller Status — 0.1.69
+
+**Version 0.1.69 ergänzt einen getrennten Produktions-Read-only-Zugang für Kraken Futures.** Futures-API-Key und Secret sind in Home Assistant separat von Spot-Credentials konfigurierbar; der Modus ist standardmäßig deaktiviert. Der REST-Client akzeptiert ausschließlich die fest codierten Umgebungen `demo` und `production_read_only` und bleibt auf eine GET-Allowlist ohne Order-, Cancel-, Transfer- oder Einstellungsänderungen beschränkt. Die neue Produktionsschnittstelle ist zunächst ein isolierter Read-only-Adapter; Runtime-Sync, persistente Futures-Snapshots und Reconciliation sind noch nicht Bestandteil dieser Version. Spot-Strategie und Spot-Orderpfad bleiben unverändert.
+
+## Vorversion — 0.1.68
 
 **Version 0.1.68 korrigiert die Kraken-WS-v2-Pong-Auswertung: Eine passende Antwort mit `req_id` wird auch dann als erfolgreich erkannt, wenn das optionale Feld `success` nicht enthalten ist und kein `error` gemeldet wird. Explizite Ablehnungen bleiben verbindungsfehlerhaft. Der exponentielle Reconnect-Backoff wird erst nach mindestens 60 Sekunden stabiler Verbindung zurückgesetzt, nicht bereits nach Subscription-Bestätigungen. Zusätzlich wird das REST-Symbol `XDG/USD` für WS v2 auf `DOGE/USD` normalisiert. Version 0.1.66 korrigiert zusätzlich die TSM-Mikrostruktur-Kohortenquote und enthält die eng begrenzten Recovery-Prüfungen. Strategie, Gebühren-/Risikoannahmen und Order Authority bleiben unverändert; SHADOW und die interne Live-Order-Sperre bleiben aktiv.**
 
