@@ -277,3 +277,51 @@ def test_http_redirect_handler_refuses_cross_host_redirects() -> None:
         {},
         "https://untrusted.example/collect",
     ) is None
+
+
+def test_production_api_key_check_uses_documented_auth_endpoint_and_validates_permissions() -> None:
+    transport = FakeTransport({
+        "apiKey": TEST_KEY,
+        "accountUid": "00000000-0000-0000-0000-000000000001",
+        "permissions": {"general": "READ_ONLY", "transfer": "NO_ACCESS"},
+        "allowedCidrBlocks": [],
+    })
+    client = FuturesAPIClient(
+        api_key=TEST_KEY,
+        api_secret=TEST_SECRET,
+        environment="production_read_only",
+        transport=transport,
+    )
+
+    result = client.get_api_key_info()
+
+    request = transport.requests[0]
+    assert request.full_url == "https://futures.kraken.com/api/auth/v1/api-keys/v3/check"
+    assert request.get_method() == "GET"
+    assert request.get_header("Apikey") == TEST_KEY
+    assert request.get_header("Authent") == build_futures_authent(
+        TEST_SECRET, "/api/auth/v1/api-keys/v3/check"
+    )
+    assert result["permissions"] == {"general": "READ_ONLY", "transfer": "NO_ACCESS"}
+
+
+def test_api_key_check_is_not_available_on_demo_environment() -> None:
+    client = FuturesAPIClient(api_key=TEST_KEY, api_secret=TEST_SECRET, environment="demo")
+    with pytest.raises(FuturesAPIError, match="FUTURES_API_KEY_CHECK_PRODUCTION_ONLY"):
+        client.get_api_key_info()
+
+
+def test_api_key_check_rejects_missing_permissions_schema() -> None:
+    transport = FakeTransport({
+        "apiKey": TEST_KEY,
+        "accountUid": "00000000-0000-0000-0000-000000000001",
+        "permissions": {"general": "READ_ONLY"},
+    })
+    client = FuturesAPIClient(
+        api_key=TEST_KEY,
+        api_secret=TEST_SECRET,
+        environment="production_read_only",
+        transport=transport,
+    )
+    with pytest.raises(FuturesAPIError, match="FUTURES_RESPONSE_SCHEMA_INVALID"):
+        client.get_api_key_info()
