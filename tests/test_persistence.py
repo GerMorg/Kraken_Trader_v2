@@ -510,7 +510,7 @@ def test_multi_asset_research_runs_are_immutable_idempotent_and_reviewable():
     schema_version = db.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
-    assert schema_version == "13"
+    assert schema_version == "14"
     db.close()
 
 
@@ -619,3 +619,51 @@ def test_additive_depth_migration_preserves_existing_multi_asset_rows(tmp_path):
     ).fetchone()["value"]
     assert schema_version == "13"
     migrated.close()
+
+
+def test_futures_readonly_snapshot_is_separate_append_only_and_idempotent():
+    db = Persistence(":memory:")
+    snapshot = {
+        "snapshot_id": "futures-snapshot-1",
+        "captured_at": "2026-11-21T19:00:00+00:00",
+        "environment": "production_read_only",
+        "general_permission": "READ_ONLY",
+        "transfer_permission": "NO_ACCESS",
+        "result_status": "COMPLETE",
+        "counts": {"accounts": 1, "open_positions": 0},
+        "data": {
+            "api_key_permissions": {"general": "READ_ONLY", "transfer": "NO_ACCESS"},
+            "accounts": {"accounts": {"multiCollateral": {"balances": {"eur": "100"}}}},
+            "open_positions": {"openPositions": []},
+        },
+    }
+
+    assert db.record_futures_readonly_snapshot(snapshot) is True
+    assert db.record_futures_readonly_snapshot(snapshot) is False
+    latest = db.latest_futures_readonly_snapshot()
+    assert latest is not None
+    assert latest["snapshot_id"] == "futures-snapshot-1"
+    assert latest["data"]["open_positions"]["openPositions"] == []
+    assert db.connection.execute("SELECT COUNT(*) FROM futures_readonly_snapshots").fetchone()[0] == 1
+    db.close()
+
+
+@pytest.mark.parametrize(
+    ("general", "transfer"),
+    [("FULL_ACCESS", "NO_ACCESS"), ("READ_ONLY", "FULL_ACCESS")],
+)
+def test_futures_readonly_snapshot_rejects_mutation_capable_permissions(general, transfer):
+    db = Persistence(":memory:")
+    snapshot = {
+        "snapshot_id": "unsafe",
+        "captured_at": "2026-11-21T19:00:00+00:00",
+        "environment": "production_read_only",
+        "general_permission": general,
+        "transfer_permission": transfer,
+        "result_status": "COMPLETE",
+        "counts": {},
+        "data": {},
+    }
+    with pytest.raises(ValueError, match="FUTURES_SNAPSHOT_PERMISSION_INVALID"):
+        db.record_futures_readonly_snapshot(snapshot)
+    db.close()
