@@ -200,3 +200,25 @@ def test_changed_report_is_emitted_in_full_and_wallet_mismatch_is_never_hidden(t
     assert console[1]["payload"]["limitations"] == ["changed"]
     assert console[2]["payload"]["asset_results"][0]["asset"] == "ZUSD"
     assert console[3]["payload"]["asset_results"][0]["difference"] == "1.25"
+
+
+def test_futures_api_credentials_are_redacted_from_all_audit_views():
+    stream = io.StringIO()
+    logger = AuditLogger(path="/unwritable-test-path/events.jsonl", stream=stream)
+    try:
+        record = logger.emit(
+            "FUTURES_SECRET_REDACTION_TEST",
+            kraken_futures_api_key="futures-public-secret-like-token",
+            kraken_futures_api_secret="futures-private-secret-like-token",
+            futures_api_key="another-public-secret",
+            futures_api_secret="another-private-secret",
+        )
+    finally:
+        logger.close()
+
+    rendered = stream.getvalue()
+    assert "futures-public-secret-like-token" not in rendered
+    assert "futures-private-secret-like-token" not in rendered
+    assert "another-public-secret" not in rendered
+    assert "another-private-secret" not in rendered
+    assert all(value == "[REDACTED]" for value in record["payload"].values())
