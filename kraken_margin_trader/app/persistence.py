@@ -1135,6 +1135,7 @@ class Persistence:
                 "recent_valid_count": 0,
                 "recent_partial_count": 0,
                 "recent_usable_valid_count": 0,
+                "recent_usable_book_mark_count": 0,
                 "recent_legacy_or_unqualified_valid_count": 0,
                 "first_minute_ts": int(row["first_minute_ts"]),
                 "latest_minute_ts": int(row["latest_minute_ts"]),
@@ -1168,6 +1169,7 @@ class Persistence:
 
         recent_valid = recent_partial = 0
         recent_usable = recent_legacy = 0
+        recent_usable_book_marks = 0
         for row in recent_rows:
             pair = str(row["pair"])
             status = str(row["quality_status"]).upper()
@@ -1177,6 +1179,36 @@ class Persistence:
                 payload = decoded if isinstance(decoded, dict) else {}
             except (json.JSONDecodeError, TypeError, ValueError):
                 payload = {}
+            if payload.get("book_mark_eligible") is True:
+                try:
+                    first_mark_ts = int(payload.get("first_book_event_ts", 0))
+                    last_mark_ts = int(payload.get("last_book_event_ts", 0))
+                    book_flags = payload.get("quality_flags", [])
+                    blocking_flags = {
+                        "INVALID_BOOK_SNAPSHOT",
+                        "UPDATE_WITHOUT_VALID_SNAPSHOT",
+                        "INVALID_BOOK_UPDATE",
+                        "CROSSED_OR_EMPTY_BOOK",
+                        "BOOK_CHECKSUM_MISSING",
+                        "BOOK_CHECKSUM_INVALID",
+                        "BOOK_CHECKSUM_MISMATCH",
+                        "CONNECTION_GAP",
+                    }
+                    mark_usable = (
+                        int(payload.get("book_sample_count", 0)) >= 1
+                        and first_mark_ts > 0
+                        and last_mark_ts >= first_mark_ts
+                        and int(payload.get("checksum_checks", 0)) > 0
+                        and int(payload.get("checksum_failures", 0)) == 0
+                        and int(payload.get("connection_gap_count", 0)) == 0
+                        and isinstance(book_flags, list)
+                        and not (set(book_flags) & blocking_flags)
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    mark_usable = False
+                if mark_usable:
+                    recent_usable_book_marks += 1
+                    summary["recent_usable_book_mark_count"] += 1
             if status == "VALID":
                 recent_valid += 1
                 summary["recent_valid_count"] += 1
@@ -1216,6 +1248,7 @@ class Persistence:
             "recent_window_minutes": recent_window_minutes,
             "recent_status_counts": {"VALID": recent_valid, "PARTIAL": recent_partial},
             "recent_usable_valid_bar_count": recent_usable,
+            "recent_usable_book_mark_count": recent_usable_book_marks,
             "recent_legacy_or_unqualified_valid_bar_count": recent_legacy,
             # Compatibility aliases are explicitly scoped to the recent window.
             "usable_valid_bar_count": recent_usable,
@@ -1224,6 +1257,7 @@ class Persistence:
             "pair_count": len(by_pair),
             "by_pair": by_pair,
             "quality_scope": "VALID_REQUIRES_V0_1_61_VERIFIED_MULTI_SAMPLE_COVERAGE",
+            "book_mark_quality_scope": "SEPARATE_CHECKSUM_VERIFIED_POINT_MARK; DOES_NOT_PROMOTE_PARTIAL_FEATURE_BARS",
         }
 
     def microstructure_bar_count(self, pair: str | None = None) -> int:
