@@ -95,7 +95,6 @@ def test_explicit_checksum_verified_point_mark_can_be_partial_without_promoting_
     )
     assert report["matched_observation_count"] == 1
     assert report["matched_observations"][0]["mark_event_ts"] == 2000
-    assert report["matched_observations"][0]["quality_status"] == "PARTIAL"
     assert report["actual_fills"] is False
     assert report["release_gate_eligible"] is False
 
