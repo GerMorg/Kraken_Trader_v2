@@ -18,6 +18,16 @@ MAX_BOOK_DEPTH = 10
 APPLICATION_PING_INTERVAL_SECONDS = 20
 APPLICATION_PING_TIMEOUT_SECONDS = 15
 WS_CLOSE_TIMEOUT_SECONDS = 10
+WS_STABLE_CONNECTION_RESET_SECONDS = 60
+
+
+def _reset_reconnect_backoff_after_stable_connection(
+    current_backoff: float, connection_duration_seconds: float
+) -> float:
+    """Reset exponential reconnect backoff only after a genuinely stable connection."""
+    if connection_duration_seconds >= WS_STABLE_CONNECTION_RESET_SECONDS:
+        return 1.0
+    return current_backoff
 
 
 def _websocket_error_details(exc: Exception) -> dict[str, Any]:
@@ -185,6 +195,8 @@ class MarketMicrostructureCollector:
             "application_ping_timeout_count": 0,
             "application_ping_rejected_count": 0,
             "application_ping_unmatched_pong_count": 0,
+            "application_pong_without_success_count": 0,
+            "last_application_pong_success_field_present": None,
             "last_application_ping_rtt_ms": None,
             "last_application_ping_error": None,
             "last_application_ping_response_epoch": None,
@@ -350,7 +362,7 @@ class MarketMicrostructureCollector:
             return True
 
     def _handle_application_pong(self, message: dict[str, Any]) -> bool:
-        """Accept only the pong matching the outstanding request id."""
+        """Accept a matching pong; Kraken documents success as an optional response field."""
         req_id = message.get("req_id")
         with self._lock:
             pending_id = self._pending_application_ping_id
@@ -366,13 +378,32 @@ class MarketMicrostructureCollector:
             self._pending_application_ping_id = None
             self._pending_application_ping_sent_monotonic = None
             self._metrics["last_application_ping_response_epoch"] = int(time.time())
-            if message.get("success") is not True:
-                error = str(message.get("error") or "KRAKEN_APPLICATION_PING_REJECTED")[:240]
+
+            success_present = "success" in message
+            success_value = message.get("success")
+            error_value = message.get("error")
+            self._metrics["last_application_pong_success_field_present"] = success_present
+            rejected = (
+                (success_present and success_value is not True)
+                or bool(error_value)
+            )
+            if rejected:
+                error = str(
+                    error_value
+                    or (
+                        "KRAKEN_APPLICATION_PING_REJECTED: success=false"
+                        if success_value is False
+                        else "KRAKEN_APPLICATION_PING_REJECTED: invalid success field"
+                    )
+                )[:240]
                 self._metrics["application_ping_rejected_count"] += 1
                 self._metrics["last_application_ping_error"] = error
                 self._metrics["last_error_type"] = "KRAKEN_APPLICATION_PING_REJECTED"
                 self._metrics["last_error_message"] = error
                 return False
+
+            if not success_present:
+                self._metrics["application_pong_without_success_count"] += 1
             self._metrics["application_pong_received_count"] += 1
             if sent_at is not None:
                 self._metrics["last_application_ping_rtt_ms"] = round(
@@ -880,6 +911,7 @@ class MarketMicrostructureCollector:
                         time.monotonic() + APPLICATION_PING_INTERVAL_SECONDS
                     )
                     subscription_started = time.monotonic()
+                    connection_started = time.monotonic()
                     websocket.send(json.dumps({
                         "method": "subscribe",
                         "params": {
@@ -907,6 +939,10 @@ class MarketMicrostructureCollector:
                             with self._lock:
                                 self._metrics["last_error_type"] = "SUBSCRIPTION_ACK_TIMEOUT"
                             break
+                        if pending_subscriptions == 0:
+                            backoff = _reset_reconnect_backoff_after_stable_connection(
+                                backoff, time.monotonic() - connection_started
+                            )
                         if self._symbols_changed.is_set():
                             self._symbols_changed.clear()
                             break
@@ -926,10 +962,6 @@ class MarketMicrostructureCollector:
                             continue
                         if not self.process_message(raw):
                             break
-                        with self._lock:
-                            pending_subscriptions = self._metrics["subscription_pending_count"]
-                        if pending_subscriptions == 0:
-                            backoff = 1.0
                         self.flush_due()
             except Exception as exc:
                 details = _websocket_error_details(exc)
