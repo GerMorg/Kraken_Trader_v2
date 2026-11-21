@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.68 — Isolierter Futures-Demo-Read-only-Client
+
+- Ergänzt einen separat implementierten Kraken Futures REST-v3-Client, fest auf die isolierte Demo-Umgebung gepinnt.
+- Read-only-Endpunkte: Instrumente, Ticker, Account-/Wallet-Snapshot, offene Positionen, offene Orders, Fills, Leverage-Präferenzen und historische Funding-Raten.
+- Implementiert die getrennte Futures-REST-v3-Authentifizierung und validiert die exakt signierte URL-Query.
+- Begrenzte Antwortgröße, Timeouts, keine automatischen Wiederholungen und redigierte Fehlercodes.
+- Keine Futures-Order-, Cancel-, Transfer- oder Konfigurationänderung; noch keine Runtime-Integration oder Live-Host-Unterstützung.
+- Keine Änderung an Spot-/Spot-Margin-Logik, Datenbankschema oder bestehendem Live-Release-Gate.
+
+
 ## Unreleased — Architekturfreigabe für Kraken Derivatives EEA
 
 - Beschließt eine eigenständige spätere Kraken-Derivatives-EEA-Erweiterung neben dem bestehenden Spot-/Spot-Margin-System. API, Konten, Margin-/Funding-Modell, Reconciliation und Order Authority bleiben getrennt.
