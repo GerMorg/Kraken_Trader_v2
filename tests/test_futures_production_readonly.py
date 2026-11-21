@@ -76,7 +76,7 @@ def test_demo_environment_remains_pinned_to_demo_host() -> None:
 
 @pytest.mark.parametrize("environment", ["production", "live", "https://evil.example"])
 def test_arbitrary_or_ambiguous_environments_are_rejected(environment: str) -> None:
-    with pytest.raises(ValueError, match="FUTURES_ENVIRONMENT_NOT_ALLOWED"):
+    with pytest.raises(ValueError, match="FUTURES_PRODUCTION_ENVIRONMENT_NOT_ENABLED"):
         FuturesAPIClient(environment=environment)
 
 
