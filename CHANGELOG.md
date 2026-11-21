@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — Architekturfreigabe für Kraken Derivatives EEA
+
+- Beschließt eine eigenständige spätere Kraken-Derivatives-EEA-Erweiterung neben dem bestehenden Spot-/Spot-Margin-System. API, Konten, Margin-/Funding-Modell, Reconciliation und Order Authority bleiben getrennt.
+- Dokumentiert aktuelle EEA-API-/Kollateral-/Funding-Anforderungen und die Demo-first-Entwicklungsreihenfolge in docs/DERIVATIVES_RESEARCH_EXTENSION.md.
+- Reine Spezifikationsänderung: keine Runtime-Funktion, keine HA-Konfigurationsoption, keine Datenbankmigration, keine Orderfreigabe und kein Versionssprung des installierbaren Add-ons.
+
 ## 0.1.67 — Kraken-Pong-Kompatibilität und stabiler Reconnect-Backoff
 
 - Akzeptiert Kraken-WS-v2-Pong-Antworten mit passender `req_id`, wenn das optionale Feld `success` fehlt und keine Fehlerantwort vorliegt. Ein explizites `success: false`, ein ungültiges `success`-Feld oder eine `error`-Antwort erzwingt weiterhin den Reconnect.
