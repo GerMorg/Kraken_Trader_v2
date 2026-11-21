@@ -30,7 +30,7 @@ Das Audit `kraken_trade_real/docs/AUDIT_2026-10-14.md` untersuchte insbesondere 
 
 ## Nicht übernehmen
 
-Das neue Projekt übernimmt keine Legacy-Lernengine, keinen News-/Gemini-Alpha-Zuschlag, keine Tactical-HFT-ähnliche Nebenstrategie, keine Futures- oder tokenisierte-Aktien-Unterstützung und keine implizite pauschale Margin-Finanzierungsrate.
+Das Spot-/Spot-Margin-Bestandssystem übernimmt keine Legacy-Lernengine, keinen News-/Gemini-Alpha-Zuschlag, keine Tactical-HFT-ähnliche Nebenstrategie und keine implizite pauschale Margin-Finanzierungsrate. Futures und tokenisierte Aktien gehören nicht in diese Spot-Ausführungsstrecke. Die am 21.11.2026 beschlossene Kraken-Derivatives-Erweiterung ist ein neues, getrenntes Produktmodul; sie darf keine Spot-Margin-API-, Wallet-, Kredit-, Gebühren- oder Positionsannahmen wiederverwenden, sofern deren Gleichheit nicht separat anhand aktueller Kraken-Dokumentation und Tests bewiesen ist.
 
 ## Zusätzliche Datenintegritätsprüfungen (16.10.2026)
 
@@ -49,3 +49,18 @@ Diese Änderungen sind Datenintegritäts-Härtungen, kein Nachweis für vollstä
 - Eine potenziell angenommene `AddOrder`-Anfrage mit unlesbarer HTTP-/JSON-Antwort, ungültiger Result-Struktur oder fehlender Transaktions-ID bleibt `UNKNOWN_RECONCILING`; sie wird nicht als sicher abgelehnt behandelt und nicht blind erneut gesendet.
 
 Diese Regressionen beweisen die jeweils geprüften Fehlerfälle; sie ersetzen weder einen vollständigen Neustart-/Crash-Recovery-Integrationstest noch den Konto-, Kredit-, USDC-, Transfer- und Gesamtportfolioabgleich. Das Source-Release-Gate bleibt geschlossen.
+
+
+## Scope-Erweiterung Kraken Derivatives EEA (21.11.2026)
+
+Die vorherige Nichtübernahme von Futures bleibt für das Spot-/Spot-Margin-System unverändert. Neu beschlossen ist eine eigenständige Kraken-Derivatives-EEA-Produktstrecke. Folgende Altprojektfehler sind für sie zusätzlich verbindliche Regressionsthemen:
+
+- **Produktgrenzen:** Spot und Derivatives haben getrennte Hosts, Authentifizierung, WebSocket-Protokolle, Symbolräume, Konten und Ausführungszustände. Eine gemeinsame Bezeichnung „Kraken“ ist kein Beleg für austauschbare API-Verträge.
+- **Order-Acknowledgement:** Ein HTTP/API-Ergebnis `result=success` beweist weder, dass die Futures-Order platziert wurde, noch dass sie gefüllt ist. `sendStatus.status`, Open Orders, Execution/Fills und Open Positions sind separat abzugleichen.
+- **Konten und Kollateral:** Das EEA-Multi-Collateral-Wallet ist nicht der Spot-Walletsaldo. EUR-Kollateral, USD-PnL-/Fee-Buchung, Haircuts, Konvertierungen und mögliche Belastungen für ungedeckte USD-Verluste müssen einzeln und zeitbezogen erfasst werden.
+- **Margin-Modell:** Initial-/Maintenance-Margin, Margin-Klasse, Positionsgrößenstaffel, Retail-Margin-Level, Cross-/Isolated-Modus und der effektive Hebel werden dynamisch je Kontrakt und Konto gelesen. Kein statischer globaler Kraken-Hebel wird als verfügbar angenommen.
+- **Funding:** Perpetual-Funding ist eine eigenständige, zeitabhängige Kosten-/Ertragskomponente. Historische Raten, aktuelle Position-Funding-Werte und tatsächliche Wallet-/Account-Ledger-Buchungen dürfen nicht doppelt gezählt oder als Null angenommen werden.
+- **Schutz und Recovery:** Börsenseitige Stop-/Reduce-only-Orders müssen nach Anlage und Neustart verifiziert werden. Der Futures-Dead-Man's-Switch storniert offene Orders, ersetzt aber keinen positionsbezogenen Stop und schließt keine Position.
+- **Datenisolation:** Futures-Orders, Fills, Positionen, Funding, Gebühren und Kontobewegungen erhalten explizite Produkt-/Account-Identitäten. Additive, idempotente Datenbankmigrationen; kein Reset bestehender Spot-Daten.
+
+Dieses Addendum ist eine Architektur- und Testanforderung, kein Nachweis implementierter Futures-Unterstützung oder Live-Freigabe.

@@ -80,3 +80,12 @@ Die Runtime führt einen nicht persistierten failure_stage-Marker durch wichtige
 
 
 Ab Version 0.1.49 wird ein KRAKEN_STATUS/KRAKEN_NOT_ONLINE-Breaker nach einer aktuellen erfolgreichen SystemStatus-Antwort online gezielt aufgelöst. Der UNHANDLED_RUNTIME-Breaker wird weiterhin nicht automatisch bereinigt. Unerwartete Runtime-Fehler protokollieren bei SQLite-Ausnahmen die begrenzte Fehlerdiagnose sowie ihre letzte Python-Fehlerstelle.
+
+
+## Geplante Produkterweiterung: Kraken Derivatives EEA (noch nicht implementiert)
+
+Die bestehende Implementierung in app/kraken.py, app/market.py, app/risk.py und app/execution.py ist die Spot-/Spot-Margin-Strecke. Sie ist nicht als Futures-Adapter zu verwenden. Die freigegebene Erweiterungsrichtung ist in docs/DERIVATIVES_RESEARCH_EXTENSION.md spezifiziert.
+
+Der neue Produktbereich muss mindestens einen eigenen FuturesClient, getrennte API-Credentials und Authentifizierung, Futures-Instrument-/Wallet-/Position-/Order-/Fill-/Funding-Modelle, eigene Risiko- und Order-Authority-Gates sowie getrennte persistente Produktidentitäten erhalten. Gemeinsame Hilfsfunktionen sind nur zulässig, wenn Wertebereich, Einheiten, API-Semantik und Fehlerverhalten nachweislich übereinstimmen. Spot-Wallet-Bestände dürfen nie als Futures-Kollateral interpretiert werden.
+
+Bis zu einer vollständigen Demo-Integration bleibt die Erweiterung nicht aktiv. Die bestehende Spot-/Spot-Margin-Live-Sperre wird dadurch nicht verändert oder umgangen. Der Futures-Live-Schalter ist separat und bleibt ebenfalls code-seitig gesperrt.
