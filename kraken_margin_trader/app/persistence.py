@@ -1073,6 +1073,7 @@ class Persistence:
                 mark_samples < 1 or first_mark_ts <= 0 or last_mark_ts < first_mark_ts
                 or mark_checks < 1 or mark_failures != 0 or mark_gaps != 0
                 or not isinstance(mark_flags, list)
+                or not all(isinstance(flag, str) for flag in mark_flags)
                 or set(mark_flags) & {
                     "INVALID_BOOK_SNAPSHOT", "UPDATE_WITHOUT_VALID_SNAPSHOT",
                     "INVALID_BOOK_UPDATE", "CROSSED_OR_EMPTY_BOOK",
