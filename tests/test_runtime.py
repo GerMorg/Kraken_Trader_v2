@@ -1452,7 +1452,9 @@ def test_futures_readonly_runtime_checks_permissions_then_persists_separate_snap
     assert latest["data"]["accounts"]["accounts"]["flex"]["currencies"]["EUR"]["quantity"] == "100"
     assert '"collateral_currency_count":2' in audit.stream.getvalue()
     assert '"cash_currency_count":2' in audit.stream.getvalue()
-    assert '"flex_available_margin_usd":"133"' in audit.stream.getvalue()
+    assert '"available_margin_usd":"133"' in audit.stream.getvalue()
+    assert latest["counts"]["account_schema_status"] == "FLEX_SCHEMA_RECOGNIZED"
+    assert latest["counts"]["flex_account_metrics"]["available_margin_usd"] == "133"
     assert "FUTURES_READONLY_DATA_SYNC" in audit.stream.getvalue()
     audit.close()
     db.close()
