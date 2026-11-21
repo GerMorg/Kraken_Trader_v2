@@ -84,7 +84,7 @@ def build_futures_authent(
         raise ValueError("FUTURES_AUTH_INPUT_INVALID")
     try:
         secret = base64.b64decode(api_secret.encode("ascii"), validate=True)
-    except (binascii.Error, UnicodeEncodeError, ValueError) as exc:
+    except (binascii.Error, UnicodeEncodeError, ValueError):
         raise ValueError("FUTURES_API_SECRET_INVALID") from None
     if not secret:
         raise ValueError("FUTURES_API_SECRET_INVALID")
@@ -210,7 +210,7 @@ class FuturesAPIClient:
                     endpoint_path,
                     post_data=query_string,
                 )
-            except ValueError as exc:
+            except ValueError:
                 raise FuturesAPIError("FUTURES_AUTH_CONFIGURATION_INVALID") from None
             headers["APIKey"] = self._api_key
             headers["Authent"] = authent
@@ -221,9 +221,9 @@ class FuturesAPIClient:
         request = Request(url, headers=headers, method="GET")
         try:
             status_code, raw = self._transport(request, self._timeout_seconds)
-        except (TimeoutError, URLError, OSError) as exc:
+        except (TimeoutError, URLError, OSError):
             raise FuturesAPIError("FUTURES_NETWORK_ERROR") from None
-        except Exception as exc:
+        except Exception:
             # Injected transports and platform URL handlers are not trusted to expose
             # raw exception text; it may contain request metadata.
             raise FuturesAPIError("FUTURES_TRANSPORT_ERROR") from None
@@ -234,8 +234,8 @@ class FuturesAPIClient:
             raise FuturesAPIError(f"FUTURES_HTTP_STATUS_{status_code}")
         try:
             payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise FuturesAPIError("FUTURES_RESPONSE_INVALID_JSON") from exc
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise FuturesAPIError("FUTURES_RESPONSE_INVALID_JSON") from None
         if not isinstance(payload, dict):
             raise FuturesAPIError("FUTURES_RESPONSE_SCHEMA_INVALID")
 
