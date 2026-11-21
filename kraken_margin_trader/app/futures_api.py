@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 DEMO_BASE_URL: Final = "https://demo-futures.kraken.com"
+PRODUCTION_BASE_URL: Final = "https://futures.kraken.com"
 API_PREFIX: Final = "/derivatives/api/v3"
 MAX_RESPONSE_BYTES: Final = 2_000_000
 DEFAULT_TIMEOUT_SECONDS: Final = 10.0
@@ -137,15 +138,17 @@ class FuturesAPIClient:
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         transport: Transport | None = None,
     ) -> None:
-        if not isinstance(environment, str) or environment.strip().lower() != "demo":
-            raise ValueError("FUTURES_PRODUCTION_ENVIRONMENT_NOT_ENABLED")
+        normalized_environment = environment.strip().lower() if isinstance(environment, str) else ""
+        if normalized_environment not in {"demo", "production_read_only"}:
+            raise ValueError("FUTURES_ENVIRONMENT_NOT_ALLOWED")
         if not math.isfinite(timeout_seconds) or not 1.0 <= timeout_seconds <= 30.0:
             raise ValueError("FUTURES_TIMEOUT_OUT_OF_RANGE")
         self._api_key = api_key.strip()
         self._api_secret = api_secret.strip()
         self._timeout_seconds = timeout_seconds
         self._transport = transport or _default_transport
-        self.environment = "demo"
+        self.environment = normalized_environment
+        self._base_url = DEMO_BASE_URL if normalized_environment == "demo" else PRODUCTION_BASE_URL
 
     @property
     def credentials_present(self) -> bool:
@@ -213,7 +216,7 @@ class FuturesAPIClient:
     ) -> dict[str, Any]:
         headers = {
             "Accept": "application/json",
-            "User-Agent": "KrakenTraderV2-FuturesDemo/0.1.68",
+            "User-Agent": "KrakenTraderV2-FuturesReadOnly/0.1.69",
         }
         if authenticated:
             if not self.credentials_present:
@@ -229,7 +232,7 @@ class FuturesAPIClient:
             headers["APIKey"] = self._api_key
             headers["Authent"] = authent
 
-        url = DEMO_BASE_URL + endpoint_path
+        url = self._base_url + endpoint_path
         if query_string:
             url += "?" + query_string
         request = Request(url, headers=headers, method="GET")
