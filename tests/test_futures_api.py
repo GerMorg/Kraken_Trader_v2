@@ -112,7 +112,7 @@ def test_private_accounts_request_uses_exact_futures_signature() -> None:
     assert request.get_header("Nonce") is None
 
 
-def test_funding_rates_query_is_url_encoded_and_signed_identically() -> None:
+def test_funding_rates_query_is_url_encoded_and_remains_public() -> None:
     transport = FakeTransport({"result": "success", "rates": []})
     client = FuturesAPIClient(
         api_key=TEST_KEY,
@@ -125,10 +125,15 @@ def test_funding_rates_query_is_url_encoded_and_signed_identically() -> None:
     request = transport.requests[0]
     query = "symbol=PF_XBTUSD"
     assert request.full_url.endswith("/historical-funding-rates?" + query)
-    assert request.get_header("Authent") == build_futures_authent(
+    assert request.get_header("Apikey") is None
+    assert request.get_header("Authent") is None
+    assert build_futures_authent(
         TEST_SECRET,
         "/derivatives/api/v3/historical-funding-rates",
         post_data=query,
+    ) != build_futures_authent(
+        TEST_SECRET,
+        "/derivatives/api/v3/historical-funding-rates",
     )
 
 
