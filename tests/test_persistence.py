@@ -617,7 +617,7 @@ def test_additive_depth_migration_preserves_existing_multi_asset_rows(tmp_path):
     schema_version = migrated.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
-    assert schema_version == "13"
+    assert schema_version == "14"
     migrated.close()
 
 
