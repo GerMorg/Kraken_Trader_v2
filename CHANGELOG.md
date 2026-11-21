@@ -3,7 +3,7 @@
 ## 0.1.67 — Kraken-Pong-Kompatibilität und stabiler Reconnect-Backoff
 
 - Akzeptiert Kraken-WS-v2-Pong-Antworten mit passender `req_id`, wenn das optionale Feld `success` fehlt und keine Fehlerantwort vorliegt. Ein explizites `success: false`, ein ungültiges `success`-Feld oder eine `error`-Antwort erzwingt weiterhin den Reconnect.
-- Ergänzt Telemetrie, ob `success` im Pong vorhanden war und wie oft gültige Pongs ohne dieses optionale Feld empfangen wurden.
+- Ergänzt Telemetrie, ob `success` im Pong vorhanden war und wie oft gültige Pongs ohne dieses optionale Feld empfangen wurden; beide Werte erscheinen auch im `CYCLE_SUMMARY`.
 - Übersetzt auch das von REST `AssetPairs` gelieferte `XDG/USD` korrekt in das von WS v2 akzeptierte `DOGE/USD` und ordnet eingehende Book-/Trade-Daten wieder dem internen `XDG/USD` zu.
 - Setzt den exponentiellen Reconnect-Backoff erst nach mindestens 60 Sekunden stabiler Verbindung zurück; Subscription-Bestätigungen allein gelten nicht mehr als Stabilitätsnachweis.
 - Ergänzt Regressionstests für Pong ohne `success`, explizit abgelehnte Pongs und das Backoff-Verhalten.
