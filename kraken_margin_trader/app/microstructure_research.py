@@ -89,7 +89,7 @@ def _mark(row: dict[str, Any]) -> tuple[int, Decimal, Decimal | None] | None:
         return None
     mid = _d(row.get("midprice_usd"))
     spread = _d(row.get("spread_bps"))
-    if not valid or mid is None or mid <= 0 or spread is None or spread < 0:
+    if not valid or mid is None or mid <= 0 or (spread is not None and spread < 0):
         return None
     return last, mid, spread
 
