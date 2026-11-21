@@ -14,6 +14,16 @@ from app.persistence import Persistence
 D = Decimal
 WS_URL = "wss://ws.kraken.com/v2"
 SOURCE = "KRAKEN_SPOT_WS_V2"
+BOOK_MARK_BLOCKING_QUALITY_FLAGS = frozenset({
+    "INVALID_BOOK_SNAPSHOT",
+    "UPDATE_WITHOUT_VALID_SNAPSHOT",
+    "INVALID_BOOK_UPDATE",
+    "CROSSED_OR_EMPTY_BOOK",
+    "BOOK_CHECKSUM_MISSING",
+    "BOOK_CHECKSUM_INVALID",
+    "BOOK_CHECKSUM_MISMATCH",
+    "CONNECTION_GAP",
+})
 MAX_BOOK_DEPTH = 10
 APPLICATION_PING_INTERVAL_SECONDS = 20
 APPLICATION_PING_TIMEOUT_SECONDS = 15
@@ -798,8 +808,32 @@ class MarketMicrostructureCollector:
             )
             book_fresh = (
                 aggregate.book_event_ts > 0
-                and aggregate.minute_ts + 60 - aggregate.book_event_ts <= 120
+                and 0 <= aggregate.minute_ts + 60 - aggregate.book_event_ts <= 120
             )
+            book_mark_ineligible_reasons: list[str] = []
+            if not aggregate.book_verified:
+                book_mark_ineligible_reasons.append("BOOK_NOT_CHECKSUM_VERIFIED")
+            if not book_fresh:
+                book_mark_ineligible_reasons.append("BOOK_MARK_STALE")
+            if aggregate.book_sample_count < 1:
+                book_mark_ineligible_reasons.append("NO_CHECKSUM_VERIFIED_BOOK_SAMPLE")
+            if aggregate.first_book_event_ts <= 0 or aggregate.last_book_event_ts < aggregate.first_book_event_ts:
+                book_mark_ineligible_reasons.append("BOOK_MARK_TIMESTAMP_INVALID")
+            if aggregate.checksum_checks < 1 or aggregate.checksum_failures > 0:
+                book_mark_ineligible_reasons.append("BOOK_CHECKSUM_EVIDENCE_INCOMPLETE")
+            if aggregate.connection_gap_count > 0:
+                book_mark_ineligible_reasons.append("BOOK_CONNECTION_GAP")
+            blocking_flags = sorted(
+                aggregate.quality_flags & BOOK_MARK_BLOCKING_QUALITY_FLAGS
+            )
+            book_mark_ineligible_reasons.extend(
+                f"BOOK_QUALITY_FLAG:{flag}" for flag in blocking_flags
+            )
+            if aggregate.midprice_usd is None or aggregate.midprice_usd <= 0:
+                book_mark_ineligible_reasons.append("BOOK_MIDPRICE_MISSING_OR_INVALID")
+            if aggregate.spread_bps is None or aggregate.spread_bps < 0:
+                book_mark_ineligible_reasons.append("BOOK_SPREAD_MISSING_OR_INVALID")
+            book_mark_eligible = not book_mark_ineligible_reasons
             quality_status = (
                 "VALID" if aggregate.book_verified and book_fresh
                 and aggregate.book_sample_count >= 2
@@ -854,6 +888,11 @@ class MarketMicrostructureCollector:
                 "connection_gap_count": aggregate.connection_gap_count,
                 "last_event_ts": aggregate.last_event_ts,
                 "book_event_ts": aggregate.book_event_ts,
+                "book_mark_eligible": book_mark_eligible,
+                "book_mark_quality": (
+                    "CHECKSUM_VERIFIED_POINT_MARK" if book_mark_eligible else "INELIGIBLE"
+                ),
+                "book_mark_ineligible_reasons": book_mark_ineligible_reasons,
                 "quality_status": quality_status,
                 "quality_flags": sorted(aggregate.quality_flags),
                 "actual_fills": False,
