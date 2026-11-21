@@ -11,7 +11,7 @@ from collections.abc import Callable
 from typing import Any, Final
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 DEMO_BASE_URL: Final = "https://demo-futures.kraken.com"
 API_PREFIX: Final = "/derivatives/api/v3"
@@ -96,9 +96,23 @@ def build_futures_authent(
     return base64.b64encode(signature).decode("ascii")
 
 
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        request: Request,
+        fp: Any,
+        code: int,
+        message: str,
+        headers: Any,
+        new_url: str,
+    ) -> None:
+        return None
+
+
 def _default_transport(request: Request, timeout_seconds: float) -> tuple[int, bytes]:
+    opener = build_opener(_NoRedirectHandler())
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:
+        with opener.open(request, timeout=timeout_seconds) as response:
             return int(response.status), response.read(MAX_RESPONSE_BYTES + 1)
     except HTTPError as exc:
         try:
@@ -199,7 +213,7 @@ class FuturesAPIClient:
     ) -> dict[str, Any]:
         headers = {
             "Accept": "application/json",
-            "User-Agent": "KrakenTraderV2-FuturesDemo/0.1",
+            "User-Agent": "KrakenTraderV2-FuturesDemo/0.1.68",
         }
         if authenticated:
             if not self.credentials_present:
