@@ -1333,10 +1333,7 @@ def test_futures_readonly_runtime_checks_permissions_then_persists_separate_snap
     })
 
     class FakeFuturesClient:
-        def __init__(self, **kwargs):
-            assert kwargs["api_key"] == "future-public-key"
-            assert kwargs["api_secret"] == "future-private-secret"
-            assert kwargs["environment"] == "production_read_only"
+        def __init__(self):
             self.calls = []
 
         def get_api_key_info(self):
@@ -1377,7 +1374,14 @@ def test_futures_readonly_runtime_checks_permissions_then_persists_separate_snap
             return {"tickers": [{"symbol": "PF_XBTUSD"}]}
 
     fake_client = FakeFuturesClient()
-    monkeypatch.setattr("app.runtime.FuturesAPIClient", lambda **kwargs: fake_client)
+
+    def futures_client_factory(**kwargs):
+        assert kwargs["api_key"] == "future-public-key"
+        assert kwargs["api_secret"] == "future-private-secret"
+        assert kwargs["environment"] == "production_read_only"
+        return fake_client
+
+    monkeypatch.setattr("app.runtime.FuturesAPIClient", futures_client_factory)
 
     result = runtime._run_futures_readonly_snapshot("cycle-futures-1")
 
