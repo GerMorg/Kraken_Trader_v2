@@ -471,7 +471,7 @@ def summarize_early_microstructure_horizons(
         "portfolio_pnl": False,
         "release_gate_eligible": False,
         "limitations": [
-            "These fixed horizons are diagnostic probes; they do not replace the configured 8-hour strategy outcome.",
+            "These fixed horizons are diagnostic probes; they do not replace the configured primary holding-period outcome.",
             "Entry uses the spot ticker midpoint stored with the signal, not a simultaneous executable order-book fill.",
             "Exit uses a qualified midpoint mark, not an executable fill or order-book walk.",
             "Spot fee and spread costs are proxies; Futures fees, funding, liquidation and slippage are not modeled.",
