@@ -77,9 +77,12 @@ def build_futures_authent(
     """Create Kraken Futures REST v3 Authent using the documented REST-v3 scheme.
 
     post_data must be the exact URL-encoded query/body string sent with the request.
-    The /derivatives prefix is omitted from the endpoint path for signing.
+    The /derivatives prefix is omitted for derivatives API paths; the API-key
+    metadata endpoint is signed with its complete /api/auth/v1 path.
     """
-    if not api_secret or not endpoint_path.startswith(API_PREFIX + "/"):
+    derivative_path = endpoint_path.startswith(API_PREFIX + "/")
+    key_check_path = endpoint_path.startswith("/api/auth/v1/api-keys/v3/")
+    if not api_secret or not (derivative_path or key_check_path):
         raise ValueError("FUTURES_AUTH_INPUT_INVALID")
     if "?" in endpoint_path or "#" in endpoint_path or post_data.startswith("?"):
         raise ValueError("FUTURES_AUTH_INPUT_INVALID")
@@ -90,7 +93,7 @@ def build_futures_authent(
     if not secret:
         raise ValueError("FUTURES_API_SECRET_INVALID")
 
-    signing_path = endpoint_path[len("/derivatives"):]
+    signing_path = endpoint_path[len("/derivatives"):] if derivative_path else endpoint_path
     message = post_data + nonce + signing_path
     digest = hashlib.sha256(message.encode("utf-8")).digest()
     signature = hmac.new(secret, digest, hashlib.sha512).digest()
@@ -154,6 +157,30 @@ class FuturesAPIClient:
     def credentials_present(self) -> bool:
         return bool(self._api_key and self._api_secret)
 
+    def get_api_key_info(self) -> dict[str, Any]:
+        """Verify this key and read its exchange-assigned access tiers.
+
+        The endpoint exists on the production API host. The returned API key,
+        account UID, IIBAN and CIDR values are deliberately not included in logs.
+        """
+        if self.environment != "production_read_only":
+            raise FuturesAPIError("FUTURES_API_KEY_CHECK_PRODUCTION_ONLY")
+        payload = self._request_get(
+            "/api/auth/v1/api-keys/v3/check",
+            query_string="",
+            authenticated=True,
+        )
+        permissions = payload.get("permissions")
+        if (
+            not isinstance(payload.get("apiKey"), str)
+            or not isinstance(payload.get("accountUid"), str)
+            or not isinstance(permissions, dict)
+            or not isinstance(permissions.get("general"), str)
+            or not isinstance(permissions.get("transfer"), str)
+        ):
+            raise FuturesAPIError("FUTURES_RESPONSE_SCHEMA_INVALID")
+        return payload
+
     def get_instruments(self) -> dict[str, Any]:
         return self._read("instruments")
 
@@ -216,7 +243,7 @@ class FuturesAPIClient:
     ) -> dict[str, Any]:
         headers = {
             "Accept": "application/json",
-            "User-Agent": "KrakenTraderV2-FuturesReadOnly/0.1.69",
+            "User-Agent": "KrakenTraderV2-FuturesReadOnly/0.1.70",
         }
         if authenticated:
             if not self.credentials_present:

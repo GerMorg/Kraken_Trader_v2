@@ -22,6 +22,7 @@ from app.kraken import (
     api_key_permission_gate_reasons,
 )
 from app.execution import LiveExecutionBlocked, OrderAuthority, OrderIntent, signal_decision_id
+from app.futures_api import FuturesAPIClient, FuturesAPIError
 from app.entry_guards import entry_pair_exposure
 from app.history_sync import history_sources_ready, reconcile_trade_ledger_coverage, sync_history_source
 from app.market import closed_bar_is_fresh, executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
@@ -708,6 +709,250 @@ class TraderRuntime:
             persistence, enabled=settings.microstructure_enabled
         )
 
+    def _run_futures_readonly_snapshot(self, cycle_id: str) -> dict[str, Any]:
+        """Read a production Futures account through a permission-verified GET-only client.
+
+        This path is independent of Spot state and never submits or changes orders,
+        transfers, leverage preferences or account settings.
+        """
+        if not self.settings.futures_readonly_enabled:
+            return {"status": "DISABLED", "snapshot_id": None, "endpoint_error_count": 0}
+        if not (
+            self.settings.futures_api_key.strip()
+            and self.settings.futures_api_secret.strip()
+        ):
+            result = {
+                "status": "BLOCKED_MISSING_CREDENTIALS",
+                "snapshot_id": None,
+                "endpoint_error_count": 1,
+            }
+            self.audit.emit("FUTURES_READONLY_BLOCKED", cycle_id=cycle_id, reason=result["status"])
+            return result
+
+        client = FuturesAPIClient(
+            api_key=self.settings.futures_api_key,
+            api_secret=self.settings.futures_api_secret,
+            environment="production_read_only",
+        )
+        endpoint_status: dict[str, str] = {}
+        data: dict[str, Any] = {}
+        counts: dict[str, int | None] = {}
+        try:
+            key_info = client.get_api_key_info()
+        except FuturesAPIError as exc:
+            code = exc.code
+            self.audit.emit(
+                "FUTURES_READONLY_API_KEY_CHECK",
+                cycle_id=cycle_id,
+                status="FAILED",
+                error_code=code,
+                credentials_present=True,
+            )
+            return {
+                "status": "API_KEY_CHECK_FAILED",
+                "snapshot_id": None,
+                "endpoint_error_count": 1,
+            }
+        except Exception:
+            self.audit.emit(
+                "FUTURES_READONLY_API_KEY_CHECK",
+                cycle_id=cycle_id,
+                status="FAILED",
+                error_code="FUTURES_API_KEY_CHECK_UNEXPECTED_ERROR",
+                credentials_present=True,
+            )
+            return {
+                "status": "API_KEY_CHECK_FAILED",
+                "snapshot_id": None,
+                "endpoint_error_count": 1,
+            }
+
+        permissions = key_info.get("permissions")
+        general_permission = (
+            str(permissions.get("general", "")).strip().upper()
+            if isinstance(permissions, dict) else ""
+        )
+        transfer_permission = (
+            str(permissions.get("transfer", "")).strip().upper()
+            if isinstance(permissions, dict) else ""
+        )
+        api_key_matches = key_info.get("apiKey") == self.settings.futures_api_key
+        permissions_accepted = (
+            general_permission == "READ_ONLY"
+            and transfer_permission in {"NO_ACCESS", "READ_ONLY"}
+            and api_key_matches
+        )
+        self.audit.emit(
+            "FUTURES_READONLY_API_KEY_CHECK",
+            cycle_id=cycle_id,
+            status="ACCEPTED" if permissions_accepted else "REJECTED",
+            general_permission=general_permission or "UNKNOWN",
+            transfer_permission=transfer_permission or "UNKNOWN",
+            api_key_matches=bool(api_key_matches),
+            account_uid_present=bool(str(key_info.get("accountUid", "")).strip()),
+            allowed_cidr_count=(
+                len(key_info.get("allowedCidrBlocks", []))
+                if isinstance(key_info.get("allowedCidrBlocks"), list) else None
+            ),
+        )
+        if not permissions_accepted:
+            self.audit.emit(
+                "FUTURES_READONLY_BLOCKED",
+                cycle_id=cycle_id,
+                reason="API_KEY_PERMISSIONS_NOT_READ_ONLY",
+                general_permission=general_permission or "UNKNOWN",
+                transfer_permission=transfer_permission or "UNKNOWN",
+                no_private_account_queries_sent=True,
+            )
+            return {
+                "status": "BLOCKED_UNSAFE_API_KEY_PERMISSIONS",
+                "snapshot_id": None,
+                "endpoint_error_count": 1,
+            }
+
+        endpoint_methods = (
+            ("accounts", client.get_accounts),
+            ("open_positions", client.get_open_positions),
+            ("open_orders", client.get_open_orders),
+            ("fills", client.get_fills),
+            ("leverage_preferences", client.get_leverage_preferences),
+            ("instruments", client.get_instruments),
+            ("tickers", client.get_tickers),
+        )
+        authenticated_failed = False
+        for name, method in endpoint_methods:
+            if authenticated_failed and name in {
+                "open_positions", "open_orders", "fills", "leverage_preferences"
+            }:
+                endpoint_status[name] = "SKIPPED_AFTER_AUTHENTICATED_READ_FAILURE"
+                continue
+            try:
+                payload = method()
+                if not isinstance(payload, dict):
+                    raise FuturesAPIError("FUTURES_RESPONSE_SCHEMA_INVALID")
+                data[name] = payload
+                endpoint_status[name] = "SUCCESS"
+                collection_key = {
+                    "accounts": "accounts",
+                    "open_positions": "openPositions",
+                    "open_orders": "openOrders",
+                    "fills": "fills",
+                    "leverage_preferences": "leveragePreferences",
+                    "instruments": "instruments",
+                    "tickers": "tickers",
+                }[name]
+                collection = payload.get(collection_key)
+                counts[name] = (
+                    len(collection) if isinstance(collection, (list, dict)) else None
+                )
+            except FuturesAPIError as exc:
+                endpoint_status[name] = exc.code
+                if name in {
+                    "accounts", "open_positions", "open_orders", "fills",
+                    "leverage_preferences",
+                } and exc.code in {
+                    "FUTURES_HTTP_STATUS_401",
+                    "FUTURES_HTTP_STATUS_403",
+                    "FUTURES_API_AUTHENTICATION_ERROR",
+                }:
+                    authenticated_failed = True
+            except Exception:
+                endpoint_status[name] = "FUTURES_RUNTIME_UNEXPECTED_ERROR"
+
+        if "accounts" not in data:
+            self.audit.emit(
+                "FUTURES_READONLY_DATA_SYNC",
+                cycle_id=cycle_id,
+                status="FAILED_ACCOUNT_READ",
+                environment="PRODUCTION_READ_ONLY",
+                endpoint_status=endpoint_status,
+                endpoint_error_count=sum(value != "SUCCESS" for value in endpoint_status.values()),
+            )
+            return {
+                "status": "ACCOUNT_READ_FAILED",
+                "snapshot_id": None,
+                "endpoint_error_count": sum(
+                    value != "SUCCESS" for value in endpoint_status.values()
+                ),
+            }
+
+        counts["account_wallet_count"] = (
+            len(data["accounts"].get("accounts", {}))
+            if isinstance(data["accounts"].get("accounts"), dict) else None
+        )
+        account_block = data["accounts"].get("accounts", {})
+        multi_collateral = (
+            account_block.get("multiCollateral", {})
+            if isinstance(account_block, dict) else {}
+        )
+        balances = (
+            multi_collateral.get("balances", {})
+            if isinstance(multi_collateral, dict) else {}
+        )
+        counts["collateral_currency_count"] = (
+            len(balances) if isinstance(balances, dict) else None
+        )
+
+        endpoint_error_count = sum(
+            value != "SUCCESS" for value in endpoint_status.values()
+        )
+        result_status = "COMPLETE" if endpoint_error_count == 0 else "PARTIAL"
+        snapshot_id = uuid.uuid4().hex
+        captured_at = datetime.now(timezone.utc).isoformat()
+        snapshot_data = {
+            "api_key_permissions": {
+                "general": general_permission,
+                "transfer": transfer_permission,
+            },
+            **data,
+        }
+        try:
+            persisted = self.persistence.record_futures_readonly_snapshot({
+                "snapshot_id": snapshot_id,
+                "captured_at": captured_at,
+                "environment": "production_read_only",
+                "general_permission": general_permission,
+                "transfer_permission": transfer_permission,
+                "result_status": result_status,
+                "counts": counts,
+                "data": snapshot_data,
+            })
+        except Exception:
+            persisted = False
+        final_status = result_status if persisted else "PERSISTENCE_FAILED"
+        summary = {
+            "status": final_status,
+            "snapshot_id": snapshot_id if persisted else None,
+            "endpoint_error_count": endpoint_error_count,
+        }
+        self.persistence.record_event("FUTURES_READONLY_SNAPSHOT_SUMMARY", {
+            "cycle_id": cycle_id,
+            "snapshot_id": summary["snapshot_id"],
+            "status": final_status,
+            "environment": "PRODUCTION_READ_ONLY",
+            "general_permission": general_permission,
+            "transfer_permission": transfer_permission,
+            "endpoint_status": endpoint_status,
+            "counts": counts,
+            "endpoint_error_count": endpoint_error_count,
+            "persistence_succeeded": persisted,
+        })
+        self.audit.emit(
+            "FUTURES_READONLY_DATA_SYNC",
+            cycle_id=cycle_id,
+            status=final_status,
+            environment="PRODUCTION_READ_ONLY",
+            snapshot_id=summary["snapshot_id"],
+            endpoint_status=endpoint_status,
+            counts=counts,
+            endpoint_error_count=endpoint_error_count,
+            account_read_authenticated=True,
+            orders_submitted=False,
+            account_mutations_sent=False,
+            transfers_sent=False,
+        )
+        return summary
+
     def close(self) -> None:
         """Stop the public market-data observer before SQLite is closed."""
         self.microstructure.close()
@@ -856,7 +1101,12 @@ class TraderRuntime:
         order_reconciliation: dict[str, Any] | None = None
         position_reconciliation: dict[str, Any] | None = None
         self.audit.emit("CYCLE_START",cycle_id=cycle_id,mode=self.settings.mode)
+        futures_readonly_summary: dict[str, Any] = {
+            "status": "DISABLED", "snapshot_id": None, "endpoint_error_count": 0
+        }
         try:
+            failure_stage = "FUTURES_READONLY_SNAPSHOT"
+            futures_readonly_summary = self._run_futures_readonly_snapshot(cycle_id)
             failure_stage = "REFRESH_TAX_REPORT"
             self._refresh_tax_report()
             failure_stage = "KRAKEN_SYSTEM_STATUS"
@@ -2605,6 +2855,9 @@ class TraderRuntime:
                 "mode": self.settings.mode,
                 "live_requested": self.settings.live_requested,
                 "internal_live_release": INTERNAL_LIVE_EXECUTION_RELEASED,
+                "futures_readonly_status": futures_readonly_summary.get("status"),
+                "futures_readonly_snapshot_id": futures_readonly_summary.get("snapshot_id"),
+                "futures_readonly_endpoint_error_count": futures_readonly_summary.get("endpoint_error_count"),
                 "history_ready_for_entries": history_ready_for_entries,
                 "history_evidence_gaps": list(history_evidence_gaps),
                 "active_circuit_breaker_count": len(final_breaker_rows),

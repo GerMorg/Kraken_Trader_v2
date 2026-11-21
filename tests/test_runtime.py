@@ -1321,3 +1321,137 @@ def test_market_data_empty_breaker_stays_when_any_candidate_refresh_is_invalid()
     ]
     audit.close()
     db.close()
+
+
+
+def test_futures_readonly_runtime_checks_permissions_then_persists_separate_snapshot(monkeypatch):
+    runtime, db, audit = make_runtime()
+    runtime.settings = Settings.from_mapping({
+        "kraken_futures_api_key": "future-public-key",
+        "kraken_futures_api_secret": "future-private-secret",
+        "futures_readonly_enabled": True,
+    })
+
+    class FakeFuturesClient:
+        def __init__(self):
+            self.calls = []
+
+        def get_api_key_info(self):
+            self.calls.append("api_key_info")
+            return {
+                "apiKey": "future-public-key",
+                "accountUid": "account-uid-not-logged",
+                "permissions": {"general": "READ_ONLY", "transfer": "NO_ACCESS"},
+                "allowedCidrBlocks": [],
+            }
+
+        def get_accounts(self):
+            self.calls.append("accounts")
+            return {"accounts": {"multiCollateral": {"balances": {"eur": "100", "usd": "0"}}}}
+
+        def get_open_positions(self):
+            self.calls.append("open_positions")
+            return {"openPositions": []}
+
+        def get_open_orders(self):
+            self.calls.append("open_orders")
+            return {"openOrders": []}
+
+        def get_fills(self):
+            self.calls.append("fills")
+            return {"fills": []}
+
+        def get_leverage_preferences(self):
+            self.calls.append("leverage_preferences")
+            return {"leveragePreferences": []}
+
+        def get_instruments(self):
+            self.calls.append("instruments")
+            return {"instruments": [{"symbol": "PF_XBTUSD"}]}
+
+        def get_tickers(self):
+            self.calls.append("tickers")
+            return {"tickers": [{"symbol": "PF_XBTUSD"}]}
+
+    fake_client = FakeFuturesClient()
+
+    def futures_client_factory(**kwargs):
+        assert kwargs["api_key"] == "future-public-key"
+        assert kwargs["api_secret"] == "future-private-secret"
+        assert kwargs["environment"] == "production_read_only"
+        return fake_client
+
+    monkeypatch.setattr("app.runtime.FuturesAPIClient", futures_client_factory)
+
+    result = runtime._run_futures_readonly_snapshot("cycle-futures-1")
+
+    assert result["status"] == "COMPLETE"
+    assert result["snapshot_id"]
+    assert fake_client.calls == [
+        "api_key_info", "accounts", "open_positions", "open_orders",
+        "fills", "leverage_preferences", "instruments", "tickers",
+    ]
+    latest = db.latest_futures_readonly_snapshot()
+    assert latest is not None
+    assert latest["environment"] == "production_read_only"
+    assert latest["general_permission"] == "READ_ONLY"
+    assert latest["transfer_permission"] == "NO_ACCESS"
+    assert latest["counts"]["open_positions"] == 0
+    assert latest["counts"]["collateral_currency_count"] == 2
+    assert "account-uid-not-logged" not in str(latest["data"])
+    assert "future-private-secret" not in str(latest)
+    assert "future-public-key" not in str(latest)
+    assert "FUTURES_READONLY_DATA_SYNC" in audit.stream.getvalue()
+    audit.close()
+    db.close()
+
+
+def test_futures_readonly_runtime_rejects_full_access_key_before_account_queries(monkeypatch):
+    runtime, db, audit = make_runtime()
+    runtime.settings = Settings.from_mapping({
+        "kraken_futures_api_key": "future-public-key",
+        "kraken_futures_api_secret": "future-private-secret",
+        "futures_readonly_enabled": True,
+    })
+
+    class UnsafeFuturesClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def get_api_key_info(self):
+            return {
+                "apiKey": "future-public-key",
+                "accountUid": "account-uid",
+                "permissions": {"general": "FULL_ACCESS", "transfer": "FULL_ACCESS"},
+                "allowedCidrBlocks": [],
+            }
+
+        def get_accounts(self):
+            raise AssertionError("private account endpoints must not run for a full-access key")
+
+    monkeypatch.setattr("app.runtime.FuturesAPIClient", UnsafeFuturesClient)
+    result = runtime._run_futures_readonly_snapshot("cycle-futures-unsafe")
+
+    assert result["status"] == "BLOCKED_UNSAFE_API_KEY_PERMISSIONS"
+    assert db.latest_futures_readonly_snapshot() is None
+    assert "no_private_account_queries_sent" in audit.stream.getvalue()
+    audit.close()
+    db.close()
+
+
+def test_futures_readonly_runtime_stays_disabled_by_default(monkeypatch):
+    runtime, db, audit = make_runtime()
+
+    def unexpected_client(**kwargs):
+        raise AssertionError("disabled Futures integration must not initialize its client")
+
+    monkeypatch.setattr("app.runtime.FuturesAPIClient", unexpected_client)
+    result = runtime._run_futures_readonly_snapshot("cycle-futures-disabled")
+
+    assert result == {
+        "status": "DISABLED",
+        "snapshot_id": None,
+        "endpoint_error_count": 0,
+    }
+    audit.close()
+    db.close()
