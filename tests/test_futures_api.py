@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import json
-from decimal import Decimal
 from urllib.error import URLError
 from urllib.request import Request
 
@@ -32,7 +31,7 @@ class FakeTransport:
         return self.status_code, json.dumps(self.payload).encode("utf-8")
 
 
-def test_futures_authent_matches_official_rest_v3_signing_vector() -> None:
+def test_futures_authent_matches_reference_signing_vector() -> None:
     assert build_futures_authent(
         TEST_SECRET,
         "/derivatives/api/v3/accounts",
@@ -181,9 +180,6 @@ def test_http_error_is_not_retried_or_exposed_as_response_body() -> None:
 
 
 def test_invalid_json_and_wrong_response_shapes_fail_closed() -> None:
-    invalid_json = FakeTransport({"unexpected": object()})
-    invalid_json.payload = {}  # replaced below with a deliberately malformed transport
-
     def malformed_transport(request: Request, timeout: float) -> tuple[int, bytes]:
         return 200, b"{not-json"
 
@@ -233,5 +229,31 @@ def test_read_only_client_has_no_mutation_methods() -> None:
     assert not hasattr(client, "transfer")
 
 
-def test_decimal_import_kept_available_for_future_account_parsers() -> None:
-    assert Decimal("1.25") * Decimal("2") == Decimal("2.50")
+@pytest.mark.parametrize(
+    ("method_name", "response_field", "response_value", "path_suffix"),
+    [
+        ("get_open_positions", "openPositions", [], "/openpositions"),
+        ("get_open_orders", "openOrders", [], "/openorders"),
+        ("get_fills", "fills", [], "/fills"),
+        ("get_leverage_preferences", "leveragePreferences", [], "/leveragepreferences"),
+    ],
+)
+def test_all_private_read_endpoints_are_authenticated_and_schema_checked(
+    method_name: str,
+    response_field: str,
+    response_value: object,
+    path_suffix: str,
+) -> None:
+    transport = FakeTransport({"result": "success", response_field: response_value})
+    client = FuturesAPIClient(
+        api_key=TEST_KEY,
+        api_secret=TEST_SECRET,
+        transport=transport,
+    )
+
+    getattr(client, method_name)()
+
+    request = transport.requests[0]
+    assert request.full_url == DEMO_BASE_URL + "/derivatives/api/v3" + path_suffix
+    assert request.get_header("APIkey") == TEST_KEY
+    assert request.get_header("Authent")
