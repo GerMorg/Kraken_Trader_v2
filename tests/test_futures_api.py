@@ -84,7 +84,7 @@ def test_public_instrument_request_is_pinned_to_demo_and_needs_no_key() -> None:
     request = transport.requests[0]
     assert request.full_url == DEMO_BASE_URL + "/derivatives/api/v3/instruments"
     assert request.get_method() == "GET"
-    assert request.get_header("APIkey") is None
+    assert request.get_header("Apikey") is None
     assert request.get_header("Authent") is None
     assert transport.timeouts == [10.0]
 
@@ -104,7 +104,7 @@ def test_private_accounts_request_uses_exact_futures_signature() -> None:
     assert result["accounts"]["multiCollateral"]["balances"]["eur"] == "100.00"
     request = transport.requests[0]
     assert request.full_url == DEMO_BASE_URL + "/derivatives/api/v3/accounts"
-    assert request.get_header("APIkey") == TEST_KEY
+    assert request.get_header("Apikey") == TEST_KEY
     assert request.get_header("Authent") == build_futures_authent(
         TEST_SECRET, "/derivatives/api/v3/accounts"
     )
@@ -255,5 +255,5 @@ def test_all_private_read_endpoints_are_authenticated_and_schema_checked(
 
     request = transport.requests[0]
     assert request.full_url == DEMO_BASE_URL + "/derivatives/api/v3" + path_suffix
-    assert request.get_header("APIkey") == TEST_KEY
+    assert request.get_header("Apikey") == TEST_KEY
     assert request.get_header("Authent")
