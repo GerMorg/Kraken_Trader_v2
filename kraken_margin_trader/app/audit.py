@@ -14,7 +14,9 @@ from typing import Any, TextIO
 from app import STRATEGY_VERSION, __version__
 
 _SECRET_KEYS = {
-    "api_key", "kraken_api_key", "api_secret", "kraken_api_secret", "secret",
+    "api_key", "kraken_api_key", "api_secret", "kraken_api_secret",
+    "futures_api_key", "futures_api_secret", "kraken_futures_api_key",
+    "kraken_futures_api_secret", "secret",
     "token", "api_sign", "signature", "authorization", "headers",
 }
 _SECRET_PATTERN = re.compile(
@@ -60,6 +62,19 @@ _COMPACT_FIELDS: dict[str, tuple[str, ...]] = {
         "api_errors",
     ),
     "MARKET_TICKERS_REFRESHED": ("cycle_id", "count", "captured_at"),
+    "FUTURES_READONLY_API_KEY_CHECK": (
+        "cycle_id", "status", "general_permission", "transfer_permission",
+        "api_key_matches", "account_uid_present", "allowed_cidr_count", "error_code",
+    ),
+    "FUTURES_READONLY_BLOCKED": (
+        "cycle_id", "reason", "general_permission", "transfer_permission",
+        "no_private_account_queries_sent",
+    ),
+    "FUTURES_READONLY_DATA_SYNC": (
+        "cycle_id", "status", "environment", "snapshot_id", "endpoint_status",
+        "counts", "endpoint_error_count", "account_read_authenticated",
+        "orders_submitted", "account_mutations_sent", "transfers_sent",
+    ),
 }
 
 _REPORT_EVENTS = {
