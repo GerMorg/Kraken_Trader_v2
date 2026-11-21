@@ -150,16 +150,19 @@ def test_microstructure_observer_rejects_non_usd_pairs_and_bad_timestamps():
 def test_websocket_v2_converts_rest_xbt_symbol_and_maps_stream_data_back():
     db = Persistence(":memory:")
     collector = MarketMicrostructureCollector(db, enabled=False)
-    collector.update_symbols(["XBT/USD", "ETH/USD"])
+    collector.update_symbols(["XBT/USD", "XDG/USD", "ETH/USD"])
 
     ws_symbols = collector._prepare_subscriptions(collector.desired_symbols())
-    assert ws_symbols == ["BTC/USD", "ETH/USD"]
-    assert collector.status()["subscribed_symbols"] == ["XBT/USD", "ETH/USD"]
+    assert ws_symbols == ["BTC/USD", "DOGE/USD", "ETH/USD"]
+    assert collector.status()["subscribed_symbols"] == ["XBT/USD", "XDG/USD", "ETH/USD"]
+    assert collector._internal_symbol("DOGE/USD") == "XDG/USD"
 
     collector._metrics["connected"] = True
     for channel, symbol in (
         ("book", "BTC/USD"),
         ("trade", "BTC/USD"),
+        ("book", "DOGE/USD"),
+        ("trade", "DOGE/USD"),
         ("book", "ETH/USD"),
         ("trade", "ETH/USD"),
     ):
@@ -169,8 +172,8 @@ def test_websocket_v2_converts_rest_xbt_symbol_and_maps_stream_data_back():
             "result": {"channel": channel, "symbol": symbol},
         }) is True
 
-    assert collector.status()["subscription_expected_count"] == 4
-    assert collector.status()["subscription_acknowledged_count"] == 4
+    assert collector.status()["subscription_expected_count"] == 6
+    assert collector.status()["subscription_acknowledged_count"] == 6
     assert collector.status()["subscription_pending_count"] == 0
     assert collector.status()["subscription_coverage_pct"] == 100.0
     assert collector.status()["connection_state"] == "CONNECTED"
@@ -191,6 +194,20 @@ def test_websocket_v2_converts_rest_xbt_symbol_and_maps_stream_data_back():
     assert collector.process_message(snapshot) is True
     assert "XBT/USD" in collector._books
     assert "BTC/USD" not in collector._books
+    doge_snapshot = {
+        "channel": "book",
+        "type": "snapshot",
+        "data": [{
+            "symbol": "DOGE/USD",
+            "timestamp": "2027-01-15T08:00:02.000000Z",
+            "bids": [{"price": "100", "qty": "2"}],
+            "asks": [{"price": "101", "qty": "3"}],
+            "checksum": calculate_book_checksum(bids, asks),
+        }],
+    }
+    assert collector.process_message(doge_snapshot) is True
+    assert "XDG/USD" in collector._books
+    assert "DOGE/USD" not in collector._books
     db.close()
 
 
