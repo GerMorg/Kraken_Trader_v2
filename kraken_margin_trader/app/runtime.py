@@ -27,7 +27,10 @@ from app.entry_guards import entry_pair_exposure
 from app.history_sync import history_sources_ready, reconcile_trade_ledger_coverage, sync_history_source
 from app.market import closed_bar_is_fresh, executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
 from app.market_microstructure import MarketMicrostructureCollector
-from app.microstructure_research import match_microstructure_target_horizons
+from app.microstructure_research import (
+    match_microstructure_target_horizons,
+    summarize_early_microstructure_horizons,
+)
 from app.joint_portfolio import simulate_shared_equity_candidate_portfolio
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
@@ -2880,6 +2883,8 @@ class TraderRuntime:
             microstructure_quality = self.persistence.microstructure_quality_summary(now_epoch=int(time.time()))
             microstructure_forward_tsm: dict[str, Any] = {"status": "NOT_AVAILABLE"}
             microstructure_forward_candidates: dict[str, Any] = {"status": "NOT_AVAILABLE"}
+            microstructure_early_tsm: dict[str, Any] = {"status": "NOT_AVAILABLE", "horizons": {}}
+            microstructure_early_candidates: dict[str, Any] = {"status": "NOT_AVAILABLE", "horizons": {}}
             joint_candidate_portfolio: dict[str, Any] = {"status": "NOT_AVAILABLE"}
             try:
                 pair_aliases: dict[str, str] = {
@@ -2897,6 +2902,22 @@ class TraderRuntime:
                 microstructure_forward_candidates = match_microstructure_target_horizons(
                     strategy_candidate_rows, microstructure_history, pair_aliases
                 )
+                microstructure_early_tsm = summarize_early_microstructure_horizons(
+                    research_observations, microstructure_history, pair_aliases
+                )
+                microstructure_early_candidates = summarize_early_microstructure_horizons(
+                    strategy_candidate_rows, microstructure_history, pair_aliases
+                )
+                early_horizon_payload = {
+                    "cycle_id": cycle_id,
+                    "tsm": microstructure_early_tsm,
+                    "strategy_candidates": microstructure_early_candidates,
+                    "actual_fills": False,
+                    "portfolio_pnl": False,
+                    "release_gate_eligible": False,
+                }
+                self.persistence.record_event("MICROSTRUCTURE_EARLY_HORIZON_SUMMARY", early_horizon_payload)
+                self.audit.emit("MICROSTRUCTURE_EARLY_HORIZON_SUMMARY", **early_horizon_payload)
                 candidate_match_rows = microstructure_forward_candidates.pop("matched_observations", [])
                 microstructure_forward_tsm.pop("matched_observations", None)
                 eligible_margin_shorts = {
@@ -3045,6 +3066,15 @@ class TraderRuntime:
                 "microstructure_history_bars_loaded": sum(len(rows) for rows in microstructure_history.values()),
                 "microstructure_forward_tsm_matched_count": microstructure_forward_tsm.get("matched_observation_count",0),
                 "microstructure_forward_candidate_matched_count": microstructure_forward_candidates.get("matched_observation_count",0),
+                "microstructure_early_horizon_status": microstructure_early_candidates.get("status"),
+                "microstructure_early_horizon_tsm_matched_counts": {
+                    horizon: report.get("matched_observation_count", 0)
+                    for horizon, report in microstructure_early_tsm.get("horizons", {}).items()
+                },
+                "microstructure_early_horizon_candidate_matched_counts": {
+                    horizon: report.get("matched_observation_count", 0)
+                    for horizon, report in microstructure_early_candidates.get("horizons", {}).items()
+                },
                 "joint_candidate_portfolio_scenario_count": len(joint_candidate_portfolio.get("scenarios",[])),
                 "microstructure_checksum_failures": microstructure_status["checksum_failures"],
                 "microstructure_trade_id_gaps": microstructure_status["trade_id_gaps"],
