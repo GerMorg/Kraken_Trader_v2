@@ -1021,14 +1021,7 @@ class TraderRuntime:
             }
 
         account_summary = _futures_account_summary(data["accounts"])
-        counts.update({
-            key: account_summary[key]
-            for key in (
-                "account_wallet_count", "collateral_currency_count",
-                "funded_collateral_currency_count", "cash_currency_count",
-                "single_collateral_account_count", "single_collateral_currency_count",
-            )
-        })
+        counts.update(account_summary)
 
         endpoint_error_count = sum(
             value != "SUCCESS" for value in endpoint_status.values()
@@ -1065,7 +1058,6 @@ class TraderRuntime:
         }
         self.persistence.record_event("FUTURES_READONLY_SNAPSHOT_SUMMARY", {
             "cycle_id": cycle_id,
-            **account_summary,
             "snapshot_id": summary["snapshot_id"],
             "status": final_status,
             "environment": "PRODUCTION_READ_ONLY",
