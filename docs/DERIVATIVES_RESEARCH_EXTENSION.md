@@ -214,3 +214,21 @@ Produkt-, Margin-, Gebühren- und Länderbedingungen können sich ändern. Die W
 ## 11. Implementierungsstand Read-only API
 
 Version 0.1.68 lieferte einen eigenen Futures-REST-Client für die isolierte Demo. Version 0.1.69 ergänzt einen strikt getrennten Produktions-Read-only-Modus für einen Kraken-Futures-Key mit ausschließlich lesenden Exchange-Rechten. Die beiden Hosts sind fest codiert; ein frei konfigurierbarer Host ist nicht möglich. Die Methoden-Allowlist bleibt auf GET-Instrumente, Ticker, Accounts, offene Positionen/Orders, Fills, Leverage-Präferenzen und historische Funding-Raten begrenzt. Es existieren weiterhin keine Order-, Cancel-, Transfer- oder Account-Änderungsmethoden. Die HA-Konfiguration führt Futures-Key/Secret getrennt von Spot-Credentials und zeigt in Diagnosen ausschließlich an, ob beide Werte vorhanden sind. Der Schalter `futures_readonly_enabled` ist standardmäßig aus. Die Konfigurationsfelder allein starten noch keinen Produktions-Sync; die Runtime-Anbindung, persistente Futures-Snapshots und Reconciliation folgen als eigener Schritt. Ein Futures-Key darf nur mit den minimal erforderlichen Leserechten und ohne Trade-/Transfer-/Withdrawal-Rechte hinterlegt werden.
+
+
+## 12. Runtime Read-only Sync — Version 0.1.70
+
+Version 0.1.70 verbindet den Produktions-Read-only-Client mit dem HA-Runtime-Zyklus. Die Futures-Zugangsdaten bleiben getrennt von Spot. Der Schalter `futures_readonly_enabled` bleibt standardmäßig deaktiviert; das Vorhandensein der Credentials allein startet keine Abfrage.
+
+Vor dem ersten Kontenrequest ruft die Anwendung `GET /api/auth/v1/api-keys/v3/check` auf und prüft die vom Exchange zurückgegebenen Rechte. `general` muss exakt `READ_ONLY` sein; `transfer` darf `NO_ACCESS` oder `READ_ONLY` sein, niemals `FULL_ACCESS`. Die zurückgegebene API-Key-ID wird nur intern verglichen; API-Key, Account-UID, IIBAN und CIDR-Werte werden weder im AppLog noch im Futures-Snapshot gespeichert. Bei nicht passenden oder unvollständigen Rechten werden keine privaten Kontenabfragen ausgeführt.
+
+Nach erfolgreicher Rechteprüfung liest die Runtime getrennt:
+- Accounts / Multi-Collateral-Wallets;
+- offene Positionen, offene Orders, Fills und Leverage-Präferenzen;
+- Instrument-Metadaten und Ticker.
+
+Jeder erfolgreiche Account-Read-Zyklus wird mit Zeitstempel und Endpunktstatus in `futures_readonly_snapshots` append-only gespeichert. Rohantworten verbleiben ausschließlich im separaten Futures-Datensatz; sie werden nicht in Spot-Balance-, Fill-, Order- oder Tax-Tabellen kopiert. Das AppLog erhält nur Rechte-Tiers, Status, Snapshot-ID, Endpunkt-Erfolgsstatus und Datensatzanzahlen. Unvollständige Reads werden als PARTIAL gespeichert; fehlende Antworten werden nicht als leere Positionen oder leeres Konto interpretiert. Ein Fehler im Futures-Pfad darf den bestehenden Spot-Zyklus nicht automatisch in einen Futures-Orderpfad umleiten oder dessen Live-Freigaben beeinflussen.
+
+Der Stand ist weiterhin **Read-only**: Es existieren keine Futures-Sendorder-, Cancel-, Transfer-, Leverage-Änderungs- oder Stop-Änderungsfunktionen. Der initiale Snapshot ist noch keine vollständige historische Futures-Reconciliation. Funding-Historie, Account-Ledger-Paginierung, EUR-Bewertung, Futures-Steuerereignisse und unabhängige Wallet-/Fill-/Positionsabgleiche folgen in eigenen Entwicklungsstufen.
+
+Offizielle Referenz für den API-Key-Check: https://docs.kraken.com/api/docs/futures-api/auth/check-v-3-api-key
