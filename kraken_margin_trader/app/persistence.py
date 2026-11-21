@@ -32,7 +32,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 class Persistence:
-    SCHEMA_VERSION = 13
+    SCHEMA_VERSION = 14
 
     def __init__(self, path: str = "/data/state/kraken_trader.sqlite3") -> None:
         self.path = path
@@ -91,6 +91,18 @@ class Persistence:
                     raw_json TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS account_snapshots_captured_idx ON account_snapshots(captured_at);
+                CREATE TABLE IF NOT EXISTS futures_readonly_snapshots(
+                    snapshot_id TEXT PRIMARY KEY,
+                    captured_at TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    general_permission TEXT NOT NULL,
+                    transfer_permission TEXT NOT NULL,
+                    result_status TEXT NOT NULL,
+                    counts_json TEXT NOT NULL,
+                    raw_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS futures_readonly_snapshots_captured_idx
+                    ON futures_readonly_snapshots(captured_at);
                 CREATE TABLE IF NOT EXISTS exchange_position_snapshots(
                     snapshot_id TEXT NOT NULL,
                     position_txid TEXT NOT NULL,
@@ -1645,6 +1657,61 @@ class Persistence:
                 "SELECT DISTINCT year FROM tax_events WHERE year > 0 ORDER BY year"
             ).fetchall()
         return [int(row["year"]) for row in rows]
+
+    def record_futures_readonly_snapshot(self, snapshot: dict[str, Any]) -> bool:
+        """Append one isolated production Futures read-only snapshot.
+
+        Raw exchange responses are stored only in this dedicated table, never mixed
+        with Spot balances, fills, orders or tax events.
+        """
+        required = (
+            "snapshot_id", "captured_at", "environment", "general_permission",
+            "transfer_permission", "result_status", "counts", "data",
+        )
+        if not isinstance(snapshot, dict) or any(key not in snapshot for key in required):
+            raise ValueError("FUTURES_SNAPSHOT_REQUIRED_FIELD_MISSING")
+        snapshot_id = str(snapshot["snapshot_id"]).strip()
+        captured_at = str(snapshot["captured_at"]).strip()
+        environment = str(snapshot["environment"]).strip()
+        general_permission = str(snapshot["general_permission"]).strip().upper()
+        transfer_permission = str(snapshot["transfer_permission"]).strip().upper()
+        result_status = str(snapshot["result_status"]).strip().upper()
+        counts = snapshot["counts"]
+        data = snapshot["data"]
+        if not snapshot_id or not captured_at or environment != "production_read_only":
+            raise ValueError("FUTURES_SNAPSHOT_IDENTITY_INVALID")
+        if general_permission != "READ_ONLY" or transfer_permission == "FULL_ACCESS":
+            raise ValueError("FUTURES_SNAPSHOT_PERMISSION_INVALID")
+        if result_status not in {"COMPLETE", "PARTIAL"}:
+            raise ValueError("FUTURES_SNAPSHOT_STATUS_INVALID")
+        if not isinstance(counts, dict) or not isinstance(data, dict):
+            raise ValueError("FUTURES_SNAPSHOT_DATA_SHAPE_INVALID")
+        payload_json = _json(data)
+        counts_json = _json(counts)
+        with self.lock:
+            cursor = self.connection.execute(
+                "INSERT OR IGNORE INTO futures_readonly_snapshots("
+                "snapshot_id,captured_at,environment,general_permission,transfer_permission,"
+                "result_status,counts_json,raw_json) VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    snapshot_id, captured_at, environment, general_permission,
+                    transfer_permission, result_status, counts_json, payload_json,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def latest_futures_readonly_snapshot(self) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT * FROM futures_readonly_snapshots "
+                "ORDER BY captured_at DESC,snapshot_id DESC LIMIT 1"
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["counts"] = json.loads(str(result.pop("counts_json")))
+        result["data"] = json.loads(str(result.pop("raw_json")))
+        return result
 
     def record_account_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         """Persist raw account/position snapshots without asserting they reconcile."""
