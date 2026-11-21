@@ -140,7 +140,7 @@ class FuturesAPIClient:
     ) -> None:
         normalized_environment = environment.strip().lower() if isinstance(environment, str) else ""
         if normalized_environment not in {"demo", "production_read_only"}:
-            raise ValueError("FUTURES_ENVIRONMENT_NOT_ALLOWED")
+            raise ValueError("FUTURES_PRODUCTION_ENVIRONMENT_NOT_ENABLED")
         if not math.isfinite(timeout_seconds) or not 1.0 <= timeout_seconds <= 30.0:
             raise ValueError("FUTURES_TIMEOUT_OUT_OF_RANGE")
         self._api_key = api_key.strip()
