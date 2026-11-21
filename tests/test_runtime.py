@@ -8,6 +8,7 @@ from app.config import Settings
 from app.persistence import Persistence
 from app.runtime import (
     TraderRuntime,
+    _futures_account_summary,
     _runtime_failure_context,
     _resolve_online_kraken_status_breaker,
     _circuit_breaker_diagnostics,
@@ -1509,3 +1510,51 @@ def test_futures_readonly_runtime_stays_disabled_by_default(monkeypatch):
     }
     audit.close()
     db.close()
+
+
+
+def test_futures_account_summary_keeps_cash_and_flex_collateral_separate():
+    summary = _futures_account_summary({
+        "accounts": {
+            "cash": {
+                "type": "cashAccount",
+                "balances": {"eur": "100"},
+            },
+            "flex": {
+                "type": "multiCollateralMarginAccount",
+                "currencies": {
+                    "EUR": {
+                        "quantity": "0",
+                        "value": "0",
+                        "collateral_value": "0",
+                        "available": "0",
+                    },
+                },
+                "balanceValue": "0",
+                "availableMargin": "0",
+            },
+        },
+    })
+
+    assert summary["account_schema_status"] == "FLEX_SCHEMA_RECOGNIZED"
+    assert summary["collateral_currency_count"] == 1
+    assert summary["funded_collateral_currency_count"] == 0
+    assert summary["cash_currency_count"] == 1
+    assert summary["cash_balance_details"] == {"EUR": "100"}
+    assert summary["flex_account_metrics"]["available_margin_usd"] == "0"
+
+
+def test_futures_account_summary_reports_missing_flex_wallet_without_claiming_zero_collateral():
+    summary = _futures_account_summary({
+        "accounts": {
+            "cash": {
+                "type": "cashAccount",
+                "balances": {"eur": "100"},
+            },
+        },
+    })
+
+    assert summary["account_schema_status"] == "FLEX_WALLET_MISSING"
+    assert summary["multi_collateral_wallet_present"] is False
+    assert summary["collateral_currency_count"] is None
+    assert summary["funded_collateral_currency_count"] is None
