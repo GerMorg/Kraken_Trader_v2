@@ -52,7 +52,7 @@ Die Demo benötigt eigene Demo-Anmeldedaten/API-Schlüssel. Kraken beschreibt di
 
 ### Authentifizierung
 
-Futures verwendet das Headerpaar APIKey und Authent und ein eigenes Signaturverfahren. Nach dem offiziellen Kraken-/Crypto-Facilities-REST-v3-Beispiel wird der tatsächlich serialisierte Query-/POST-Datenstring mit Nonce und Endpoint-Pfad kombiniert, SHA-256-gehasht, mit dem Base64-dekodierten Secret via HMAC-SHA-512 signiert und das Ergebnis Base64-kodiert. Der /derivatives-Präfix wird bei der Signaturpfadbildung entfernt.
+Futures verwendet das Headerpaar APIKey und Authent und ein eigenes Signaturverfahren. Ein Nonce-Header ist laut Kraken-REST-Dokumentation optional; in der ersten Read-only-Stufe wird er bewusst nicht gesendet, damit keine ungeprüfte Nonce-Persistenz eingeführt wird. Nach dem offiziellen Kraken-/Crypto-Facilities-REST-v3-Beispiel wird der tatsächlich serialisierte Query-/POST-Datenstring mit Nonce und Endpoint-Pfad kombiniert, SHA-256-gehasht, mit dem Base64-dekodierten Secret via HMAC-SHA-512 signiert und das Ergebnis Base64-kodiert. Der /derivatives-Präfix wird bei der Signaturpfadbildung entfernt.
 
 Die exakte Serialisierung muss gegen die aktuelle offizielle Implementierung und reproduzierbare Testvektoren validiert werden. GET-Querystring, POST-Querystring, Nonce-Header und signierter String müssen bytegenau zusammenpassen. Spot-Signaturen dürfen nicht adaptiert oder wiederverwendet werden. Es werden getrennte Futures-API-Schlüssel benötigt. Keine Abhebungs- oder Transferrechte.
 
@@ -62,7 +62,7 @@ Die exakte Serialisierung muss gegen die aktuelle offizielle Implementierung und
 |---|---|
 | Kontraktuniversum | GET /instruments |
 | Ticker / Orderbuch | GET /tickers, GET /orderbook |
-| Multi-Collateral-Wallets | GET /wallets |
+| Multi-Collateral-Wallets | GET /accounts (Wallet-/Accountdaten im Response-Objekt) |
 | Offene Positionen | GET /openpositions |
 | Offene Orders | GET /openorders |
 | Fills / Ausführungen | GET /fills |
@@ -210,3 +210,7 @@ Die aktuelle CI mit Quality (Ruff/Mypy/pytest), Security (Bandit/pip-audit), App
 - Futures API demo environment: https://support.kraken.com/articles/360024809011-api-testing-environment-derivatives
 
 Produkt-, Margin-, Gebühren- und Länderbedingungen können sich ändern. Die Werte in dieser Spezifikation sind keine dauerhaften Konstanten. Bei Implementierung und jedem späteren Produktfreigabe-Check müssen die aktuellen Kraken-Antworten und offiziellen Bedingungen erneut geprüft werden.
+
+## 11. Implementierungsstand Read-only API (Folge-PR, noch nicht in main)
+
+Der erste Code-Meilenstein stellt einen eigenen, read-only Futures-REST-Client für die isolierte Demo bereit. Er darf ausschließlich die dokumentierten GET-Endpunkte für Instrumente, Ticker, Konten, offene Positionen/Orders, Fills, Leverage-Präferenzen und historische Funding-Raten abfragen. Die URL ist fest auf demo-futures.kraken.com gepinnt. Produktionsumgebung, frei konfigurierbare Hosts, Order-, Cancel-, Transfer- und Änderungsendpunkte sind nicht verfügbar. Die Authentifizierung nutzt die offizielle REST-v3-Signatur; Tests sichern das Signing, die exakt signierte Query, Fehlerbehandlung und die Demo-Hostgrenze ab. Die Live-Version dieses Moduls wird erst nach gesonderter Code- und Testfreigabe ergänzt.
