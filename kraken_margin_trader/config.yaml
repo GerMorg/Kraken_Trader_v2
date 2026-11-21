@@ -2,7 +2,7 @@ name: Kraken Margin Trader
 version: 0.1.69
 slug: kraken_margin_trader
 description: >-
-  Eigenständiger Kraken Spot-/Spot-Margin-Trader mit isoliertem Futures-Demo-Read-only-Adapter und Auditspur.
+  Eigenständiger Kraken Spot-/Spot-Margin-Trader mit getrenntem Futures-Demo- und Produktions-Read-only-Adapter und Auditspur.
   Shadow-first; Start- und Container-Smoke-Tests; echte Orderübermittlung bleibt durch eine interne Code-Freigabe gesperrt.
 url: https://github.com/GerMorg/Kraken_Trader_v2
 arch: [amd64, aarch64]
