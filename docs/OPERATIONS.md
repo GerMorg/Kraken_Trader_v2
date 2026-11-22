@@ -20,6 +20,9 @@ Manuell angelegte offene Kraken-Orders erscheinen als `EXTERNAL_OPEN_ORDER_UNMAN
 
 Der normale Zyklus startet in 0.1.75 keinen Microstructure-WebSocket und verarbeitet keine großen Strategy-Lab-, Forward-Matching- oder Portfolio-Research-Abfragen. Bereits vorhandene Forschungsdaten bleiben erhalten. Die zyklische Routine konzentriert sich auf aktuelle Märkte, Konto-/Positionszustand, Strategieentscheidung, Risiko und Reconciliation. Beobachte nach dem Update CPU-Last, Cycle-Dauer und Logs über mehrere Zyklen; eine konkrete CPU-Prozentzahl kann aus dem Quellcode allein nicht garantiert werden.
 
+### Hebel
+Der Hebelwähler nimmt den höchsten instrumentseitig unterstützten Wert bis zum internen 3x-Hard-Cap. Die Positionsgröße wird trotzdem durch das konfigurierte Risikobudget und Portfolio-Limits begrenzt. Höherer Hebel senkt nicht die prozentuale Gebühr auf den Nominalwert.
+
 ### Futures
 
 Der Produktions-Futures-Adapter bleibt Read-only. Es gibt aktuell keine Futures-Order-, Amend- oder Cancel-Funktion. Für Futures sind ein eigener Trading-Adapter und eine getrennte Futures-Entscheidungs-/Schutzorderstrecke vorgesehen. Der aktuelle Futures-Schlüssel mit `READ_ONLY`-Berechtigung darf nicht für Orderausführung verwendet werden.
