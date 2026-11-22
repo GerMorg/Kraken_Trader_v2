@@ -1109,16 +1109,6 @@ class TraderRuntime:
             decision_evidence=dict(intent.get("decision_evidence", {})),
         )
 
-    def _validate_shadow_order(self, intent: dict[str, Any], instrument: Any) -> dict[str, Any]:
-        """Ask Kraken to validate a proposed order without placing a live order."""
-        authority = OrderAuthority(self.client, self.persistence, self.settings, self.audit)
-        return authority.execute(
-            self._order_intent_from_mapping(intent),
-            instrument,
-            prechecks_passed=True,
-            validate_only=True,
-        )
-
     def _fetch_fresh_ticker(self, instrument: Any) -> Any | None:
         """Fetch this market's executable quote immediately before entry evaluation."""
         response = self.client.public("Ticker", {"pair": instrument.altname})
@@ -2136,7 +2126,7 @@ class TraderRuntime:
                                             holding_hours=self.settings.expected_holding_hours,
                                             fast_threshold_bps=self.settings.strategy_fast_bps,
                                             slow_threshold_bps=self.settings.strategy_slow_bps,
-                                            stop_pct=self.settings.position_stop_loss_pct,
+                                            stop_pct=self.settings.trailing_stop_offset_pct,
                                             take_profit_pct=self.settings.position_take_profit_pct,
                                             take_profit_fraction=self.settings.position_take_profit_fraction,
                                             strategy_version=STRATEGY_VERSION,
@@ -2188,7 +2178,7 @@ class TraderRuntime:
                             signal_bar_ts=latest_bar_ts,
                             bar_age_seconds=bar_age_seconds,
                         )
-                if self.settings.shadow_strategy_lab_enabled and bars:
+                if BACKGROUND_RESEARCH_ENABLED and bars:
                     shadow_bar_ts = int(bars[-1]["ts"])
                     shadow_decision_ts = int(time.time())
                     shadow_bar_age = shadow_decision_ts - (shadow_bar_ts + 3600)
@@ -2565,41 +2555,6 @@ class TraderRuntime:
                         fill_confirmed=False,
                         result=submission.get("result", {}),
                     )
-                elif False:  # validation-only order calls were removed with the PAPER/SHADOW mode split
-                    try:
-                        validation = self._validate_shadow_order(intent, instrument)
-                    except KrakenAmbiguousError as exc:
-                        counts["blocked"] += 1
-                        self.audit.emit(
-                            "SHADOW_ORDER_VALIDATION_OUTCOME_UNKNOWN",
-                            cycle_id=cycle_id,
-                            pair=instrument.wsname,
-                            intent_id=intent["intent_id"],
-                            code=exc.code,
-                            no_live_order_submitted=True,
-                        )
-                        continue
-                    except (KrakenAPIError, ValueError) as exc:
-                        counts["blocked"] += 1
-                        self.audit.emit(
-                            "SHADOW_ORDER_VALIDATION_FAILED",
-                            cycle_id=cycle_id,
-                            pair=instrument.wsname,
-                            intent_id=intent["intent_id"],
-                            exception_type=type(exc).__name__,
-                            code=getattr(exc, "code", str(exc))[:200],
-                            no_live_order_submitted=True,
-                        )
-                        continue
-                    counts["intents"] += 1
-                    self.audit.emit(
-                        "SHADOW_ORDER_VALIDATED_NO_ORDER_SENT",
-                        cycle_id=cycle_id,
-                        pair=instrument.wsname,
-                        intent_id=intent["intent_id"],
-                        validation_state=validation.get("state"),
-                        no_live_order_submitted=True,
-                    )
                 elif self.persistence.create_intent(intent, initial_state="SHADOW_ONLY"):
                     counts["intents"] += 1
                     self.audit.emit(
@@ -2634,7 +2589,7 @@ class TraderRuntime:
             )
             if BACKGROUND_RESEARCH_ENABLED:
                 failure_stage = "FINALIZE_MULTI_ASSET_STRATEGY_RESEARCH"
-                if self.settings.shadow_strategy_lab_enabled:
+                if BACKGROUND_RESEARCH_ENABLED:
                     try:
                         nonempty_histories = [
                             rows for rows in portfolio_histories.values() if rows
@@ -2884,7 +2839,7 @@ class TraderRuntime:
                 failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_READ"
                 strategy_candidate_rows = self.persistence.strategy_candidate_observations(limit=100000)
                 strategy_lab_summary = summarize_strategy_candidate_research(strategy_candidate_rows)
-                strategy_lab_summary["enabled"] = self.settings.shadow_strategy_lab_enabled
+                strategy_lab_summary["enabled"] = BACKGROUND_RESEARCH_ENABLED
                 failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_WRITE"
                 self.persistence.record_event("SHADOW_STRATEGY_LAB_SUMMARY", strategy_lab_summary)
                 self.audit.emit("SHADOW_STRATEGY_LAB_SUMMARY", **strategy_lab_summary)
