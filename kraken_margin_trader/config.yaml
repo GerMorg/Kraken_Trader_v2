@@ -31,6 +31,10 @@ options:
   expected_holding_hours: 8
   strategy_fast_bps: 120
   strategy_slow_bps: 180
+  strategy_fast_efficiency_min: 0.20
+  strategy_slow_efficiency_min: 0.12
+  strategy_stop_min_pct: 1.5
+  strategy_stop_max_pct: 5.0
   trailing_stop_offset_pct: 3.0
   risk_per_trade_pct: 0.5
   risk_max_position_pct: 20
@@ -51,12 +55,16 @@ schema:
   kraken_futures_api_secret: password
   futures_readonly_enabled: bool
   real_orders_enabled: bool
-  cycle_interval_seconds: int(60,3600)
-  max_market_candidates: int(1,30)
-  market_max_age_seconds: int(15,600)
+  cycle_interval_seconds: int(60,)
+  max_market_candidates: int(1,)
+  market_max_age_seconds: int(15,)
   expected_holding_hours: int(1,)
   strategy_fast_bps: float
   strategy_slow_bps: float
+  strategy_fast_efficiency_min: float
+  strategy_slow_efficiency_min: float
+  strategy_stop_min_pct: float
+  strategy_stop_max_pct: float
   trailing_stop_offset_pct: float
   risk_per_trade_pct: float
   risk_max_position_pct: float
