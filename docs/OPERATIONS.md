@@ -12,7 +12,7 @@ Eine alte Optionsdatei ohne `real_orders_enabled` bleibt im Simulationsbetrieb, 
 
 ### Schutzorders und manuelle Orders
 
-Jede Spot-/Spot-Margin-Einstiegsorder erhält im Kraken-`AddOrder`-Request eine angehängte Trailing-Stop-Conditional-Close-Order. Standardoffset: 3.0%. Prüfe im AppLog `PROTECTIVE_ORDER_ATTACHED_BY_EXCHANGE` bzw. `PROTECTIVE_ORDER_NOT_CONFIRMED`. Eine fehlende Bestätigung führt zu einem persistenten Breaker. Ein angehängter Stop ist kein Fill- oder Ausführungspreisnachweis.
+Jede Spot-/Spot-Margin-Einstiegsorder erhält im Kraken-`AddOrder`-Request eine angehängte Trailing-Stop-Conditional-Close-Order. Standardoffset: 3.0%. Prüfe im AppLog `PROTECTIVE_ORDER_ATTACHED_BY_EXCHANGE` bzw. `PROTECTIVE_ORDER_NOT_CONFIRMED`. Eine fehlende Bestätigung führt zu einem persistenten Breaker. Kraken dokumentiert das Conditional-Close-Volumen als gleich dem Primärorder-Volumen. Bei Teilfüllungen muss der Schutz daher separat mit dem tatsächlichen Fill und der Börsenposition reconciled werden; diese Demo-End-to-End-Prüfung ist noch offen. Ein angehängter Stop ist kein Fill- oder Ausführungspreisnachweis.
 
 Manuell angelegte offene Kraken-Orders erscheinen als `EXTERNAL_OPEN_ORDER_UNMANAGED`. Die App passt diese Orders nicht an und storniert sie nicht. Die manuell verwalteten Positionen und die Börsen-Sicherheiten bleiben vom Börsenkonto geliefert und können die verfügbare Risikokapazität beeinflussen.
 
