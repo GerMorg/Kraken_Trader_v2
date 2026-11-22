@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.74 — Aktueller OpenOrders-Snapshot als Reconciliation-Quelle
+
+- Reconciliation prüft unbekannte offene Orders ausschließlich gegen Order-IDs aus dem im aktuellen Zyklus erfolgreich validierten Kraken-`OpenOrders`-Snapshot.
+- Persistierte ältere `source=OPEN`-Beobachtungen bleiben unverändert in der Audit-Historie, werden aber aus der aktuellen Open-Order-Prüfung und dem Intent-Matching ausgeschlossen, wenn ihre ID nicht im aktuellen Snapshot enthalten ist.
+- Geschlossene Orders bleiben als historische Evidenz für lokale Intents verfügbar. Submit-Intents ohne passende aktuelle offene oder geschlossene Börsenevidenz bleiben fail-closed und lösen weiterhin den Circuit Breaker aus.
+- Ergänzt Telemetrie für aktuelle offene Orders, ausgeschlossene veraltete OPEN-Datensätze und verwendete Reconciliation-Evidenz sowie Regressionstests.
+- Kein Datenbankschema-Reset, keine Orderübermittlung, keine Strategie-/Risikoparameteränderung und keine Änderung am internen Live-Release-Gate.
+
 ## 0.1.68 — Isolierter Futures-Demo-Read-only-Client
 
 - Ergänzt einen separat implementierten Kraken Futures REST-v3-Client, fest auf die isolierte Demo-Umgebung gepinnt.
