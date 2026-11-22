@@ -63,6 +63,23 @@ class OrderIntent:
                    volume, product_type.upper(), leverage, position_txid, settlement_currency,
                    settlement_amount_verified, evidence or {})
 
+def _trailing_stop_offset_for_intent(
+    intent: OrderIntent,
+    default_offset_pct: Decimal,
+) -> Decimal:
+    """Use the strategy's risk stop distance when present; otherwise use the HA default."""
+    raw = intent.decision_evidence.get("trailing_stop_offset_pct")
+    if raw is None:
+        return default_offset_pct
+    try:
+        selected = D(str(raw))
+    except (ArithmeticError, InvalidOperation, TypeError, ValueError):
+        raise ValueError("TRAILING_STOP_OFFSET_INVALID") from None
+    if not selected.is_finite() or selected < D("0.5") or selected > D("20"):
+        raise ValueError("TRAILING_STOP_OFFSET_OUT_OF_RANGE")
+    return selected
+
+
 def build_add_order_params(
     intent: OrderIntent,
     instrument: Instrument,
@@ -162,14 +179,11 @@ def build_add_order_params(
     # opposite-side trailing stop; Kraken defines its volume as the primary order volume.
     protective_entry = intent.action == Action.OPEN_SPOT_LONG or intent.action in opens
     if protective_entry:
-        if (
-            not trailing_stop_offset_pct.is_finite()
-            or trailing_stop_offset_pct < D("0.5")
-            or trailing_stop_offset_pct > D("20")
-        ):
-            raise ValueError("TRAILING_STOP_OFFSET_OUT_OF_RANGE")
+        selected_trailing_stop_offset = _trailing_stop_offset_for_intent(
+            intent, trailing_stop_offset_pct
+        )
         params["close[ordertype]"] = "trailing-stop"
-        params["close[price]"] = f"+{format(trailing_stop_offset_pct, 'f')}%"
+        params["close[price]"] = f"+{format(selected_trailing_stop_offset, 'f')}%"
     # reduce_only is documented for margin orders; do not send it on cash spot.
     if intent.action in closes and intent.product_type == "SPOT_MARGIN":
         params["reduce_only"] = True
@@ -291,6 +305,9 @@ class OrderAuthority:
             not protection_required
             or (isinstance(close_description, str) and bool(close_description.strip()))
         )
+        selected_trailing_stop_offset = _trailing_stop_offset_for_intent(
+            intent, self.settings.trailing_stop_offset_pct
+        ) if protection_required else self.settings.trailing_stop_offset_pct
         acknowledgement = {
             "txid": txids,
             "protective_order_required": protection_required,
@@ -301,7 +318,7 @@ class OrderAuthority:
                 else "UNCONFIRMED"
             ),
             "trailing_stop_offset_pct": (
-                str(self.settings.trailing_stop_offset_pct) if protection_required else None
+                str(selected_trailing_stop_offset) if protection_required else None
             ),
         }
         self.persistence.transition_intent(intent.intent_id,"ACKNOWLEDGED",acknowledgement)
@@ -329,7 +346,7 @@ class OrderAuthority:
                 intent_id=intent.intent_id,
                 primary_order_id=txids[0],
                 order_type="trailing-stop",
-                trailing_stop_offset_pct=str(self.settings.trailing_stop_offset_pct),
+                trailing_stop_offset_pct=str(selected_trailing_stop_offset),
                 conditional_close_volume_equals_primary_order=True,
                 partial_fill_protection_requires_reconciliation=True,
                 separate_child_order_id_returned=False,
