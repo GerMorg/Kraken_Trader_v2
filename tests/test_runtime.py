@@ -757,8 +757,11 @@ def test_runtime_probes_history_when_key_metadata_is_missing_and_keeps_position_
     ]
     assert cycle_summaries
     assert cycle_summaries[-1]["payload"]["internal_live_release"] is False
-    assert cycle_summaries[-1]["payload"]["microstructure_application_pong_without_success_count"] == 0
-    assert cycle_summaries[-1]["payload"]["microstructure_last_application_pong_success_field_present"] is None
+    assert cycle_summaries[-1]["payload"]["background_research_status"] == "DISABLED_BY_ARCHITECTURE"
+    assert cycle_summaries[-1]["payload"]["microstructure_collector_enabled"] is False
+    assert cycle_summaries[-1]["payload"]["microstructure_connection_state"] == "DISABLED"
+    assert cycle_summaries[-1]["payload"]["microstructure_messages_this_process"] == 0
+    assert cycle_summaries[-1]["payload"]["microstructure_history_retained"] is True
     audit.close()
     db.close()
 
