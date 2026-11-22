@@ -49,14 +49,6 @@ def _unit_interval_decimal(raw: Mapping[str, Any], key: str, default: str) -> De
     return value if D(0) <= value <= D(1) else D(default)
 
 
-def _int(raw: Mapping[str, Any], key: str, default: int, lower: int, upper: int) -> int:
-    try:
-        value = int(raw.get(key, default))
-    except (ValueError, TypeError, OverflowError):
-        value = default
-    return max(lower, min(upper, value))
-
-
 def _positive_int(raw: Mapping[str, Any], key: str, default: int) -> int:
     try:
         value = int(raw.get(key, default))
