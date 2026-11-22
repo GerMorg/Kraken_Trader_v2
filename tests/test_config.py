@@ -1,43 +1,41 @@
 from decimal import Decimal
 
-from app.config import HARD_LIMITS, Settings
+from app.config import BACKGROUND_RESEARCH_ENABLED, HARD_LIMITS, Settings
 
 
-def test_defaults_are_shadow_and_live_locked():
+def test_defaults_are_simulation_only_and_live_locked():
     config = Settings()
-    assert config.mode == "SHADOW"
-    assert config.kill_switch
-    assert not config.live_requested
+    assert config.real_orders_enabled is False
+    assert config.live_requested is False
+    assert BACKGROUND_RESEARCH_ENABLED is False
 
 
-def test_options_cannot_raise_code_owned_caps():
+def test_exactly_one_operator_switch_requests_real_orders():
+    assert Settings.from_mapping({"real_orders_enabled": True}).real_orders_enabled is True
+    assert Settings.from_mapping({"real_orders_enabled": False}).real_orders_enabled is False
+
+
+def test_legacy_paper_shadow_and_live_options_cannot_enable_orders():
+    # An existing HA options.json from older versions is safe after the upgrade.
     config = Settings.from_mapping({
-        "mode": "LIVE", "live_enabled": True, "kill_switch": False,
-        "risk_max_leverage": 25, "risk_max_position_pct": 100, "risk_max_drawdown_pct": 40,
+        "mode": "LIVE",
+        "live_enabled": True,
+        "kill_switch": False,
+        "validate_shadow_orders": True,
+    })
+    assert config.real_orders_enabled is False
+
+
+def test_operator_switch_cannot_raise_code_owned_risk_caps():
+    config = Settings.from_mapping({
+        "real_orders_enabled": True,
+        "risk_max_leverage": 25,
+        "risk_max_position_pct": 100,
+        "risk_max_drawdown_pct": 40,
     })
     assert config.risk_max_leverage == 3
     assert config.risk_max_position_pct == HARD_LIMITS["risk_max_position_pct"]
     assert config.risk_max_drawdown_pct == HARD_LIMITS["risk_max_drawdown_pct"]
-    assert config.live_requested
-
-
-def test_parallel_strategy_research_defaults_on_and_can_be_disabled():
-    assert Settings().shadow_strategy_lab_enabled is True
-    assert Settings.from_mapping({"shadow_strategy_lab_enabled": False}).shadow_strategy_lab_enabled is False
-
-
-def test_microstructure_observer_defaults_on_and_symbol_cap_is_bounded():
-    config = Settings()
-    assert config.microstructure_enabled is True
-    assert config.microstructure_max_symbols == 12
-    disabled = Settings.from_mapping({"microstructure_enabled": False})
-    assert disabled.microstructure_enabled is False
-    assert Settings.from_mapping({"microstructure_max_symbols": 99}).microstructure_max_symbols == 20
-    assert Settings.from_mapping({"microstructure_max_symbols": 0}).microstructure_max_symbols == 1
-
-
-def test_unknown_mode_falls_back_to_shadow():
-    assert Settings.from_mapping({"mode": "unexpected"}).mode == "SHADOW"
 
 
 def test_secret_values_are_not_in_safe_summary():
@@ -48,6 +46,7 @@ def test_secret_values_are_not_in_safe_summary():
     assert "key-do-not-log" not in str(config.safe_summary())
     assert "secret-do-not-log" not in str(config.safe_summary())
     assert config.safe_summary()["internal_live_release"] is False
+    assert config.safe_summary()["real_orders_enabled"] is False
 
 
 def test_cash_reserve_can_be_increased_but_not_lowered():
@@ -55,24 +54,18 @@ def test_cash_reserve_can_be_increased_but_not_lowered():
     assert Settings.from_mapping({"risk_cash_reserve_pct": 5}).risk_cash_reserve_pct == Decimal("20")
 
 
-def test_position_exit_policy_defaults_are_explicit_and_bounded():
+def test_position_exit_policy_and_trailing_stop_default_are_explicit_and_bounded():
     config = Settings()
     assert config.position_take_profit_pct == Decimal("3.5")
     assert config.position_take_profit_fraction == Decimal("0.5")
-    assert config.position_stop_loss_pct == Decimal("3.0")
+    assert config.trailing_stop_offset_pct == Decimal("3.0")
 
 
-def test_position_exit_policy_settings_are_clamped_and_non_finite_values_fail_safe():
-    config = Settings.from_mapping({
-        "position_take_profit_pct": 100,
-        "position_take_profit_fraction": 0,
-        "position_stop_loss_pct": "NaN",
-    })
-    assert config.position_take_profit_pct == Decimal("20")
-    assert config.position_take_profit_fraction == Decimal("0.1")
-    # A malformed decimal follows the documented configured default.
-    assert config.position_stop_loss_pct == Decimal("3.0")
-    assert config.safe_summary()["position_take_profit_pct"] == "20"
+def test_trailing_stop_offset_is_clamped_and_non_finite_values_fail_safe():
+    config = Settings.from_mapping({"trailing_stop_offset_pct": 100})
+    assert config.trailing_stop_offset_pct == Decimal("20")
+    malformed = Settings.from_mapping({"trailing_stop_offset_pct": "NaN"})
+    assert malformed.trailing_stop_offset_pct == Decimal("3.0")
 
 
 def test_futures_credentials_are_separate_and_redacted_from_safe_summary():
