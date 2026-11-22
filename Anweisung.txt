@@ -1,4 +1,4 @@
-undefined# MASTERPROMPT – Kraken Margin Trader für Home Assistant
+# MASTERPROMPT – Kraken Margin Trader für Home Assistant
 ## Schlanke Architektur, aggressives risikobasiertes Trading, belastbare Validierung und österreichische Steuerdokumentation
 
 ## 1. Auftrag und Ziel
