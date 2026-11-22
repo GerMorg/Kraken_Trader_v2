@@ -16,7 +16,7 @@ The learning path is independent of the heavier research path. It settles mature
 
 ## Experience calibration
 
-After candidate outcomes mature, the app writes a STRATEGY_EXPERIENCE_CALIBRATION event. It includes only SETTLED_COST_ESTIMATE outcomes with a target time strictly before the report time. For each candidate/version/direction/pair, overlapping holding windows are excluded. Remaining samples are grouped by strategy version, direction and the recorded market regime (TRENDING, RANGING, TRANSITIONAL or UNKNOWN).
+After candidate outcomes mature, the app writes a STRATEGY_EXPERIENCE_CALIBRATION event. It includes only SETTLED_COST_ESTIMATE outcomes with a target time strictly before the report time. For each candidate/version/direction/pair, overlapping holding windows are excluded. Remaining samples are grouped separately by candidate version, direction, pair and the recorded market regime (TRENDING, RANGING, TRANSITIONAL or UNKNOWN). No cross-pair observations are pooled to inflate the per-pair sample count.
 
 The reported beta_shrunk_positive_rate_estimate_pct uses a neutral Beta(5,5) shrinkage prior:
 

@@ -42,7 +42,7 @@ def test_calibration_uses_only_matured_costed_labels_and_excludes_same_pair_over
     assert summary["eligible_costed_non_overlapping_outcome_count"] == 2
     assert summary["excluded_overlapping_same_pair_count"] == 1
     assert summary["excluded_unmatured_or_non_costed_count"] == 3
-    assert len(summary["groups"]) == 2
+    assert len(summary["groups"]) == 3
     assert summary["order_creation_allowed"] is False
     assert all(item["probability_is_calibrated"] is False for item in summary["groups"])
 

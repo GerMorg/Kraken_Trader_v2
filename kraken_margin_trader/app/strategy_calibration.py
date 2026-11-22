@@ -107,17 +107,18 @@ def summarize_experience_calibration(
             non_overlapping.append(row)
             last_target_epoch = int(row["target_epoch"])
 
-    grouped: dict[tuple[str, str, str, str], list[Decimal]] = defaultdict(list)
+    grouped: dict[tuple[str, str, str, str, str], list[Decimal]] = defaultdict(list)
     for row in non_overlapping:
         grouped[(
             str(row["candidate_name"]),
             str(row["candidate_version"]),
             str(row["direction"]),
+            str(row["pair"]),
             str(row["market_regime"]),
         )].append(row["net_bps"])
 
     summaries: list[dict[str, Any]] = []
-    for (name, version, direction, regime), returns in sorted(grouped.items()):
+    for (name, version, direction, pair, regime), returns in sorted(grouped.items()):
         positive = sum(1 for value in returns if value > 0)
         negative = sum(1 for value in returns if value < 0)
         flat = len(returns) - positive - negative
@@ -132,6 +133,7 @@ def summarize_experience_calibration(
             "candidate_name": name,
             "candidate_version": version,
             "direction": direction,
+            "pair": pair,
             "market_regime": regime,
             "independent_same_pair_non_overlapping_sample_count": count,
             "positive_net_outcomes": positive,
