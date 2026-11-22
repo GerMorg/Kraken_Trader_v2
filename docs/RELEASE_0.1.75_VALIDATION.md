@@ -18,7 +18,10 @@ Fehlt die Schutzbestätigung nach einer angenommenen Primärorder, bleibt der In
 
 ### Nicht freigegebene Schutzfälle
 
-Kraken dokumentiert das Conditional-Close-Volumen als gleich dem Volumen der Primärorder. Verhalten bei Teilfüllung, Abbruch, Restmenge und bereits bestehender Position muss durch echte Demo-End-to-End-Tests belegt werden. Eine Conditional-Close-Order wird außerdem nicht automatisch durch eine unabhängige manuelle Schließung entfernt. Die spätere Implementation muss über einen separaten Protection-Manager:
+Die aktuelle Spot-REST-AddOrder-Spezifikation führt `trailing-stop` ausdrücklich als zulässigen Wert für `close[ordertype]` auf. Sie stellt zugleich klar, dass die ausgelöste Conditional-Close-Order anschließend unabhängig ist und den Nettobestand reduzieren oder erhöhen kann. Eine manuelle oder externe Schließung der ursprünglichen Position garantiert daher nicht, dass die bedingte Gegenorder verschwindet; bleibt sie offen und wird später ausgelöst, kann sie eine Gegenposition aufbauen.
+
+Kraken dokumentiert das Conditional-Close-Volumen als gleich dem Volumen der Primärorder. Verhalten bei Teilfüllung, Abbruch, Restmenge und bereits bestehender Position muss durch echte Demo-End-to-End-Tests belegt werden. Eine Conditional-Close-Order wird außerdem nicht automatisch durch eine unabhängige manuelle Schließung entfernt. Vor einer Freigabe echter App-Einstiege ist daher ein separater Protection-Manager erforderlich, der:
+
 - tatsächliche Positionen und kumulierte Fills abgleichen,
 - den exakten verbleibenden Schutzumfang feststellen,
 - überzählige/alte Stops sicher amendieren oder stornieren,
