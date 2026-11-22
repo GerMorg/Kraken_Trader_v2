@@ -1178,7 +1178,7 @@ class TraderRuntime:
                 -row["_ranking_quote_volume_usd"],
                 str(row.get("symbol", "")),
             ),
-        )[:5]
+        )[:self.settings.futures_max_market_candidates]
         summary["candidate_count"] = len(candidates)
         if not candidates:
             summary["status"] = "NO_ELIGIBLE_CRYPTO_LINEAR_USD_PERPETUALS"
@@ -1238,7 +1238,12 @@ class TraderRuntime:
                         "order_created": False,
                     }
                 else:
-                    signal = generate_futures_signal(symbol, closes)
+                    signal = generate_futures_signal(
+                        symbol,
+                        closes,
+                        fast_threshold_bps=self.settings.futures_strategy_fast_bps,
+                        slow_threshold_bps=self.settings.futures_strategy_slow_bps,
+                    )
                     bid = D(str(row.get("bid", "NaN")))
                     ask = D(str(row.get("ask", "NaN")))
                     spread_bps: Decimal | None = None
@@ -1319,7 +1324,7 @@ class TraderRuntime:
             **summary,
             allowed_symbol_count=len(allowed_symbols),
             spot_usd_base_asset_count=len(spot_bases),
-            max_symbols_evaluated=5,
+            max_symbols_evaluated=self.settings.futures_max_market_candidates,
         )
         return summary
 
