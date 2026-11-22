@@ -1,4 +1,6 @@
-## Aktueller Status — 0.1.73
+## Aktueller Status — 0.1.74
+
+**Version 0.1.74 korrigiert die Order-Reconciliation: Als aktuell offene Orders gelten ausschließlich Order-IDs aus dem validierten `OpenOrders`-Snapshot des jeweiligen Zyklus. Persistierte ältere `source=OPEN`-Beobachtungen bleiben für Audit und Historie erhalten, können aber nicht mehr allein einen unbekannten aktuellen Börsenauftrag vortäuschen oder einen Intent fortschreiben. Geschlossene historische Orders bleiben als Reconciliation-Evidenz verfügbar. Ein lokaler Submit-Intent ohne aktuelle offene oder geschlossene Börsenevidenz bleibt weiterhin gesperrt und löst den Circuit Breaker aus.** Der AppLog-Summary weist aktuelle offene Orders und ausgeschlossene veraltete OPEN-Datensätze separat aus. Kein Datenbankreset, keine Orderänderung und keine Änderung der Live-Freigabe.
 
 **Version 0.1.73 ergänzt parallele Frühhorizont-Diagnostik für 15 Minuten, 1 Stunde und 4 Stunden.** Die Auswertung verwendet denselben Signal-Entscheidungszeitpunkt und denselben gespeicherten Spot-Ticker-Midpoint als Einstieg, misst den späteren qualifizierten checksum-geprüften Book-Midpoint und berichtet Bruttoentwicklung sowie einen ausdrücklich als Spot-Kostenproxy gekennzeichneten Wert. Die bisherige konfigurierte Haupt-Haltedauer und die bestehende Forward-Auswertung bleiben unverändert. Die Frühhorizonte sind Diagnosewerte, keine Ersatzstrategie, keine Parameterpromotion und keine Portfolio-PnL. Es werden weder Orders erstellt noch Freigabekriterien verändert.
 

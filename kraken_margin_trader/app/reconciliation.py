@@ -100,16 +100,43 @@ def _target_state(order: dict[str, Any]) -> str | None:
     return "FILLED" if executed == volume else None
 
 
-def reconcile_order_intents(persistence: Any) -> dict[str, Any]:
-    """Reconcile matching persisted intents against observed exchange orders.
+def reconcile_order_intents(
+    persistence: Any,
+    *,
+    current_open_order_ids: set[str],
+) -> dict[str, Any]:
+    """Reconcile persisted order evidence against the current OpenOrders snapshot.
+
+    Historical CLOSED orders remain valid evidence for resolving local intents. A
+    persisted OPEN observation is considered currently open only when its order ID
+    is present in the successfully validated OpenOrders snapshot for this cycle.
 
     This only reconciles order state; it intentionally never declares full portfolio,
     funding, trade-history or ledger reconciliation complete.
     """
+    if not isinstance(current_open_order_ids, set) or any(
+        not isinstance(order_id, str) or not order_id.strip()
+        for order_id in current_open_order_ids
+    ):
+        raise ValueError("CURRENT_OPEN_ORDER_IDS_INVALID")
+
     exchange_orders = persistence.exchange_orders()
+    reconciliation_orders = [
+        row for row in exchange_orders
+        if row.get("source") == "CLOSED"
+        or (
+            row.get("source") == "OPEN"
+            and str(row.get("order_id", "")).strip() in current_open_order_ids
+        )
+    ]
+    stale_open_records_excluded = sum(
+        1 for row in exchange_orders
+        if row.get("source") == "OPEN"
+        and str(row.get("order_id", "")).strip() not in current_open_order_ids
+    )
     by_client: dict[str, list[dict[str, Any]]] = {}
     by_order_id: dict[str, dict[str, Any]] = {}
-    for row in exchange_orders:
+    for row in reconciliation_orders:
         order_id = str(row.get("order_id", "")).strip()
         if order_id:
             by_order_id[order_id] = row
@@ -119,6 +146,9 @@ def reconcile_order_intents(persistence: Any) -> dict[str, Any]:
 
     stats: dict[str, Any] = {
         "observed_orders": len(exchange_orders),
+        "current_open_orders": len(current_open_order_ids),
+        "stale_open_records_excluded": stale_open_records_excluded,
+        "reconciliation_evidence_orders": len(reconciliation_orders),
         "matched_intents": 0,
         "state_updates": 0,
         "unmatched_submitted_intents": 0,
@@ -130,9 +160,13 @@ def reconcile_order_intents(persistence: Any) -> dict[str, Any]:
     unresolved = persistence.unresolved_intents()
     known_unresolved_ids = {str(row.get("client_order_id", "")) for row in unresolved}
 
-    # An open exchange order with no live local intent is external or inconsistent.
-    for order in exchange_orders:
-        if order.get("source") != "OPEN":
+    # Only IDs from this cycle's validated OpenOrders snapshot prove an order is open now.
+    # Older source=OPEN rows are retained for audit but cannot create a stale breaker.
+    for order in reconciliation_orders:
+        if (
+            order.get("source") != "OPEN"
+            or str(order.get("order_id", "")).strip() not in current_open_order_ids
+        ):
             continue
         client_id = str(order.get("client_order_id") or "").strip()
         if not client_id or client_id not in known_unresolved_ids:
