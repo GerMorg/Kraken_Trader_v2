@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.75 — Vereinfachter Regelbetrieb und Spot-Trailing-Schutz
+
+- Ersetzt PAPER/SHADOW/LIVE sowie Live-/Kill-Switch-Kombinationen durch den einzelnen Operator-Schalter `real_orders_enabled`; alte Optionsdateien ohne diesen Schlüssel bleiben sicher im Simulationsbetrieb.
+- Hält den separaten internen Code-Release-Gate geschlossen.
+- Deaktiviert den Microstructure-WebSocket und die großen Strategy-Lab-/Forward-/Portfolio-Research-Abfragen im normalen Handelszyklus; bestehende Research-Daten werden nicht gelöscht.
+- Fügt Spot-/Spot-Margin-Einstiegsorders eine Kraken Conditional-Close-Trailing-Stop-Order hinzu. Die Order-Antwort wird auf die Exchange-Bestätigung des angehängten Close-Auftrags geprüft; bei fehlender Bestätigung wird ein persistenter Protective-Order-Circuit-Breaker gesetzt.
+- Klassifiziert aktuell offene Orders ohne lokalen Intent als extern/manuell verwaltet, protokolliert ihre Metadaten und verändert oder storniert diese Orders nicht.
+- Futures bleibt Read-only; keine Futures-Order-Endpunkte, keine Änderung an Futures-Rechten und keine Änderung am internen Live-Release-Gate.
+
 ## 0.1.74 — Aktueller OpenOrders-Snapshot als Reconciliation-Quelle
 
 - Reconciliation prüft unbekannte offene Orders ausschließlich gegen Order-IDs aus dem im aktuellen Zyklus erfolgreich validierten Kraken-`OpenOrders`-Snapshot.
