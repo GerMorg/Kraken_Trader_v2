@@ -1,11 +1,11 @@
 name: Kraken Margin Trader
-version: 0.1.78
+version: 0.1.79
 slug: kraken_margin_trader
 description: >-
   Kraken-Trading-App mit getrennten Spot-Margin- und Futures-Produktstrecken.
   Spot/Margin und Futures bleiben technisch und risikoseitig getrennt.
-  Der optionale Futures-Demo-Lesezugriff verwendet eigene Zugangsdaten und ist standardmäßig deaktiviert.
-  Die Produktions-Futures-API bleibt Read-only; Demo-Orders sind noch nicht runtime-freigegeben.
+  Futures-Marktdaten und H1-Signale verwenden die Produktions-API ausschließlich lesend.
+  Echte Futures-Orders sind nicht freigegeben.
 url: https://github.com/GerMorg/Kraken_Trader_v2
 arch: [amd64, aarch64]
 startup: application
@@ -23,10 +23,10 @@ options:
   kraken_api_secret: ""
   kraken_futures_api_key: ""
   kraken_futures_api_secret: ""
-  kraken_futures_demo_api_key: ""
-  kraken_futures_demo_api_secret: ""
   futures_readonly_enabled: false
-  futures_demo_enabled: false
+  futures_max_market_candidates: 5
+  futures_strategy_fast_bps: 120
+  futures_strategy_slow_bps: 180
   real_orders_enabled: false
   cycle_interval_seconds: 300
   max_market_candidates: 12
@@ -34,6 +34,10 @@ options:
   expected_holding_hours: 8
   strategy_fast_bps: 120
   strategy_slow_bps: 180
+  strategy_fast_efficiency_min: 0.20
+  strategy_slow_efficiency_min: 0.12
+  strategy_stop_min_pct: 1.5
+  strategy_stop_max_pct: 5.0
   trailing_stop_offset_pct: 3.0
   risk_per_trade_pct: 0.5
   risk_max_position_pct: 20
@@ -44,6 +48,7 @@ options:
   risk_max_open_positions: 4
   risk_daily_loss_pct: 3
   risk_max_drawdown_pct: 8
+  risk_min_margin_level_pct: 300
   risk_cash_reserve_pct: 20
   tax_report_enabled: true
 schema:
@@ -51,26 +56,31 @@ schema:
   kraken_api_secret: password
   kraken_futures_api_key: password
   kraken_futures_api_secret: password
-  kraken_futures_demo_api_key: password
-  kraken_futures_demo_api_secret: password
   futures_readonly_enabled: bool
-  futures_demo_enabled: bool
+  futures_max_market_candidates: int(1,)
+  futures_strategy_fast_bps: float
+  futures_strategy_slow_bps: float
   real_orders_enabled: bool
-  cycle_interval_seconds: int(60,3600)
-  max_market_candidates: int(1,30)
-  market_max_age_seconds: int(15,600)
-  expected_holding_hours: int(1,168)
-  strategy_fast_bps: int(25,1000)
-  strategy_slow_bps: int(50,2000)
-  trailing_stop_offset_pct: float(0.5,20)
-  risk_per_trade_pct: float(0.1,0.5)
-  risk_max_position_pct: float(1,20)
-  risk_max_gross_pct: float(5,80)
-  risk_max_net_pct: float(5,50)
-  risk_max_margin_pct: float(5,25)
-  risk_max_leverage: int(1,3)
-  risk_max_open_positions: int(1,4)
+  cycle_interval_seconds: int(60,)
+  max_market_candidates: int(1,)
+  market_max_age_seconds: int(15,)
+  expected_holding_hours: int(1,)
+  strategy_fast_bps: float
+  strategy_slow_bps: float
+  strategy_fast_efficiency_min: float
+  strategy_slow_efficiency_min: float
+  strategy_stop_min_pct: float
+  strategy_stop_max_pct: float
+  trailing_stop_offset_pct: float
+  risk_per_trade_pct: float
+  risk_max_position_pct: float
+  risk_max_gross_pct: float
+  risk_max_net_pct: float
+  risk_max_margin_pct: float
+  risk_max_leverage: int(1,)
+  risk_max_open_positions: int(0,)
   risk_daily_loss_pct: float
   risk_max_drawdown_pct: float
-  risk_cash_reserve_pct: float(20,80)
+  risk_min_margin_level_pct: float
+  risk_cash_reserve_pct: float
   tax_report_enabled: bool

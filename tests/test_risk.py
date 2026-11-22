@@ -144,3 +144,67 @@ def test_portfolio_risk_status_uses_operator_defined_limits_above_legacy_caps():
     assert within.allowed is True
     assert at_daily_limit.reasons == ("DAILY_LOSS_LIMIT",)
     assert at_drawdown_limit.reasons == ("DRAWDOWN_LIMIT",)
+
+
+def test_margin_level_floor_uses_operator_setting_instead_of_fixed_300_percent():
+    settings = Settings.from_mapping({"risk_min_margin_level_pct": "600"})
+    result = evaluate_entry(
+        instrument=instrument(),
+        signal=signal(),
+        snapshot=snapshot(margin_level_pct=D("500")),
+        settings=settings,
+        cost_complete=True,
+        estimated_net_edge_bps=D("10"),
+        leverage=2,
+        proposed_notional_usd=D("100"),
+        edge_calibrated=True,
+    )
+    assert not result.allowed
+    assert "MARGIN_LEVEL_UNKNOWN_OR_BELOW_APP_ENTRY_FLOOR" in result.reasons
+
+
+def test_zero_margin_level_floor_disables_only_numeric_floor_not_unknown_data_gate():
+    settings = Settings.from_mapping({"risk_min_margin_level_pct": "0"})
+    valid = evaluate_entry(
+        instrument=instrument(), signal=signal(),
+        snapshot=snapshot(margin_level_pct=D("150")),
+        settings=settings, cost_complete=True,
+        estimated_net_edge_bps=D("10"), leverage=2,
+        proposed_notional_usd=D("100"), edge_calibrated=True,
+    )
+    missing = evaluate_entry(
+        instrument=instrument(), signal=signal(),
+        snapshot=snapshot(margin_level_pct=None),
+        settings=settings, cost_complete=True,
+        estimated_net_edge_bps=D("10"), leverage=2,
+        proposed_notional_usd=D("100"), edge_calibrated=True,
+    )
+    assert "MARGIN_LEVEL_UNKNOWN_OR_BELOW_APP_ENTRY_FLOOR" not in valid.reasons
+    assert valid.allowed
+    assert "MARGIN_LEVEL_UNKNOWN_OR_BELOW_APP_ENTRY_FLOOR" in missing.reasons
+    assert not missing.allowed
+
+
+def test_open_position_limit_is_operator_configurable_without_app_cap():
+    settings = Settings.from_mapping({"risk_max_open_positions": 12})
+    result = evaluate_entry(
+        instrument=instrument(), signal=signal(),
+        snapshot=snapshot(open_positions=4),
+        settings=settings, cost_complete=True,
+        estimated_net_edge_bps=D("10"), leverage=2,
+        proposed_notional_usd=D("100"), edge_calibrated=True,
+    )
+    assert result.allowed
+    assert "OPEN_POSITION_LIMIT" not in result.reasons
+
+
+def test_zero_open_position_limit_blocks_every_new_entry():
+    settings = Settings.from_mapping({"risk_max_open_positions": 0})
+    result = evaluate_entry(
+        instrument=instrument(), signal=signal(), snapshot=snapshot(),
+        settings=settings, cost_complete=True,
+        estimated_net_edge_bps=D("10"), leverage=2,
+        proposed_notional_usd=D("100"), edge_calibrated=True,
+    )
+    assert not result.allowed
+    assert "OPEN_POSITION_LIMIT" in result.reasons

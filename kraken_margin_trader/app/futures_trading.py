@@ -173,6 +173,15 @@ def generate_futures_signal(
     prices = list(hourly_closes)
     if len(prices) < 73:
         return FuturesSignal(normalized, "NONE", D(0), D(0), "INSUFFICIENT_HOURLY_HISTORY")
+    if (
+        not isinstance(fast_threshold_bps, Decimal)
+        or not fast_threshold_bps.is_finite()
+        or fast_threshold_bps <= 0
+        or not isinstance(slow_threshold_bps, Decimal)
+        or not slow_threshold_bps.is_finite()
+        or slow_threshold_bps <= 0
+    ):
+        return FuturesSignal(normalized, "NONE", D(0), D(0), "INVALID_FUTURES_STRATEGY_THRESHOLDS")
     if any(not isinstance(value, Decimal) or not value.is_finite() or value <= 0 for value in prices):
         return FuturesSignal(normalized, "NONE", D(0), D(0), "INVALID_PRICE_HISTORY")
     last = prices[-1]

@@ -1098,179 +1098,7 @@ class TraderRuntime:
         )
         return summary
 
-    def _run_futures_demo_snapshot(self, cycle_id: str) -> dict[str, Any]:
-        """Read an isolated Futures Demo account with separate credentials.
-
-        This path sends GET requests only. Permission levels are persisted as
-        UNVERIFIED because this client path does not check Demo key permissions.
-        """
-        if not self.settings.futures_demo_enabled:
-            return {"status": "DISABLED", "snapshot_id": None, "endpoint_error_count": 0}
-        if not (
-            self.settings.futures_demo_api_key.strip()
-            and self.settings.futures_demo_api_secret.strip()
-        ):
-            result = {
-                "status": "BLOCKED_MISSING_CREDENTIALS",
-                "snapshot_id": None,
-                "endpoint_error_count": 1,
-            }
-            self.audit.emit(
-                "FUTURES_DEMO_BLOCKED",
-                cycle_id=cycle_id,
-                reason=result["status"],
-                credentials_present=False,
-                orders_submitted=False,
-            )
-            return result
-
-        client = FuturesAPIClient(
-            api_key=self.settings.futures_demo_api_key,
-            api_secret=self.settings.futures_demo_api_secret,
-            environment="demo",
-        )
-        endpoint_status: dict[str, str] = {}
-        data: dict[str, Any] = {}
-        counts: dict[str, int | None] = {}
-        endpoint_methods = (
-            ("accounts", client.get_accounts),
-            ("open_positions", client.get_open_positions),
-            ("open_orders", client.get_open_orders),
-            ("fills", client.get_fills),
-            ("leverage_preferences", client.get_leverage_preferences),
-            ("instruments", client.get_instruments),
-            ("tickers", client.get_tickers),
-        )
-        authenticated_failed = False
-        for name, method in endpoint_methods:
-            if authenticated_failed and name in {
-                "open_positions", "open_orders", "fills", "leverage_preferences"
-            }:
-                endpoint_status[name] = "SKIPPED_AFTER_AUTHENTICATED_READ_FAILURE"
-                continue
-            try:
-                payload = method()
-                if not isinstance(payload, dict):
-                    raise FuturesAPIError("FUTURES_RESPONSE_SCHEMA_INVALID")
-                data[name] = payload
-                endpoint_status[name] = "SUCCESS"
-                collection_key = {
-                    "accounts": "accounts",
-                    "open_positions": "openPositions",
-                    "open_orders": "openOrders",
-                    "fills": "fills",
-                    "leverage_preferences": "leveragePreferences",
-                    "instruments": "instruments",
-                    "tickers": "tickers",
-                }[name]
-                collection = payload.get(collection_key)
-                counts[name] = (
-                    len(collection) if isinstance(collection, (list, dict)) else None
-                )
-            except FuturesAPIError as exc:
-                endpoint_status[name] = exc.code
-                if name in {
-                    "accounts", "open_positions", "open_orders", "fills",
-                    "leverage_preferences",
-                } and exc.code in {
-                    "FUTURES_HTTP_STATUS_401",
-                    "FUTURES_HTTP_STATUS_403",
-                    "FUTURES_API_AUTHENTICATION_ERROR",
-                }:
-                    authenticated_failed = True
-            except Exception:
-                endpoint_status[name] = "FUTURES_RUNTIME_UNEXPECTED_ERROR"
-
-        if "accounts" not in data:
-            error_count = sum(value != "SUCCESS" for value in endpoint_status.values())
-            self.audit.emit(
-                "FUTURES_DEMO_DATA_SYNC",
-                cycle_id=cycle_id,
-                status="FAILED_ACCOUNT_READ",
-                environment="DEMO_READ_ONLY",
-                endpoint_status=endpoint_status,
-                endpoint_error_count=error_count,
-                account_read_authenticated=False,
-                demo_key_permission_check_supported=False,
-                orders_submitted=False,
-                account_mutations_sent=False,
-                transfers_sent=False,
-            )
-            return {
-                "status": "ACCOUNT_READ_FAILED",
-                "snapshot_id": None,
-                "endpoint_error_count": error_count,
-            }
-
-        account_summary = _futures_account_summary(data["accounts"])
-        counts.update(account_summary)
-        endpoint_error_count = sum(
-            value != "SUCCESS" for value in endpoint_status.values()
-        )
-        result_status = "COMPLETE" if endpoint_error_count == 0 else "PARTIAL"
-        snapshot_id = uuid.uuid4().hex
-        captured_at = datetime.now(timezone.utc).isoformat()
-        snapshot_data = {
-            "api_key_permissions": {
-                "general": "UNVERIFIED",
-                "transfer": "UNVERIFIED",
-            },
-            **data,
-        }
-        try:
-            persisted = self.persistence.record_futures_readonly_snapshot({
-                "snapshot_id": snapshot_id,
-                "captured_at": captured_at,
-                "environment": "demo_read_only",
-                "general_permission": "UNVERIFIED",
-                "transfer_permission": "UNVERIFIED",
-                "result_status": result_status,
-                "counts": counts,
-                "data": snapshot_data,
-            })
-        except Exception:
-            persisted = False
-        final_status = result_status if persisted else "PERSISTENCE_FAILED"
-        summary = {
-            "status": final_status,
-            "account_status": account_summary["account_schema_status"],
-            "snapshot_id": snapshot_id if persisted else None,
-            "endpoint_error_count": endpoint_error_count,
-        }
-        self.persistence.record_event("FUTURES_DEMO_SNAPSHOT_SUMMARY", {
-            "cycle_id": cycle_id,
-            "snapshot_id": summary["snapshot_id"],
-            "status": final_status,
-            "environment": "DEMO_READ_ONLY",
-            "general_permission": "UNVERIFIED",
-            "transfer_permission": "UNVERIFIED",
-            "demo_key_permission_check_supported": False,
-            "endpoint_status": endpoint_status,
-            "counts": counts,
-            **account_summary,
-            "endpoint_error_count": endpoint_error_count,
-            "persistence_succeeded": persisted,
-        })
-        self.audit.emit(
-            "FUTURES_DEMO_DATA_SYNC",
-            cycle_id=cycle_id,
-            status=final_status,
-            environment="DEMO_READ_ONLY",
-            snapshot_id=summary["snapshot_id"],
-            endpoint_status=endpoint_status,
-            counts=counts,
-            **account_summary,
-            endpoint_error_count=endpoint_error_count,
-            account_read_authenticated=True,
-            demo_key_permission_check_supported=False,
-            orders_submitted=False,
-            account_mutations_sent=False,
-            transfers_sent=False,
-            demo_order_execution_runtime_integrated=False,
-        )
-        return summary
-
-    def _evaluate_futures_demo_signals(
+    def _evaluate_futures_market_signals(
         self,
         cycle_id: str,
         spot_usd_instruments: list[Any],
@@ -1286,19 +1114,19 @@ class TraderRuntime:
             "data_error_count": 0,
             "orders_created": False,
         }
-        if not self.settings.futures_demo_enabled:
+        if not self.settings.futures_readonly_enabled:
             return summary
         if not snapshot_id:
-            summary["status"] = "NO_CURRENT_DEMO_SNAPSHOT"
+            summary["status"] = "NO_CURRENT_PRODUCTION_SNAPSHOT"
             return summary
 
-        snapshot = self.persistence.latest_futures_demo_snapshot()
+        snapshot = self.persistence.latest_futures_readonly_snapshot()
         if snapshot is None or snapshot.get("snapshot_id") != snapshot_id:
-            summary["status"] = "CURRENT_DEMO_SNAPSHOT_NOT_PERSISTED"
+            summary["status"] = "CURRENT_PRODUCTION_SNAPSHOT_NOT_PERSISTED"
             return summary
         data = snapshot.get("data")
         if not isinstance(data, dict):
-            summary["status"] = "DEMO_SNAPSHOT_DATA_INVALID"
+            summary["status"] = "PRODUCTION_SNAPSHOT_DATA_INVALID"
             return summary
 
         instrument_payload = data.get("instruments")
@@ -1312,7 +1140,7 @@ class TraderRuntime:
             if isinstance(ticker_payload, dict) else None
         )
         if not isinstance(raw_instruments, list) or not isinstance(raw_tickers, list):
-            summary["status"] = "DEMO_MARKET_DATA_MISSING"
+            summary["status"] = "PRODUCTION_MARKET_DATA_MISSING"
             return summary
 
         spot_bases = {
@@ -1350,18 +1178,18 @@ class TraderRuntime:
                 -row["_ranking_quote_volume_usd"],
                 str(row.get("symbol", "")),
             ),
-        )[:5]
+        )[:self.settings.futures_max_market_candidates]
         summary["candidate_count"] = len(candidates)
         if not candidates:
             summary["status"] = "NO_ELIGIBLE_CRYPTO_LINEAR_USD_PERPETUALS"
-            self.persistence.record_event("FUTURES_DEMO_SIGNAL_SUMMARY", {
+            self.persistence.record_event("FUTURES_MARKET_SIGNAL_SUMMARY", {
                 "cycle_id": cycle_id,
                 **summary,
                 "allowed_symbol_count": len(allowed_symbols),
                 "spot_usd_base_asset_count": len(spot_bases),
             })
             self.audit.emit(
-                "FUTURES_DEMO_SIGNAL_SUMMARY",
+                "FUTURES_MARKET_SIGNAL_SUMMARY",
                 cycle_id=cycle_id,
                 **summary,
                 allowed_symbol_count=len(allowed_symbols),
@@ -1370,18 +1198,18 @@ class TraderRuntime:
             return summary
 
         client = FuturesAPIClient(
-            api_key=self.settings.futures_demo_api_key,
-            api_secret=self.settings.futures_demo_api_secret,
-            environment="demo",
+            api_key=self.settings.futures_api_key,
+            api_secret=self.settings.futures_api_secret,
+            environment="production_read_only",
         )
         now_epoch = D(str(time.time()))
         execution_blockers = [
-            "FUTURES_DEMO_SIGNAL_ONLY",
+            "FUTURES_SIGNAL_ONLY",
             "FUTURES_EDGE_NOT_VALIDATED",
             "FUTURES_FEES_AND_SLIPPAGE_NOT_COMPLETE",
             "FUTURES_FUNDING_HOLD_COST_NOT_COMPLETE",
             "FUTURES_EXCHANGE_INITIAL_MARGIN_TIER_NOT_RECONCILED",
-            "FUTURES_DEMO_ORDER_RUNTIME_NOT_CONNECTED",
+            "FUTURES_PRODUCTION_ORDER_RUNTIME_NOT_RELEASED",
         ]
         for row in candidates:
             symbol = str(row["symbol"]).strip().upper()
@@ -1410,7 +1238,12 @@ class TraderRuntime:
                         "order_created": False,
                     }
                 else:
-                    signal = generate_futures_signal(symbol, closes)
+                    signal = generate_futures_signal(
+                        symbol,
+                        closes,
+                        fast_threshold_bps=self.settings.futures_strategy_fast_bps,
+                        slow_threshold_bps=self.settings.futures_strategy_slow_bps,
+                    )
                     bid = D(str(row.get("bid", "NaN")))
                     ask = D(str(row.get("ask", "NaN")))
                     spread_bps: Decimal | None = None
@@ -1445,9 +1278,9 @@ class TraderRuntime:
                     if signal.has_direction:
                         summary["directional_signal_count"] += 1
                 self.persistence.record_event(
-                    "FUTURES_DEMO_SIGNAL_EVALUATED", event_payload
+                    "FUTURES_MARKET_SIGNAL_EVALUATED", event_payload
                 )
-                self.audit.emit("FUTURES_DEMO_SIGNAL_EVALUATED", **event_payload)
+                self.audit.emit("FUTURES_MARKET_SIGNAL_EVALUATED", **event_payload)
             except FuturesAPIError as exc:
                 summary["data_error_count"] += 1
                 error_payload = {
@@ -1458,9 +1291,9 @@ class TraderRuntime:
                     "order_created": False,
                 }
                 self.persistence.record_event(
-                    "FUTURES_DEMO_SIGNAL_DATA_ERROR", error_payload
+                    "FUTURES_MARKET_SIGNAL_DATA_ERROR", error_payload
                 )
-                self.audit.emit("FUTURES_DEMO_SIGNAL_DATA_ERROR", **error_payload)
+                self.audit.emit("FUTURES_MARKET_SIGNAL_DATA_ERROR", **error_payload)
             except Exception:
                 summary["data_error_count"] += 1
                 error_payload = {
@@ -1471,14 +1304,14 @@ class TraderRuntime:
                     "order_created": False,
                 }
                 self.persistence.record_event(
-                    "FUTURES_DEMO_SIGNAL_DATA_ERROR", error_payload
+                    "FUTURES_MARKET_SIGNAL_DATA_ERROR", error_payload
                 )
-                self.audit.emit("FUTURES_DEMO_SIGNAL_DATA_ERROR", **error_payload)
+                self.audit.emit("FUTURES_MARKET_SIGNAL_DATA_ERROR", **error_payload)
 
         summary["status"] = (
             "COMPLETE" if summary["data_error_count"] == 0 else "PARTIAL"
         )
-        self.persistence.record_event("FUTURES_DEMO_SIGNAL_SUMMARY", {
+        self.persistence.record_event("FUTURES_MARKET_SIGNAL_SUMMARY", {
             "cycle_id": cycle_id,
             **summary,
             "allowed_symbol_count": len(allowed_symbols),
@@ -1486,12 +1319,12 @@ class TraderRuntime:
             "max_symbols_evaluated": 5,
         })
         self.audit.emit(
-            "FUTURES_DEMO_SIGNAL_SUMMARY",
+            "FUTURES_MARKET_SIGNAL_SUMMARY",
             cycle_id=cycle_id,
             **summary,
             allowed_symbol_count=len(allowed_symbols),
             spot_usd_base_asset_count=len(spot_bases),
-            max_symbols_evaluated=5,
+            max_symbols_evaluated=self.settings.futures_max_market_candidates,
         )
         return summary
 
@@ -1641,18 +1474,13 @@ class TraderRuntime:
         futures_readonly_summary: dict[str, Any] = {
             "status": "DISABLED", "snapshot_id": None, "endpoint_error_count": 0
         }
-        futures_demo_summary: dict[str, Any] = {
-            "status": "DISABLED", "snapshot_id": None, "endpoint_error_count": 0
-        }
-        futures_demo_signal_summary: dict[str, Any] = {
+        futures_market_signal_summary: dict[str, Any] = {
             "status": "DISABLED", "snapshot_id": None, "candidate_count": 0,
             "directional_signal_count": 0, "data_error_count": 0, "orders_created": False,
         }
         try:
             failure_stage = "FUTURES_READONLY_SNAPSHOT"
             futures_readonly_summary = self._run_futures_readonly_snapshot(cycle_id)
-            failure_stage = "FUTURES_DEMO_SNAPSHOT"
-            futures_demo_summary = self._run_futures_demo_snapshot(cycle_id)
             failure_stage = "REFRESH_TAX_REPORT"
             self._refresh_tax_report()
             failure_stage = "KRAKEN_SYSTEM_STATUS"
@@ -1678,11 +1506,11 @@ class TraderRuntime:
             ranked=sorted((i for i in instruments if i.pair_id in tickers),
                 key=lambda i:tickers[i.pair_id].volume_quote_24h,reverse=True)
             candidates=ranked[:self.settings.max_market_candidates]; counts["candidates"]=len(candidates)
-            failure_stage = "FUTURES_DEMO_SIGNAL_EVALUATION"
-            futures_demo_signal_summary = self._evaluate_futures_demo_signals(
+            failure_stage = "FUTURES_MARKET_SIGNAL_EVALUATION"
+            futures_market_signal_summary = self._evaluate_futures_market_signals(
                 cycle_id,
                 instruments,
-                snapshot_id=futures_demo_summary.get("snapshot_id"),
+                snapshot_id=futures_readonly_summary.get("snapshot_id"),
             )
             if BACKGROUND_RESEARCH_ENABLED:
                 self.microstructure.update_symbols([
@@ -2446,8 +2274,16 @@ class TraderRuntime:
                                 release_gate_eligible=False,
                             )
 
-                signal=generate_trend_signal(instrument.pair_id,[b["close"] for b in bars],
-                    fast_threshold_bps=self.settings.strategy_fast_bps,slow_threshold_bps=self.settings.strategy_slow_bps)
+                signal=generate_trend_signal(
+                    instrument.pair_id,
+                    [b["close"] for b in bars],
+                    fast_threshold_bps=self.settings.strategy_fast_bps,
+                    slow_threshold_bps=self.settings.strategy_slow_bps,
+                    fast_efficiency_min=self.settings.strategy_fast_efficiency_min,
+                    slow_efficiency_min=self.settings.strategy_slow_efficiency_min,
+                    min_stop_distance_pct=self.settings.strategy_stop_min_pct,
+                    max_stop_distance_pct=self.settings.strategy_stop_max_pct,
+                )
                 self.audit.emit("MARKET_SIGNAL_EVALUATED",cycle_id=cycle_id,pair=instrument.wsname,
                     direction=signal.direction,reason=signal.reason,momentum_fast_bps=signal.momentum_fast_bps,
                     momentum_slow_bps=signal.momentum_slow_bps,trend_efficiency_24h=signal.trend_efficiency_24h,
@@ -3387,14 +3223,11 @@ class TraderRuntime:
                 "futures_readonly_status": futures_readonly_summary.get("status"),
                 "futures_readonly_snapshot_id": futures_readonly_summary.get("snapshot_id"),
                 "futures_readonly_endpoint_error_count": futures_readonly_summary.get("endpoint_error_count"),
-                "futures_demo_status": futures_demo_summary.get("status"),
-                "futures_demo_snapshot_id": futures_demo_summary.get("snapshot_id"),
-                "futures_demo_endpoint_error_count": futures_demo_summary.get("endpoint_error_count"),
-                "futures_demo_signal_status": futures_demo_signal_summary.get("status"),
-                "futures_demo_signal_candidate_count": futures_demo_signal_summary.get("candidate_count"),
-                "futures_demo_directional_signal_count": futures_demo_signal_summary.get("directional_signal_count"),
-                "futures_demo_signal_data_error_count": futures_demo_signal_summary.get("data_error_count"),
-                "futures_demo_orders_created": False,
+                "futures_market_signal_status": futures_market_signal_summary.get("status"),
+                "futures_market_signal_candidate_count": futures_market_signal_summary.get("candidate_count"),
+                "futures_market_directional_signal_count": futures_market_signal_summary.get("directional_signal_count"),
+                "futures_market_signal_data_error_count": futures_market_signal_summary.get("data_error_count"),
+                "futures_orders_created": False,
                 "history_ready_for_entries": history_ready_for_entries,
                 "history_evidence_gaps": list(history_evidence_gaps),
                 "active_circuit_breaker_count": len(final_breaker_rows),

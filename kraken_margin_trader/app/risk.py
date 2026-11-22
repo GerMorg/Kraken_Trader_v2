@@ -142,7 +142,7 @@ def evaluate_entry(
     if not edge_calibrated:
         reasons.append("EDGE_NOT_VALIDATED")
     if leverage < 1 or leverage > settings.risk_max_leverage:
-        reasons.append("LEVERAGE_OUTSIDE_CODE_CAP")
+        reasons.append("LEVERAGE_EXCEEDS_CONFIGURED_MAXIMUM")
     if snapshot.open_positions >= settings.risk_max_open_positions:
         reasons.append("OPEN_POSITION_LIMIT")
     if snapshot.daily_pnl_pct is None:
@@ -185,7 +185,8 @@ def evaluate_entry(
     if margin_required > margin_cap or margin_required > usable_collateral:
         reasons.append("MARGIN_CAP_OR_COLLATERAL")
     if leverage > 1 and (
-        snapshot.margin_level_pct is None or snapshot.margin_level_pct < D(300)
+        snapshot.margin_level_pct is None
+        or snapshot.margin_level_pct < settings.risk_min_margin_level_pct
     ):
         reasons.append("MARGIN_LEVEL_UNKNOWN_OR_BELOW_APP_ENTRY_FLOOR")
 

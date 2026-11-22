@@ -1494,131 +1494,6 @@ def test_futures_readonly_runtime_stays_disabled_by_default(monkeypatch):
 
 
 
-def test_futures_demo_runtime_reads_only_and_persists_separate_snapshot(monkeypatch):
-    runtime, db, audit = make_runtime()
-    runtime.settings = Settings.from_mapping({
-        "kraken_futures_demo_api_key": "demo-public-key",
-        "kraken_futures_demo_api_secret": "demo-private-secret",
-        "futures_demo_enabled": True,
-    })
-
-    class FakeFuturesDemoClient:
-        def __init__(self):
-            self.calls = []
-
-        def get_accounts(self):
-            self.calls.append("accounts")
-            return {"accounts": {"flex": {
-                "currencies": {
-                    "EUR": {
-                        "quantity": "10",
-                        "value": "11",
-                        "collateral_value": "11",
-                        "available": "11",
-                    }
-                },
-                "balanceValue": "11",
-                "portfolioValue": "11",
-                "collateralValue": "11",
-                "availableMargin": "11",
-                "marginEquity": "11",
-                "type": "multiCollateralMarginAccount",
-            }}}
-
-        def get_open_positions(self):
-            self.calls.append("open_positions")
-            return {"openPositions": []}
-
-        def get_open_orders(self):
-            self.calls.append("open_orders")
-            return {"openOrders": []}
-
-        def get_fills(self):
-            self.calls.append("fills")
-            return {"fills": []}
-
-        def get_leverage_preferences(self):
-            self.calls.append("leverage_preferences")
-            return {"leveragePreferences": []}
-
-        def get_instruments(self):
-            self.calls.append("instruments")
-            return {"instruments": [{"symbol": "PF_XBTUSD"}]}
-
-        def get_tickers(self):
-            self.calls.append("tickers")
-            return {"tickers": [{"symbol": "PF_XBTUSD"}]}
-
-    fake_client = FakeFuturesDemoClient()
-
-    def futures_demo_client_factory(**kwargs):
-        assert kwargs["api_key"] == "demo-public-key"
-        assert kwargs["api_secret"] == "demo-private-secret"
-        assert kwargs["environment"] == "demo"
-        return fake_client
-
-    monkeypatch.setattr("app.runtime.FuturesAPIClient", futures_demo_client_factory)
-    result = runtime._run_futures_demo_snapshot("cycle-futures-demo-1")
-
-    assert result["status"] == "COMPLETE"
-    assert result["snapshot_id"]
-    assert fake_client.calls == [
-        "accounts", "open_positions", "open_orders", "fills",
-        "leverage_preferences", "instruments", "tickers",
-    ]
-    latest_demo = db.latest_futures_demo_snapshot()
-    assert latest_demo is not None
-    assert latest_demo["environment"] == "demo_read_only"
-    assert latest_demo["general_permission"] == "UNVERIFIED"
-    assert latest_demo["transfer_permission"] == "UNVERIFIED"
-    assert latest_demo["counts"]["open_positions"] == 0
-    assert db.latest_futures_readonly_snapshot() is None
-    assert "demo-private-secret" not in str(latest_demo)
-    assert "demo-public-key" not in str(latest_demo)
-    logs = audit.stream.getvalue()
-    assert '"event":"FUTURES_DEMO_DATA_SYNC"' in logs
-    assert '"environment":"DEMO_READ_ONLY"' in logs
-    assert '"demo_key_permission_check_supported":false' in logs
-    assert '"orders_submitted":false' in logs
-    assert '"account_mutations_sent":false' in logs
-    audit.close()
-    db.close()
-
-
-def test_futures_demo_runtime_stays_disabled_by_default(monkeypatch):
-    runtime, db, audit = make_runtime()
-
-    def unexpected_client(**kwargs):
-        raise AssertionError("disabled Futures Demo integration must not initialize its client")
-
-    monkeypatch.setattr("app.runtime.FuturesAPIClient", unexpected_client)
-    result = runtime._run_futures_demo_snapshot("cycle-futures-demo-disabled")
-
-    assert result == {
-        "status": "DISABLED",
-        "snapshot_id": None,
-        "endpoint_error_count": 0,
-    }
-    audit.close()
-    db.close()
-
-
-def test_futures_demo_runtime_blocks_enabled_but_missing_credentials(monkeypatch):
-    runtime, db, audit = make_runtime()
-    runtime.settings = Settings.from_mapping({"futures_demo_enabled": True})
-
-    def unexpected_client(**kwargs):
-        raise AssertionError("missing Demo credentials must block before network access")
-
-    monkeypatch.setattr("app.runtime.FuturesAPIClient", unexpected_client)
-    result = runtime._run_futures_demo_snapshot("cycle-futures-demo-no-credentials")
-
-    assert result["status"] == "BLOCKED_MISSING_CREDENTIALS"
-    assert result["endpoint_error_count"] == 1
-    assert "demo-private-secret" not in audit.stream.getvalue()
-    audit.close()
-    db.close()
-
 def test_futures_account_summary_keeps_cash_and_flex_collateral_separate():
     summary = _futures_account_summary({
         "accounts": {
@@ -1666,12 +1541,12 @@ def test_futures_account_summary_reports_missing_flex_wallet_without_claiming_ze
     assert summary["funded_collateral_currency_count"] is None
 
 
-def test_futures_demo_signal_evaluation_uses_spot_crypto_intersection_and_never_orders(monkeypatch):
+def test_futures_market_signal_evaluation_uses_spot_crypto_intersection_and_never_orders(monkeypatch):
     runtime, db, audit = make_runtime()
     runtime.settings = Settings.from_mapping({
-        "kraken_futures_demo_api_key": "demo-public-key",
-        "kraken_futures_demo_api_secret": "demo-private-secret",
-        "futures_demo_enabled": True,
+        "kraken_futures_api_key": "production-readonly-key",
+        "kraken_futures_api_secret": "production-readonly-secret",
+        "futures_readonly_enabled": True,
     })
     now = int(time.time())
     last_open = (now // 3600) * 3600 - 3600
@@ -1688,11 +1563,11 @@ def test_futures_demo_signal_evaluation_uses_spot_crypto_intersection_and_never_
         })
 
     db.record_futures_readonly_snapshot({
-        "snapshot_id": "demo-market-snapshot",
+        "snapshot_id": "production-market-snapshot",
         "captured_at": "2026-11-22T14:00:00+00:00",
-        "environment": "demo_read_only",
-        "general_permission": "UNVERIFIED",
-        "transfer_permission": "UNVERIFIED",
+        "environment": "production_read_only",
+        "general_permission": "READ_ONLY",
+        "transfer_permission": "NO_ACCESS",
         "result_status": "COMPLETE",
         "counts": {},
         "data": {
@@ -1714,9 +1589,9 @@ def test_futures_demo_signal_evaluation_uses_spot_crypto_intersection_and_never_
 
     class FakeChartClient:
         def __init__(self, **kwargs):
-            assert kwargs["api_key"] == "demo-public-key"
-            assert kwargs["api_secret"] == "demo-private-secret"
-            assert kwargs["environment"] == "demo"
+            assert kwargs["api_key"] == "production-readonly-key"
+            assert kwargs["api_secret"] == "production-readonly-secret"
+            assert kwargs["environment"] == "production_read_only"
             self.calls = []
 
         def get_ohlc_candles(self, symbol, **kwargs):
@@ -1724,9 +1599,9 @@ def test_futures_demo_signal_evaluation_uses_spot_crypto_intersection_and_never_
             return {"candles": candles, "more_candles": False}
 
     fake_client = FakeChartClient(
-        api_key="demo-public-key",
-        api_secret="demo-private-secret",
-        environment="demo",
+        api_key="production-readonly-key",
+        api_secret="production-readonly-secret",
+        environment="production_read_only",
     )
 
     def factory(**kwargs):
@@ -1738,10 +1613,10 @@ def test_futures_demo_signal_evaluation_uses_spot_crypto_intersection_and_never_
         Instrument("ETHUSD", "ETHUSD", "ETH/USD", "ETH", "USD", "online", D("0.001"), 8, 1, (2,), (2,)),
     ]
 
-    result = runtime._evaluate_futures_demo_signals(
-        "cycle-futures-demo-signals",
+    result = runtime._evaluate_futures_market_signals(
+        "cycle-futures-market-signals",
         spot_instruments,
-        snapshot_id="demo-market-snapshot",
+        snapshot_id="production-market-snapshot",
     )
 
     assert result["status"] == "COMPLETE"
@@ -1752,7 +1627,7 @@ def test_futures_demo_signal_evaluation_uses_spot_crypto_intersection_and_never_
     assert all(call[1] == {"tick_type": "trade", "resolution": "1h", "count": 90} for call in fake_client.calls)
     events = [
         json.loads(line) for line in audit.stream.getvalue().splitlines()
-        if line.strip() and '"event":"FUTURES_DEMO_SIGNAL_EVALUATED"' in line
+        if line.strip() and '"event":"FUTURES_MARKET_SIGNAL_EVALUATED"' in line
     ]
     assert len(events) == 2
     for event in events:
@@ -1761,6 +1636,7 @@ def test_futures_demo_signal_evaluation_uses_spot_crypto_intersection_and_never_
         assert event["payload"]["order_created"] is False
         assert "FUTURES_EDGE_NOT_VALIDATED" in event["payload"]["execution_blockers"]
         assert "FUTURES_EXCHANGE_INITIAL_MARGIN_TIER_NOT_RECONCILED" in event["payload"]["execution_blockers"]
-    assert "demo-private-secret" not in audit.stream.getvalue()
+        assert "FUTURES_PRODUCTION_ORDER_RUNTIME_NOT_RELEASED" in event["payload"]["execution_blockers"]
+    assert "production-readonly-secret" not in audit.stream.getvalue()
     audit.close()
     db.close()

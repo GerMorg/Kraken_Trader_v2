@@ -9,6 +9,7 @@ import pytest
 
 from app.futures_api import (
     DEMO_BASE_URL,
+    PRODUCTION_BASE_URL,
     FuturesAPIClient,
     FuturesAPIError,
     _NoRedirectHandler,
@@ -71,7 +72,7 @@ def test_futures_authent_rejects_malformed_inputs(
         build_futures_authent(secret, endpoint, query)
 
 
-def test_public_instrument_request_is_pinned_to_demo_and_needs_no_key() -> None:
+def test_public_instrument_request_defaults_to_production_and_needs_no_key() -> None:
     transport = FakeTransport({
         "result": "success",
         "instruments": [{"symbol": "PF_XBTUSD", "type": "flexible_futures"}],
@@ -83,7 +84,7 @@ def test_public_instrument_request_is_pinned_to_demo_and_needs_no_key() -> None:
     assert result["instruments"][0]["symbol"] == "PF_XBTUSD"
     assert len(transport.requests) == 1
     request = transport.requests[0]
-    assert request.full_url == DEMO_BASE_URL + "/derivatives/api/v3/instruments"
+    assert request.full_url == PRODUCTION_BASE_URL + "/derivatives/api/v3/instruments"
     assert request.get_method() == "GET"
     assert request.get_header("Apikey") is None
     assert request.get_header("Authent") is None
@@ -97,6 +98,7 @@ def test_private_accounts_request_uses_exact_futures_signature() -> None:
     client = FuturesAPIClient(
         api_key=TEST_KEY,
         api_secret=TEST_SECRET,
+        environment="demo",
         transport=transport,
     )
 
@@ -147,7 +149,7 @@ def test_private_request_fails_closed_without_credentials() -> None:
     assert transport.requests == []
 
 
-def test_only_demo_environment_is_available_in_this_stage() -> None:
+def test_unknown_futures_environment_is_rejected() -> None:
     with pytest.raises(ValueError, match="FUTURES_PRODUCTION_ENVIRONMENT_NOT_ENABLED"):
         FuturesAPIClient(environment="live")
 
@@ -254,6 +256,7 @@ def test_all_private_read_endpoints_are_authenticated_and_schema_checked(
     client = FuturesAPIClient(
         api_key=TEST_KEY,
         api_secret=TEST_SECRET,
+        environment="demo",
         transport=transport,
     )
 
@@ -377,7 +380,7 @@ def test_public_futures_chart_candles_use_separate_charts_path_and_are_schema_ch
     assert len(result["candles"]) == 1
     request = transport.requests[0]
     assert request.full_url == (
-        DEMO_BASE_URL + "/api/charts/v1/trade/PF_XBTUSD/1h?count=90"
+        PRODUCTION_BASE_URL + "/api/charts/v1/trade/PF_XBTUSD/1h?count=90"
     )
     assert request.get_method() == "GET"
     assert request.get_header("Apikey") is None
