@@ -377,7 +377,7 @@ def test_public_futures_chart_candles_use_separate_charts_path_and_are_schema_ch
     assert len(result["candles"]) == 1
     request = transport.requests[0]
     assert request.full_url == (
-        DEMO_BASE_URL + "/api/charts/v1/trade/PF_XBTUSD/1h?count=90"
+        PRODUCTION_BASE_URL + "/api/charts/v1/trade/PF_XBTUSD/1h?count=90"
     )
     assert request.get_method() == "GET"
     assert request.get_header("Apikey") is None
