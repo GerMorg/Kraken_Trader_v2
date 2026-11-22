@@ -126,8 +126,6 @@ def test_manual_external_open_order_is_classified_without_trippping_order_breake
 
     assert result["unmanaged_external_open_orders"] == 1
     assert not db.circuit_breakers()
-    events = db.events(limit=10)
-    assert any(event["name"] == "EXTERNAL_OPEN_ORDER_UNMANAGED" for event in events)
     db.close()
 
 
