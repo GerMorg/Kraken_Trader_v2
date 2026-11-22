@@ -353,12 +353,15 @@ def test_trailing_stop_offset_is_validated_before_order_submission():
         )
 
 
-def test_order_ack_without_exchange_confirmation_of_protection_trips_breaker(monkeypatch):
+def _execute_margin_short_with_close_description(monkeypatch, close_description):
     monkeypatch.setattr("app.execution.INTERNAL_LIVE_EXECUTION_RELEASED", True)
     db = Persistence(":memory:")
     audit = AuditLogger(path="/definitely-invalid-root/events.jsonl", stream=io.StringIO())
     client = KrakenClient("k", "s")
-    client.private = lambda method, params=None: {"txid": ["O-NO-PROTECTION"]}
+    response = {"txid": ["O-PROTECTION-CHECK"]}
+    if close_description is not None:
+        response["descr"] = {"order": "sell 0.1 XBTUSD @ market", "close": close_description}
+    client.private = lambda method, params=None: response
     intent = OrderIntent.create(
         decision_id="ack-without-protection",
         pair="XBTUSD",
@@ -371,19 +374,40 @@ def test_order_ack_without_exchange_confirmation_of_protection_trips_breaker(mon
     authority = OrderAuthority(
         client, db, Settings.from_mapping({"real_orders_enabled": True}), audit
     )
-
     result = authority.execute(intent, instrument(), prechecks_passed=True, validate_only=False)
+    breakers = db.circuit_breakers()
+    state = db.intent_state(intent.intent_id)
+    audit.close()
+    db.close()
+    return result, breakers, state
+
+
+def test_order_ack_without_exchange_confirmation_of_protection_trips_breaker(monkeypatch):
+    result, breakers, state = _execute_margin_short_with_close_description(monkeypatch, None)
 
     assert result["state"] == "ACKNOWLEDGED"
     assert result["protective_order_status"] == "UNCONFIRMED"
-    assert db.intent_state(intent.intent_id) == "ACKNOWLEDGED"
+    assert state == "ACKNOWLEDGED"
     assert any(
         item["name"] == "PROTECTIVE_ORDER"
         and item["reason"] == "EXCHANGE_DID_NOT_CONFIRM_CONDITIONAL_CLOSE"
-        for item in db.circuit_breakers()
+        for item in breakers
     )
-    audit.close()
-    db.close()
+
+
+def test_order_ack_with_non_trailing_conditional_close_does_not_count_as_protected(monkeypatch):
+    result, breakers, state = _execute_margin_short_with_close_description(
+        monkeypatch, "close position @ stop loss -3.0%"
+    )
+
+    assert result["state"] == "ACKNOWLEDGED"
+    assert result["protective_order_status"] == "UNCONFIRMED"
+    assert state == "ACKNOWLEDGED"
+    assert any(
+        item["name"] == "PROTECTIVE_ORDER"
+        and item["reason"] == "EXCHANGE_DID_NOT_CONFIRM_CONDITIONAL_CLOSE"
+        for item in breakers
+    )
 
 
 def test_missing_add_order_txid_keeps_intent_unknown_not_rejected(monkeypatch):
