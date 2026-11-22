@@ -232,3 +232,26 @@ def test_operational_controls_keep_only_minimums_needed_for_api_and_data_quality
     assert config.cycle_interval_seconds == 60
     assert config.max_market_candidates == 12
     assert config.market_max_age_seconds == 15
+
+
+def test_futures_strategy_and_market_count_are_separately_configurable():
+    config = Settings.from_mapping({
+        "futures_max_market_candidates": 80,
+        "futures_strategy_fast_bps": "2400",
+        "futures_strategy_slow_bps": "3600",
+    })
+    assert config.futures_max_market_candidates == 80
+    assert config.futures_strategy_fast_bps == Decimal("2400")
+    assert config.futures_strategy_slow_bps == Decimal("3600")
+
+
+def test_invalid_futures_strategy_settings_fall_back_to_defaults():
+    config = Settings.from_mapping({
+        "futures_max_market_candidates": 0,
+        "futures_strategy_fast_bps": "NaN",
+        "futures_strategy_slow_bps": "-1",
+    })
+    defaults = Settings()
+    assert config.futures_max_market_candidates == defaults.futures_max_market_candidates
+    assert config.futures_strategy_fast_bps == defaults.futures_strategy_fast_bps
+    assert config.futures_strategy_slow_bps == defaults.futures_strategy_slow_bps
