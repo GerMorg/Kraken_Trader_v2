@@ -7,7 +7,8 @@ Ohne von der App gesetzte Obergrenzen einstellbar sind:
 - Risiko pro Trade, Positionsgröße, Gross-Exposure, Net-Exposure und Margin-Budget.
 - Maximaler Spot-Margin-Hebel und maximale Anzahl offener Positionen.
 - Tagesverlust- und Drawdown-Limits.
-- Strategie-Trendschwellen, Effizienzfilter, Stopdistanz und Haltehorizont.
+- Spot-/Margin-Strategie-Trendschwellen, Effizienzfilter, Stopdistanz und Haltehorizont.
+- Separate Futures-Momentum-Schwellen und Futures-Markt-Kandidatenzahl.
 
 Die Prozent-Risikowerte müssen endlich und nicht negativ sein. Negative, NaN- oder unendliche Eingaben fallen auf den jeweiligen Standardwert zurück. Der Tagesverlust und Drawdown müssen weiterhin größer als null sein.
 
