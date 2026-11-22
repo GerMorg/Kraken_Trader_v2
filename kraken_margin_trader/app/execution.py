@@ -75,7 +75,9 @@ def _trailing_stop_offset_for_intent(
         selected = D(str(raw))
     except (ArithmeticError, InvalidOperation, TypeError, ValueError):
         raise ValueError("TRAILING_STOP_OFFSET_INVALID") from None
-    if not selected.is_finite() or selected < D("0.5") or selected > D("20"):
+    if not selected.is_finite():
+        raise ValueError("TRAILING_STOP_OFFSET_INVALID")
+    if selected < D("0.5") or selected > D("20"):
         raise ValueError("TRAILING_STOP_OFFSET_OUT_OF_RANGE")
     return selected
 
