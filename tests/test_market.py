@@ -173,3 +173,19 @@ def test_quote_freshness_rejects_missing_future_nonfinite_and_stale_timestamps()
     assert not quote_is_fresh(116.0, 115.0, 15)
     assert not quote_is_fresh(float("nan"), 115.0, 15)
     assert not quote_is_fresh(100.0, 115.0, 0)
+
+
+def test_exchange_reported_margin_leverage_is_not_truncated_to_app_owned_100x_cap():
+    from app.market import margin_leverage_for
+
+    item = usd_crypto_universe({
+        "XBTUSD": {
+            "altname": "XBTUSD", "wsname": "XBT/USD", "aclass_base": "currency",
+            "status": "online", "ordermin": "0.001", "lot_decimals": 3,
+            "pair_decimals": 1, "leverage_buy": ["2", "3", "150"],
+            "leverage_sell": ["2", "3", "150"],
+        },
+    })[0]
+    assert item.leverage_buy == (2, 3, 150)
+    assert margin_leverage_for(item, "buy", 200) == 150
+    assert margin_leverage_for(item, "buy", 75) == 3
