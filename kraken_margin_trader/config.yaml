@@ -24,6 +24,9 @@ options:
   kraken_futures_api_key: ""
   kraken_futures_api_secret: ""
   futures_readonly_enabled: false
+  futures_max_market_candidates: 5
+  futures_strategy_fast_bps: 120
+  futures_strategy_slow_bps: 180
   real_orders_enabled: false
   cycle_interval_seconds: 300
   max_market_candidates: 12
@@ -54,6 +57,9 @@ schema:
   kraken_futures_api_key: password
   kraken_futures_api_secret: password
   futures_readonly_enabled: bool
+  futures_max_market_candidates: int(1,)
+  futures_strategy_fast_bps: float
+  futures_strategy_slow_bps: float
   real_orders_enabled: bool
   cycle_interval_seconds: int(60,)
   max_market_candidates: int(1,)
