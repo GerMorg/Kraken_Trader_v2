@@ -1,4 +1,10 @@
-## Aktueller Status — 0.1.74
+## Aktueller Status — 0.1.75
+
+**Version 0.1.75 vereinfacht den Regelbetrieb.** Es gibt nur noch den Operator-Schalter `real_orders_enabled`; fehlende/alte Optionen bedeuten weiterhin Simulation. Die bisherige Unterscheidung PAPER/SHADOW/LIVE sowie die separaten Live-/Kill-Switches und die Validate-only-Option entfallen. Ein zusätzlicher interner, code-kontrollierter Release-Gate bleibt geschlossen.
+
+Der normale Zyklus startet keinen Kraken-Microstructure-WebSocket und verarbeitet keine großen Strategy-Lab-, Forward- oder Portfolio-Research-Datensätze. Historische Forschungsdaten bleiben erhalten. Spot-/Margin-Einstiegsorders erhalten beim AddOrder-Aufruf eine Kraken-börsenseitige `trailing-stop`-Conditional-Close-Order mit dem konfigurierten Offset (Standard 3%). Die API-Antwort muss die Gegenorder als angehängt beschreiben; fehlt diese Bestätigung, wird der Protective-Order-Circuit-Breaker ausgelöst. Das bestätigt die bedingte Orderzuordnung, nicht bereits einen ausgeführten Fill oder eine garantierte Ausführung zum Stop-Preis.
+
+Manuell angelegte offene Orders werden als extern verwaltet protokolliert und nicht mehr als fehlgeschlagene Bot-Intents gewertet. Futures bleibt produktionsseitig Read-only; ein Futures-Trading-Adapter und eine getrennte Futures-Entscheidungsstruktur sind ein eigener nächster Umsetzungsschritt.
 
 **Version 0.1.74 korrigiert die Order-Reconciliation: Als aktuell offene Orders gelten ausschließlich Order-IDs aus dem validierten `OpenOrders`-Snapshot des jeweiligen Zyklus. Persistierte ältere `source=OPEN`-Beobachtungen bleiben für Audit und Historie erhalten, können aber nicht mehr allein einen unbekannten aktuellen Börsenauftrag vortäuschen oder einen Intent fortschreiben. Geschlossene historische Orders bleiben als Reconciliation-Evidenz verfügbar. Ein lokaler Submit-Intent ohne aktuelle offene oder geschlossene Börsenevidenz bleibt weiterhin gesperrt und löst den Circuit Breaker aus.** Der AppLog-Summary weist aktuelle offene Orders und ausgeschlossene veraltete OPEN-Datensätze separat aus. Kein Datenbankreset, keine Orderänderung und keine Änderung der Live-Freigabe.
 
