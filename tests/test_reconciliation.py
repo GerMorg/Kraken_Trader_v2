@@ -118,15 +118,16 @@ def test_invalid_exchange_quantity_fails_closed():
     db.close()
 
 
-def test_unmatched_external_open_order_trips_breaker():
+def test_manual_external_open_order_is_classified_without_trippping_order_breaker():
     db = Persistence(":memory:")
     db.record_exchange_order("EXTERNAL", _order("open", client_id=""), source="OPEN")
 
     result = reconcile_order_intents(db, current_open_order_ids={"EXTERNAL"})
 
-    assert result["unmatched_open_orders"] == 1
-    assert any(item["reason"] == "EXCHANGE_OPEN_ORDER_WITHOUT_MATCHING_LOCAL_INTENT"
-               for item in db.circuit_breakers())
+    assert result["unmanaged_external_open_orders"] == 1
+    assert not db.circuit_breakers()
+    events = db.events(limit=10)
+    assert any(event["name"] == "EXTERNAL_OPEN_ORDER_UNMANAGED" for event in events)
     db.close()
 
 
@@ -138,7 +139,7 @@ def test_stale_persisted_open_order_is_not_treated_as_current_external_order():
 
     assert result["current_open_orders"] == 0
     assert result["stale_open_records_excluded"] == 1
-    assert result["unmatched_open_orders"] == 0
+    assert result["unmanaged_external_open_orders"] == 0
     assert not db.circuit_breakers()
     db.close()
 
