@@ -1416,8 +1416,8 @@ def summarize_strategy_candidate_research(
         "release_gate_eligible": False,
         "limitations": [
             "A candidate observation is a forecast label, not an executed order or fill.",
-            "The logistic candidate is refit using only labels completed before the current decision bar.",
-            "The logistic training samples have overlapping horizons and are correlated.",
+            "The experience calibrator uses only matured labels but remains a grouped historical-rate diagnostic, not a live forecast probability.",
+            "Same-pair overlapping labels are filtered in the calibrator; cross-pair dependence remains unmodelled.",
             "Forward outcomes use the close of the stored hourly candle covering the target time, not an exact-horizon executable price.",
             "The primary net series uses the current exit spread, not historical order-book evidence.",
             "The costed spot series does not include confirmed margin opening or rollover costs.",

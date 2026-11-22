@@ -84,6 +84,7 @@ class Settings:
     futures_max_market_candidates: int = 5
     futures_strategy_fast_bps: Decimal = D("120")
     futures_strategy_slow_bps: Decimal = D("180")
+    strategy_learning_enabled: bool = True
     real_orders_enabled: bool = False
     cycle_interval_seconds: int = 300
     max_market_candidates: int = 12
@@ -148,6 +149,7 @@ class Settings:
             futures_strategy_slow_bps=_positive_decimal(
                 raw, "futures_strategy_slow_bps", "180"
             ),
+            strategy_learning_enabled=_bool(raw, "strategy_learning_enabled", True),
             real_orders_enabled=_bool(raw, "real_orders_enabled", False),
             # Keep only a minimum cycle interval to protect Kraken's public API;
             # there are no code-owned upper bounds on polling, candidates or quote age.
@@ -201,6 +203,7 @@ class Settings:
             "futures_max_market_candidates": self.futures_max_market_candidates,
             "futures_strategy_fast_bps": str(self.futures_strategy_fast_bps),
             "futures_strategy_slow_bps": str(self.futures_strategy_slow_bps),
+            "strategy_learning_enabled": self.strategy_learning_enabled,
             "futures_credentials_present": bool(
                 self.futures_api_key.strip() and self.futures_api_secret.strip()
             ),

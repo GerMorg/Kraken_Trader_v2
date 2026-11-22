@@ -8,6 +8,7 @@ def test_defaults_are_simulation_only_and_live_locked():
     assert config.real_orders_enabled is False
     assert config.live_requested is False
     assert BACKGROUND_RESEARCH_ENABLED is False
+    assert config.strategy_learning_enabled is True
     assert config.risk_min_margin_level_pct == Decimal("300")
 
 
@@ -255,3 +256,15 @@ def test_invalid_futures_strategy_settings_fall_back_to_defaults():
     assert config.futures_max_market_candidates == defaults.futures_max_market_candidates
     assert config.futures_strategy_fast_bps == defaults.futures_strategy_fast_bps
     assert config.futures_strategy_slow_bps == defaults.futures_strategy_slow_bps
+
+
+
+def test_strategy_learning_can_be_disabled_without_enabling_heavy_research_or_orders():
+    enabled = Settings.from_mapping({"strategy_learning_enabled": True})
+    disabled = Settings.from_mapping({"strategy_learning_enabled": False})
+    assert enabled.strategy_learning_enabled is True
+    assert disabled.strategy_learning_enabled is False
+    assert enabled.real_orders_enabled is False
+    assert disabled.real_orders_enabled is False
+    assert enabled.safe_summary()["strategy_learning_enabled"] is True
+    assert disabled.safe_summary()["strategy_learning_enabled"] is False
