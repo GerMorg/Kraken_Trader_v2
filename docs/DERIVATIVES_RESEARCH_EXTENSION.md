@@ -1,3 +1,11 @@
+## Architekturstatus nach 0.1.75
+
+Die Produkttrennung bleibt verbindlich: Der vorhandene Kraken-Spot-/Spot-Margin-Client und die Spot-Order-Authority werden nicht für Futures wiederverwendet. Der Futures-Produktbereich besitzt weiterhin eigene API-Credentials, Account-/Wallet-/Position-/Order-/Fill-/Funding-Modelle und muss eine eigene Entscheidungs- und Order-Authority erhalten.
+
+Stand 0.1.75 ist der Produktions-Futures-Client weiterhin **Read-only**. Er besitzt keine SendOrder-, AmendOrder- oder CancelOrder-Funktion. Der vorhandene Produktions-Key wurde als `READ_ONLY` erkannt und reicht nicht zur Orderausführung. Dieser Zustand darf nicht als fertig integrierter Futures-Adapter bezeichnet werden.
+
+Der nächste Futures-Schritt ist ein eigener, demo-first Trading-Adapter mit exakter POST-Signaturvalidierung, dedizierten Order-IDs, Fill-Bestätigung und separater Reduce-only-Trailing-Stop-Order. Erst nach Demo-Tests für Partial Fills, Stop-Amend/Cancel, Restart-Recovery, Position-/Order-Reconciliation, Gebühren/Funding und Schutzorder-Ausfall darf ein Produktionsadapter mit einem separaten Trading-Key ohne Transfer-/Withdraw-Rechte geprüft werden. Der allgemeine Operator-Schalter `real_orders_enabled` genügt nicht, um diese Produkt- und Release-Gates zu umgehen.
+
 # Kraken Derivatives EEA – Research- und Integrationsspezifikation
 
 **Beschlussdatum:** 21.11.2026  
