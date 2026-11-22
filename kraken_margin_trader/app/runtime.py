@@ -18,7 +18,7 @@ from app.costs import (
     select_costed_plan, taker_fee_from_trade_volume, trade_volume_fee_diagnostics,
 )
 from app.kraken import (
-    KrakenAPIError, KrakenAmbiguousError, KrakenClient,
+    KrakenAPIError, KrakenClient,
     api_key_permission_gate_reasons,
 )
 from app.execution import LiveExecutionBlocked, OrderAuthority, OrderIntent, signal_decision_id
@@ -1998,7 +1998,7 @@ class TraderRuntime:
                                 reason=str(exc)[:120],
                                 release_gate_eligible=False,
                             )
-    
+
                 signal=generate_trend_signal(instrument.pair_id,[b["close"] for b in bars],
                     fast_threshold_bps=self.settings.strategy_fast_bps,slow_threshold_bps=self.settings.strategy_slow_bps)
                 self.audit.emit("MARKET_SIGNAL_EVALUATED",cycle_id=cycle_id,pair=instrument.wsname,
@@ -2631,7 +2631,7 @@ class TraderRuntime:
                                         if not isinstance(depth_book, dict):
                                             depth_unavailable_symbols.append(symbol)
                                             continue
-    
+
                                         def valid_depth_levels(raw_levels: Any) -> list[list[str]]:
                                             parsed: list[list[str]] = []
                                             if not isinstance(raw_levels, list):
@@ -2650,7 +2650,7 @@ class TraderRuntime:
                                                 ):
                                                     parsed.append([str(price), str(quantity)])
                                             return parsed
-    
+
                                         bids = valid_depth_levels(depth_book.get("bids"))
                                         asks = valid_depth_levels(depth_book.get("asks"))
                                         if not bids or not asks:
@@ -2684,9 +2684,9 @@ class TraderRuntime:
                                         # never turn a transient public-data failure into a
                                         # failed trading cycle or assume zero execution cost.
                                         depth_unavailable_symbols.append(symbol)
-    
+
                             from app.portfolio_strategies import run_multi_asset_strategy_research
-    
+
                             historical_depth_by_symbol = {
                                 symbol: self.persistence.market_depth_snapshots(symbol, limit=720)
                                 for symbol in portfolio_histories
@@ -2926,24 +2926,7 @@ class TraderRuntime:
                         "actual_fills": False,
                         "release_gate_eligible": False,
                     })
-                def _mean_cost(component: str) -> Any:
-                    value = candidate_cost_breakdown.get(component, {})
-                    return value.get("mean_bps") if isinstance(value, dict) else None
-                compact_candidate_cohort = {
-                    "directional_observations": candidate_cohort.get("directional_observation_count", 0),
-                    "pre_history": candidate_cohort.get("decision_before_first_qualified_mark", 0),
-                    "in_feed": candidate_cohort.get("decision_in_feed_count", 0),
-                    "matured": candidate_cohort.get("matured_in_feed_count", 0),
-                    "matched": candidate_cohort.get("matured_matched_count", 0),
-                    "unmatched": candidate_cohort.get("matured_unmatched_count", 0),
-                    "not_yet_matured": candidate_cohort.get("target_not_yet_matured_count", 0),
-                    "matured_match_coverage_pct": candidate_cohort.get("matured_match_coverage_pct"),
-                    "costed_matches": microstructure_forward_candidates.get("costed_match_count", 0),
-                    "mean_round_trip_taker_fee_bps": _mean_cost("round_trip_taker_fee_bps"),
-                    "mean_round_trip_spread_bps": _mean_cost("entry_exit_spread_bps"),
-                    "mean_round_trip_slippage_bps": _mean_cost("round_trip_slippage_bps"),
-                }
-    
+
             else:
                 microstructure_status = self.microstructure.status()
                 self.audit.emit(
