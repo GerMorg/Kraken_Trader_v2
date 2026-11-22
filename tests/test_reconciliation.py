@@ -118,7 +118,7 @@ def test_invalid_exchange_quantity_fails_closed():
     db.close()
 
 
-def test_manual_external_open_order_is_classified_without_trippping_order_breaker():
+def test_manual_external_open_order_is_classified_without_tripping_order_breaker():
     db = Persistence(":memory:")
     db.record_exchange_order("EXTERNAL", _order("open", client_id=""), source="OPEN")
 
