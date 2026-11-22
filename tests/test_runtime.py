@@ -650,7 +650,7 @@ def test_legacy_validate_shadow_option_is_ignored_and_simulation_stays_safe():
     assert settings.live_requested is False
     assert not hasattr(settings, "validate_shadow_orders")
 
-def test_runtime_probes_history_when_key_metadata_is_missing_and_keeps_position_monitoring(monkeypatch):
+def test_runtime_probes_history_and_persists_positions_without_local_exit_watcher(monkeypatch):
     import json
 
     import app.runtime as runtime_module
@@ -761,7 +761,11 @@ def test_runtime_probes_history_when_key_metadata_is_missing_and_keeps_position_
     ]
     assert reconciled_events
     assert reconciled_events[-1]["payload"]["history_ready_for_entries"] is False
-    assert '"action":"REDUCE_LONG"' in logs
+    # The lightweight runtime persists the exchange position snapshot, but no
+    # longer runs the removed local-only SHADOW exit recommendation watcher.
+    position_rows = db.latest_exchange_position_snapshot()
+    assert [row["position_txid"] for row in position_rows] == ["POSITION-1"]
+    assert '"event":"POSITION_MANAGEMENT_DECISION"' not in logs
     assert '"position_txid":"POSITION-1"' in logs
     assert "never-log-this" not in logs
     cycle_summaries = [
