@@ -8,17 +8,28 @@ from typing import Any, Mapping
 
 D = Decimal
 
-# Hard safety release is code-controlled and deliberately disabled in this version.
-# Home Assistant options must never be enough to enable unattended live orders.
+# The Home Assistant setting is the only operator switch. A separate code-owned
+# release gate remains closed until both exchange execution/protection lifecycles
+# have passed their complete validation programme.
 INTERNAL_LIVE_EXECUTION_RELEASED = False
 
+# Expensive exploratory research is deliberately not part of the trading cycle.
+# It may be re-enabled in a separate, explicitly scheduled research worker later.
+BACKGROUND_RESEARCH_ENABLED = False
+
 HARD_LIMITS = {
-    "risk_per_trade_pct": D("0.5"), "risk_max_position_pct": D("20"),
-    "risk_max_gross_pct": D("80"), "risk_max_net_pct": D("50"),
-    "risk_max_margin_pct": D("25"), "risk_max_leverage": D("3"),
-    "risk_max_open_positions": 4, "risk_daily_loss_pct": D("3"),
-    "risk_max_drawdown_pct": D("8"), "risk_cash_reserve_pct": D("20"),
+    "risk_per_trade_pct": D("0.5"),
+    "risk_max_position_pct": D("20"),
+    "risk_max_gross_pct": D("80"),
+    "risk_max_net_pct": D("50"),
+    "risk_max_margin_pct": D("25"),
+    "risk_max_leverage": D("3"),
+    "risk_max_open_positions": 4,
+    "risk_daily_loss_pct": D("3"),
+    "risk_max_drawdown_pct": D("8"),
+    "risk_cash_reserve_pct": D("20"),
 }
+
 
 def _decimal(raw: Mapping[str, Any], key: str, default: str) -> Decimal:
     try:
@@ -27,12 +38,14 @@ def _decimal(raw: Mapping[str, Any], key: str, default: str) -> Decimal:
     except (InvalidOperation, ValueError, TypeError):
         return D(default)
 
+
 def _int(raw: Mapping[str, Any], key: str, default: int, lower: int, upper: int) -> int:
     try:
         value = int(raw.get(key, default))
     except (ValueError, TypeError, OverflowError):
         value = default
     return max(lower, min(upper, value))
+
 
 def _bool(raw: Mapping[str, Any], key: str, default: bool) -> bool:
     value = raw.get(key, default)
@@ -42,6 +55,7 @@ def _bool(raw: Mapping[str, Any], key: str, default: bool) -> bool:
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
 
+
 @dataclass(frozen=True)
 class Settings:
     api_key: str = ""
@@ -49,13 +63,7 @@ class Settings:
     futures_api_key: str = ""
     futures_api_secret: str = ""
     futures_readonly_enabled: bool = False
-    mode: str = "SHADOW"
-    live_enabled: bool = False
-    kill_switch: bool = True
-    validate_shadow_orders: bool = False
-    shadow_strategy_lab_enabled: bool = True
-    microstructure_enabled: bool = True
-    microstructure_max_symbols: int = 12
+    real_orders_enabled: bool = False
     cycle_interval_seconds: int = 300
     max_market_candidates: int = 12
     market_max_age_seconds: int = 120
@@ -64,7 +72,7 @@ class Settings:
     strategy_slow_bps: Decimal = D("180")
     position_take_profit_pct: Decimal = D("3.5")
     position_take_profit_fraction: Decimal = D("0.5")
-    position_stop_loss_pct: Decimal = D("3.0")
+    trailing_stop_offset_pct: Decimal = D("3.0")
     risk_per_trade_pct: Decimal = D("0.5")
     risk_max_position_pct: Decimal = D("20")
     risk_max_gross_pct: Decimal = D("80")
@@ -83,43 +91,55 @@ class Settings:
 
     @property
     def live_requested(self) -> bool:
-        return self.mode == "LIVE" and self.live_enabled and not self.kill_switch
+        """Compatibility alias; there is no separate PAPER/SHADOW/LIVE mode."""
+        return self.real_orders_enabled
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> Settings:
-        mode = str(raw.get("mode", "SHADOW")).strip().upper()
-        if mode not in {"SHADOW", "PAPER", "LIVE"}:
-            mode = "SHADOW"
+        # Legacy options (mode/live_enabled/kill_switch) are intentionally ignored.
+        # Missing real_orders_enabled always means simulation-only operation.
         decimals: dict[str, Decimal] = {}
         for key, default in (
-            ("risk_per_trade_pct", "0.5"), ("risk_max_position_pct", "20"),
-            ("risk_max_gross_pct", "80"), ("risk_max_net_pct", "50"),
-            ("risk_max_margin_pct", "25"), ("risk_daily_loss_pct", "3"),
+            ("risk_per_trade_pct", "0.5"),
+            ("risk_max_position_pct", "20"),
+            ("risk_max_gross_pct", "80"),
+            ("risk_max_net_pct", "50"),
+            ("risk_max_margin_pct", "25"),
+            ("risk_daily_loss_pct", "3"),
             ("risk_max_drawdown_pct", "8"),
         ):
-            decimals[key] = max(D("0"), min(_decimal(raw, key, default), D(str(HARD_LIMITS[key]))))
-        reserve = max(D("20"), min(D("80"), _decimal(raw, "risk_cash_reserve_pct", "20")))
+            decimals[key] = max(
+                D("0"), min(_decimal(raw, key, default), HARD_LIMITS[key])
+            )
+        reserve = max(
+            D("20"), min(D("80"), _decimal(raw, "risk_cash_reserve_pct", "20"))
+        )
         return cls(
             api_key=str(raw.get("kraken_api_key", "") or ""),
             api_secret=str(raw.get("kraken_api_secret", "") or ""),
             futures_api_key=str(raw.get("kraken_futures_api_key", "") or ""),
             futures_api_secret=str(raw.get("kraken_futures_api_secret", "") or ""),
             futures_readonly_enabled=_bool(raw, "futures_readonly_enabled", False),
-            mode=mode, live_enabled=_bool(raw, "live_enabled", False),
-            kill_switch=_bool(raw, "kill_switch", True),
-            validate_shadow_orders=_bool(raw, "validate_shadow_orders", False),
-            shadow_strategy_lab_enabled=_bool(raw, "shadow_strategy_lab_enabled", True),
-            microstructure_enabled=_bool(raw, "microstructure_enabled", True),
-            microstructure_max_symbols=_int(raw, "microstructure_max_symbols", 12, 1, 20),
+            real_orders_enabled=_bool(raw, "real_orders_enabled", False),
             cycle_interval_seconds=_int(raw, "cycle_interval_seconds", 300, 60, 3600),
             max_market_candidates=_int(raw, "max_market_candidates", 12, 1, 30),
             market_max_age_seconds=_int(raw, "market_max_age_seconds", 120, 15, 600),
             expected_holding_hours=_int(raw, "expected_holding_hours", 8, 1, 168),
-            strategy_fast_bps=max(D("25"), min(D("1000"), _decimal(raw, "strategy_fast_bps", "120"))),
-            strategy_slow_bps=max(D("50"), min(D("2000"), _decimal(raw, "strategy_slow_bps", "180"))),
-            position_take_profit_pct=max(D("0.5"), min(D("20"), _decimal(raw, "position_take_profit_pct", "3.5"))),
-            position_take_profit_fraction=max(D("0.1"), min(D("0.9"), _decimal(raw, "position_take_profit_fraction", "0.5"))),
-            position_stop_loss_pct=max(D("0.5"), min(D("20"), _decimal(raw, "position_stop_loss_pct", "3.0"))),
+            strategy_fast_bps=max(
+                D("25"), min(D("1000"), _decimal(raw, "strategy_fast_bps", "120"))
+            ),
+            strategy_slow_bps=max(
+                D("50"), min(D("2000"), _decimal(raw, "strategy_slow_bps", "180"))
+            ),
+            position_take_profit_pct=max(
+                D("0.5"), min(D("20"), _decimal(raw, "position_take_profit_pct", "3.5"))
+            ),
+            position_take_profit_fraction=max(
+                D("0.1"), min(D("0.9"), _decimal(raw, "position_take_profit_fraction", "0.5"))
+            ),
+            trailing_stop_offset_pct=max(
+                D("0.5"), min(D("20"), _decimal(raw, "trailing_stop_offset_pct", "3.0"))
+            ),
             risk_per_trade_pct=decimals["risk_per_trade_pct"],
             risk_max_position_pct=decimals["risk_max_position_pct"],
             risk_max_gross_pct=decimals["risk_max_gross_pct"],
@@ -143,25 +163,26 @@ class Settings:
 
     def safe_summary(self) -> dict[str, Any]:
         return {
-            "mode": self.mode, "live_enabled": self.live_enabled, "kill_switch": self.kill_switch,
-            "live_requested": self.live_requested,
+            "real_orders_enabled": self.real_orders_enabled,
+            "real_orders_requested": self.real_orders_enabled,
             "internal_live_release": INTERNAL_LIVE_EXECUTION_RELEASED,
-            "shadow_strategy_lab_enabled": self.shadow_strategy_lab_enabled,
-            "microstructure_enabled": self.microstructure_enabled,
-            "microstructure_max_symbols": self.microstructure_max_symbols,
+            "background_research_enabled": BACKGROUND_RESEARCH_ENABLED,
             "credentials_present": self.credentials_present,
             "futures_readonly_enabled": self.futures_readonly_enabled,
-            "futures_credentials_present": bool(self.futures_api_key.strip() and self.futures_api_secret.strip()),
+            "futures_credentials_present": bool(
+                self.futures_api_key.strip() and self.futures_api_secret.strip()
+            ),
             "cycle_interval_seconds": self.cycle_interval_seconds,
             "position_take_profit_pct": str(self.position_take_profit_pct),
             "position_take_profit_fraction": str(self.position_take_profit_fraction),
-            "position_stop_loss_pct": str(self.position_stop_loss_pct),
+            "trailing_stop_offset_pct": str(self.trailing_stop_offset_pct),
             "risk_per_trade_pct": str(self.risk_per_trade_pct),
             "risk_max_position_pct": str(self.risk_max_position_pct),
             "risk_max_gross_pct": str(self.risk_max_gross_pct),
             "risk_max_net_pct": str(self.risk_max_net_pct),
             "risk_max_margin_pct": str(self.risk_max_margin_pct),
-            "risk_max_leverage": self.risk_max_leverage, "risk_max_open_positions": self.risk_max_open_positions,
+            "risk_max_leverage": self.risk_max_leverage,
+            "risk_max_open_positions": self.risk_max_open_positions,
             "risk_daily_loss_pct": str(self.risk_daily_loss_pct),
             "risk_max_drawdown_pct": str(self.risk_max_drawdown_pct),
             "risk_cash_reserve_pct": str(self.risk_cash_reserve_pct),
