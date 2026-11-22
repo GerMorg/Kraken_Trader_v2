@@ -2895,12 +2895,6 @@ class TraderRuntime:
                 quality_payload={"cycle_id":cycle_id,**microstructure_quality}
                 self.persistence.record_event("MICROSTRUCTURE_DATA_QUALITY_SUMMARY",quality_payload)
                 self.audit.emit("MICROSTRUCTURE_DATA_QUALITY_SUMMARY",**quality_payload)
-                candidate_cohort = (
-                    microstructure_forward_candidates.get("cohort_coverage", {}).get("overall", {})
-                    if isinstance(microstructure_forward_candidates.get("cohort_coverage"), dict)
-                    else {}
-                )
-                candidate_cost_breakdown = microstructure_forward_candidates.get("cost_breakdown_bps", {})
                 strategy_candidate_compact: list[dict[str, Any]] = []
                 for candidate in strategy_lab_summary.get("candidates", []):
                     splits = candidate.get("chronological_costed_splits_with_target_horizon_purge", {})
