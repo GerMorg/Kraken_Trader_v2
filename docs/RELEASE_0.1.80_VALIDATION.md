@@ -10,9 +10,18 @@
 
 ## Validation
 
-Automated validation is provided by the GitHub Actions workflow for this release pull request and merge commit. The validation checklist is Ruff, mypy, the full pytest suite, Python compile, HA add-on structure, AppArmor policy syntax, container startup/build and dependency/security checks.
+The initial complete validation of code commit 544e7c02b23a2043def375860bb61c9ab318890f passed in GitHub Actions run 45064376449:
 
-The run IDs and exact result counts are added after the pull request workflow completes. Until those checks pass, this change must not be merged to main.
+- Ruff: all checks passed.
+- mypy: no issues found in 32 source files.
+- pytest: 503 passed.
+- Home Assistant add-on structure and version validation: passed.
+- Python compile: passed.
+- AppArmor profile syntax and policy: passed.
+- Container build and startup checks: passed.
+- Security and dependency audit: passed.
+
+This release record is part of the pull request, so CI is rerun against the final documentation commit as well. Merge only when that final run is green.
 
 ## Operational verification after installation
 
