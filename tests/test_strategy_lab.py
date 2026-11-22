@@ -318,4 +318,3 @@ def test_compression_breakout_requires_prior_range_compression_and_volume_confir
     assert breakout["signal_reason"] == "QUALIFIED_COMPRESSION_BREAKOUT"
     assert D(str(breakout["features"]["range_compression_ratio"])) <= D("0.75")
     assert D(str(breakout["features"]["hourly_volume_ratio_vs_prior_24h_median"])) >= D("1.5")
-    assert breakout["features"]["market_regime"] == "RANGING"

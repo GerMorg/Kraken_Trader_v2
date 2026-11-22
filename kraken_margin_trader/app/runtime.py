@@ -2240,7 +2240,7 @@ class TraderRuntime:
                                 counts["research_outcomes_settled"] += 1
                             elif event_name == "SHADOW_RESEARCH_OUTCOME_INCOMPLETE":
                                 counts["research_outcomes_incomplete"] += 1
-                    except Exception as exc:
+                    except (ArithmeticError, TypeError, ValueError) as exc:
                         self.audit.emit(
                             "SHADOW_RESEARCH_SETTLEMENT_ERROR",
                             cycle_id=cycle_id,
@@ -2269,7 +2269,7 @@ class TraderRuntime:
                                 counts["strategy_lab_outcomes_settled"] += 1
                             elif event_name == "SHADOW_STRATEGY_CANDIDATE_OUTCOME_INCOMPLETE":
                                 counts["strategy_lab_outcomes_incomplete"] += 1
-                    except Exception as exc:
+                    except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
                         self.audit.emit(
                             "SHADOW_STRATEGY_CANDIDATE_SETTLEMENT_ERROR",
                             cycle_id=cycle_id,
@@ -3212,52 +3212,52 @@ class TraderRuntime:
                     microstructure_collector_running=False,
                     database_history_retained=True,
                 )
-            if self.settings.strategy_learning_enabled:
+            if self.settings.strategy_learning_enabled and (
+                counts["strategy_lab_observations_recorded"] > 0
+                or counts["strategy_lab_outcomes_settled"] > 0
+                or counts["strategy_lab_outcomes_incomplete"] > 0
+            ):
                 failure_stage = "FINALIZE_STRATEGY_LEARNING_SUMMARY"
-                try:
-                    strategy_candidate_rows = self.persistence.strategy_candidate_observations(
-                        limit=100000
-                    )
-                    strategy_lab_summary = summarize_strategy_candidate_research(
-                        strategy_candidate_rows
-                    )
-                    strategy_lab_summary["enabled"] = True
-                    strategy_lab_summary["cycle_id"] = cycle_id
-                    self.persistence.record_event(
-                        "SHADOW_STRATEGY_LAB_SUMMARY", strategy_lab_summary
-                    )
-                    self.audit.emit("SHADOW_STRATEGY_LAB_SUMMARY", **strategy_lab_summary)
+                strategy_candidate_rows = self.persistence.strategy_candidate_observations(
+                    limit=100000
+                )
+                strategy_lab_summary = summarize_strategy_candidate_research(
+                    strategy_candidate_rows
+                )
+                strategy_lab_summary["enabled"] = True
+                strategy_lab_summary["cycle_id"] = cycle_id
+                strategy_lab_summary["history_scope"] = (
+                    "LATEST_100000_CANDIDATE_OBSERVATIONS"
+                )
+                self.persistence.record_event(
+                    "SHADOW_STRATEGY_LAB_SUMMARY", strategy_lab_summary
+                )
+                self.audit.emit("SHADOW_STRATEGY_LAB_SUMMARY", **strategy_lab_summary)
 
-                    strategy_calibration_summary = summarize_experience_calibration(
-                        strategy_candidate_rows,
-                        as_of_epoch=int(time.time()),
-                    )
-                    strategy_calibration_summary["cycle_id"] = cycle_id
-                    self.persistence.record_event(
-                        "STRATEGY_EXPERIENCE_CALIBRATION", strategy_calibration_summary
-                    )
-                    self.audit.emit(
-                        "STRATEGY_EXPERIENCE_CALIBRATION",
-                        **strategy_calibration_summary,
-                    )
-                except Exception as exc:
-                    strategy_lab_summary = {
-                        "status": "SUMMARY_ERROR",
-                        "enabled": True,
-                        "exception_type": type(exc).__name__,
-                    }
-                    strategy_calibration_summary = {
-                        "status": "SUMMARY_ERROR",
-                        "groups": [],
-                        "exception_type": type(exc).__name__,
-                    }
-                    self.audit.emit(
-                        "STRATEGY_LEARNING_SUMMARY_ERROR",
-                        cycle_id=cycle_id,
-                        exception_type=type(exc).__name__,
-                        reason=str(exc)[:120],
-                        order_creation_allowed=False,
-                    )
+                strategy_calibration_summary = summarize_experience_calibration(
+                    strategy_candidate_rows,
+                    as_of_epoch=int(time.time()),
+                )
+                strategy_calibration_summary["cycle_id"] = cycle_id
+                strategy_calibration_summary["history_scope"] = (
+                    "LATEST_100000_CANDIDATE_OBSERVATIONS"
+                )
+                self.persistence.record_event(
+                    "STRATEGY_EXPERIENCE_CALIBRATION", strategy_calibration_summary
+                )
+                self.audit.emit(
+                    "STRATEGY_EXPERIENCE_CALIBRATION",
+                    **strategy_calibration_summary,
+                )
+            elif self.settings.strategy_learning_enabled:
+                strategy_lab_summary = {
+                    "status": "NOT_RECOMPUTED_NO_NEW_SHADOW_DATA",
+                    "enabled": True,
+                }
+                strategy_calibration_summary = {
+                    "status": "NOT_RECOMPUTED_NO_NEW_MATURED_LABELS",
+                    "groups": [],
+                }
             else:
                 strategy_lab_summary = {"status": "DISABLED", "enabled": False}
                 strategy_calibration_summary = {"status": "DISABLED", "groups": []}

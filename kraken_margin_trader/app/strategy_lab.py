@@ -559,7 +559,7 @@ def generate_live_shadow_candidate_signals(
     holding_bars: int = 8,
     tsm_version: str = "tsm-0.2.0",
 ) -> list[dict[str, Any]]:
-    """Produce TSM and Fourier diagnostics for research only; never creates orders."""
+    """Produce TSM, Fourier and compression-breakout shadow candidates; never creates orders."""
     if holding_bars < 1:
         raise ValueError("LIVE_SHADOW_HOLDING_BARS_MUST_BE_POSITIVE")
     candles: list[Candle] = []
