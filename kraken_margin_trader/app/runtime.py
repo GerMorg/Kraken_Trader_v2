@@ -2105,8 +2105,6 @@ class TraderRuntime:
                                             fast_threshold_bps=self.settings.strategy_fast_bps,
                                             slow_threshold_bps=self.settings.strategy_slow_bps,
                                             stop_pct=self.settings.trailing_stop_offset_pct,
-                                            take_profit_pct=self.settings.position_take_profit_pct,
-                                            take_profit_fraction=self.settings.position_take_profit_fraction,
                                             strategy_version=STRATEGY_VERSION,
                                         )
                                         backtest_payload = {
