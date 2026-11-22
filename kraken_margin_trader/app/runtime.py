@@ -3041,7 +3041,9 @@ class TraderRuntime:
                 "shadow_research_costed_sample_count": research_summary["costed_spot_proxy_observations"],
                 "shadow_research_holdout_available": research_summary["holdout_sample_available_for_review"],
                 "shadow_research_release_gate_eligible": research_summary["release_gate_eligible"],
-                "shadow_strategy_lab_enabled": BACKGROUND_RESEARCH_ENABLED,
+                "background_research_status": (
+                    "ENABLED" if BACKGROUND_RESEARCH_ENABLED else "DISABLED_BY_ARCHITECTURE"
+                ),
                 "shadow_strategy_lab_candidate_count": strategy_lab_summary["candidate_count"],
                 "shadow_strategy_lab_status": strategy_lab_summary["status"],
                 "shadow_strategy_lab_release_gate_eligible": strategy_lab_summary["release_gate_eligible"],
