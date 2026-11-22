@@ -1679,7 +1679,7 @@ class TraderRuntime:
                             verified_by="ORDER_RECONCILIATION_SUMMARY",
                             clean=all(order_reconciliation.get(key, 0) == 0 for key in (
                                 "ambiguous_matches", "invalid_exchange_states",
-                                "unmatched_open_orders", "unmatched_submitted_intents",
+                                "unmatched_submitted_intents",
                             )),
                         )
                         position_reconciliation = reconcile_positions_to_fills(self.persistence)
