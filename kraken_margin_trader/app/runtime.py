@@ -2496,6 +2496,7 @@ class TraderRuntime:
                     "decision_evidence":{"cycle_id":cycle_id,"strategy_version":STRATEGY_VERSION,
                     "signal_bar_ts":signal_bar_ts,"idempotency_scope":"ONE_ENTRY_THESIS_PER_PAIR_DIRECTION_CLOSED_HOURLY_BAR",
                     "net_edge_is_uncalibrated_proxy":True,"estimated_cost_bps":str(cost.total_round_trip_bps),
+                    "trailing_stop_offset_pct":str(signal.stop_distance_pct),
                     "margin_fee_source":"UNCONFIRMED" if is_margin else "NOT_APPLICABLE"}}
                 if self.settings.real_orders_enabled:
                     authority = OrderAuthority(
