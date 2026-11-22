@@ -34,7 +34,6 @@ from app.microstructure_research import (
 from app.joint_portfolio import simulate_shared_equity_candidate_portfolio
 from app.models import Action, RiskSnapshot
 from app.persistence import Persistence
-from app.position_management import evaluate_position_exits
 from app.research import (
     backfill_target_open_outcomes,
     observation_id,
@@ -1211,7 +1210,7 @@ class TraderRuntime:
     def cycle(self) -> dict[str,Any]:
         cycle_id=str(uuid.uuid4()); started=time.time()
         failure_stage = "CYCLE_INITIALIZATION"
-        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"position_exits_checked":0,"position_reductions_recommended":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0,"strategy_lab_observations_recorded":0,"strategy_lab_outcomes_settled":0,"strategy_lab_outcomes_incomplete":0,"multi_asset_research_runs_recorded":0,"market_depth_snapshots_recorded":0,"market_ticker_refresh_succeeded":0,"market_ticker_refresh_failed":0}
+        counts={"universe":0,"candidates":0,"signals":0,"intents":0,"blocked":0,"real_orders_sent":0,"research_observations_recorded":0,"research_outcomes_settled":0,"research_outcomes_incomplete":0,"strategy_lab_observations_recorded":0,"strategy_lab_outcomes_settled":0,"strategy_lab_outcomes_incomplete":0,"multi_asset_research_runs_recorded":0,"market_depth_snapshots_recorded":0,"market_ticker_refresh_succeeded":0,"market_ticker_refresh_failed":0}
         history_ready_for_entries = False
         history_evidence_gaps = ["ACCOUNT_HISTORY_NOT_CHECKED"]
         api_permissions_ready = False
@@ -1830,27 +1829,6 @@ class TraderRuntime:
                     reconciliation_ok=bool(entry_reconciliation["entry_reconciliation_ok"]),
                     equity_risk_state=equity_risk_state,
                 )
-                exit_decisions = evaluate_position_exits(
-                    account["open_positions"],
-                    tickers,
-                    {item.pair_id: item for item in instruments},
-                    take_profit_pct=self.settings.position_take_profit_pct,
-                    take_profit_fraction=self.settings.position_take_profit_fraction,
-                    stop_loss_pct=self.settings.trailing_stop_offset_pct,
-                )
-                counts["position_exits_checked"] = len(exit_decisions)
-                for decision in exit_decisions:
-                    if decision.get("action") in {"REDUCE_LONG", "REDUCE_SHORT", "CLOSE_LONG", "CLOSE_SHORT"}:
-                        counts["position_reductions_recommended"] += 1
-                    self.persistence.record_event("POSITION_MANAGEMENT_DECISION", {
-                        "cycle_id": cycle_id,
-                        **decision,
-                    })
-                    self.audit.emit(
-                        "POSITION_MANAGEMENT_DECISION",
-                        cycle_id=cycle_id,
-                        **decision,
-                    )
                 if api_permissions_ready and history_ready_for_entries:
                     try:
                         trade_volume = self.client.trade_volume(
