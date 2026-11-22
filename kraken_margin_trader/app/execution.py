@@ -68,9 +68,9 @@ def _trailing_stop_offset_for_intent(
     default_offset_pct: Decimal,
 ) -> Decimal:
     """Use the strategy's risk stop distance when present; otherwise use the HA default."""
-    raw = intent.decision_evidence.get("trailing_stop_offset_pct")
-    if raw is None:
-        return default_offset_pct
+    raw = intent.decision_evidence.get(
+        "trailing_stop_offset_pct", default_offset_pct
+    )
     try:
         selected = D(str(raw))
     except (ArithmeticError, InvalidOperation, TypeError, ValueError):
