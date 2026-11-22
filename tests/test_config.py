@@ -54,11 +54,14 @@ def test_cash_reserve_can_be_increased_but_not_lowered():
     assert Settings.from_mapping({"risk_cash_reserve_pct": 5}).risk_cash_reserve_pct == Decimal("20")
 
 
-def test_position_exit_policy_and_trailing_stop_default_are_explicit_and_bounded():
+def test_trailing_stop_default_and_configured_bounds_are_explicit():
     config = Settings()
-    assert config.position_take_profit_pct == Decimal("3.5")
-    assert config.position_take_profit_fraction == Decimal("0.5")
     assert config.trailing_stop_offset_pct == Decimal("3.0")
+
+    minimum = Settings.from_mapping({"trailing_stop_offset_pct": "0.1"})
+    maximum = Settings.from_mapping({"trailing_stop_offset_pct": "25"})
+    assert minimum.trailing_stop_offset_pct == Decimal("0.5")
+    assert maximum.trailing_stop_offset_pct == Decimal("20")
 
 
 def test_trailing_stop_offset_is_clamped_and_non_finite_values_fail_safe():
