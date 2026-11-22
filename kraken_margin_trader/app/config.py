@@ -43,6 +43,12 @@ def _reserve_percentage(raw: Mapping[str, Any], key: str, default: str) -> Decim
     return value if D(0) <= value <= D(100) else D(default)
 
 
+def _unit_interval_decimal(raw: Mapping[str, Any], key: str, default: str) -> Decimal:
+    """Validate an efficiency threshold against its mathematical 0..1 domain."""
+    value = _decimal(raw, key, default)
+    return value if D(0) <= value <= D(1) else D(default)
+
+
 def _int(raw: Mapping[str, Any], key: str, default: int, lower: int, upper: int) -> int:
     try:
         value = int(raw.get(key, default))
@@ -90,6 +96,10 @@ class Settings:
     expected_holding_hours: int = 8
     strategy_fast_bps: Decimal = D("120")
     strategy_slow_bps: Decimal = D("180")
+    strategy_fast_efficiency_min: Decimal = D("0.20")
+    strategy_slow_efficiency_min: Decimal = D("0.12")
+    strategy_stop_min_pct: Decimal = D("1.5")
+    strategy_stop_max_pct: Decimal = D("5.0")
     trailing_stop_offset_pct: Decimal = D("3.0")
     risk_per_trade_pct: Decimal = D("0.5")
     risk_max_position_pct: Decimal = D("20")
@@ -126,6 +136,10 @@ class Settings:
         risk_max_net_pct = _nonnegative_decimal(raw, "risk_max_net_pct", "50")
         risk_max_margin_pct = _nonnegative_decimal(raw, "risk_max_margin_pct", "25")
         reserve = _reserve_percentage(raw, "risk_cash_reserve_pct", "20")
+        strategy_stop_min = _positive_decimal(raw, "strategy_stop_min_pct", "1.5")
+        strategy_stop_max = _positive_decimal(raw, "strategy_stop_max_pct", "5.0")
+        if strategy_stop_max < strategy_stop_min:
+            strategy_stop_min, strategy_stop_max = D("1.5"), D("5.0")
         return cls(
             api_key=str(raw.get("kraken_api_key", "") or ""),
             api_secret=str(raw.get("kraken_api_secret", "") or ""),
@@ -133,12 +147,22 @@ class Settings:
             futures_api_secret=str(raw.get("kraken_futures_api_secret", "") or ""),
             futures_readonly_enabled=_bool(raw, "futures_readonly_enabled", False),
             real_orders_enabled=_bool(raw, "real_orders_enabled", False),
-            cycle_interval_seconds=_int(raw, "cycle_interval_seconds", 300, 60, 3600),
-            max_market_candidates=_int(raw, "max_market_candidates", 12, 1, 30),
-            market_max_age_seconds=_int(raw, "market_max_age_seconds", 120, 15, 600),
+            # Keep only a minimum cycle interval to protect Kraken's public API;
+            # there are no code-owned upper bounds on polling, candidates or quote age.
+            cycle_interval_seconds=max(60, _positive_int(raw, "cycle_interval_seconds", 300)),
+            max_market_candidates=_positive_int(raw, "max_market_candidates", 12),
+            market_max_age_seconds=max(15, _positive_int(raw, "market_max_age_seconds", 120)),
             expected_holding_hours=_positive_int(raw, "expected_holding_hours", 8),
             strategy_fast_bps=_positive_decimal(raw, "strategy_fast_bps", "120"),
             strategy_slow_bps=_positive_decimal(raw, "strategy_slow_bps", "180"),
+            strategy_fast_efficiency_min=_unit_interval_decimal(
+                raw, "strategy_fast_efficiency_min", "0.20"
+            ),
+            strategy_slow_efficiency_min=_unit_interval_decimal(
+                raw, "strategy_slow_efficiency_min", "0.12"
+            ),
+            strategy_stop_min_pct=strategy_stop_min,
+            strategy_stop_max_pct=strategy_stop_max,
             trailing_stop_offset_pct=_positive_decimal(raw, "trailing_stop_offset_pct", "3.0"),
             risk_per_trade_pct=risk_per_trade_pct,
             risk_max_position_pct=risk_max_position_pct,
@@ -176,6 +200,15 @@ class Settings:
                 self.futures_api_key.strip() and self.futures_api_secret.strip()
             ),
             "cycle_interval_seconds": self.cycle_interval_seconds,
+            "max_market_candidates": self.max_market_candidates,
+            "market_max_age_seconds": self.market_max_age_seconds,
+            "expected_holding_hours": self.expected_holding_hours,
+            "strategy_fast_bps": str(self.strategy_fast_bps),
+            "strategy_slow_bps": str(self.strategy_slow_bps),
+            "strategy_fast_efficiency_min": str(self.strategy_fast_efficiency_min),
+            "strategy_slow_efficiency_min": str(self.strategy_slow_efficiency_min),
+            "strategy_stop_min_pct": str(self.strategy_stop_min_pct),
+            "strategy_stop_max_pct": str(self.strategy_stop_max_pct),
             "trailing_stop_offset_pct": str(self.trailing_stop_offset_pct),
             "risk_per_trade_pct": str(self.risk_per_trade_pct),
             "risk_max_position_pct": str(self.risk_max_position_pct),
