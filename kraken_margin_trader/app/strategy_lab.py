@@ -428,7 +428,7 @@ def compare_strategies(
                 "IN_SAMPLE_TRAIN" if split_name == "train" else "CHRONOLOGICAL_HELD_OUT"
             )
             split_results[split_name] = metrics
-        parameters = (
+        parameters: dict[str, Any] = (
             {
                 "fast_threshold_bps": str(fast_threshold_bps),
                 "slow_threshold_bps": str(slow_threshold_bps),
