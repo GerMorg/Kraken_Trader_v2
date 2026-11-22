@@ -39,6 +39,10 @@ def generate_trend_signal(
     *,
     fast_threshold_bps: Decimal = D("120"),
     slow_threshold_bps: Decimal = D("180"),
+    fast_efficiency_min: Decimal = MIN_FAST_EFFICIENCY,
+    slow_efficiency_min: Decimal = MIN_SLOW_EFFICIENCY,
+    min_stop_distance_pct: Decimal = MIN_STOP_DISTANCE_PCT,
+    max_stop_distance_pct: Decimal = MAX_STOP_DISTANCE_PCT,
 ) -> TrendSignal:
     """Generate a price-only H1 trend signal with explicit trend-efficiency checks.
 
@@ -54,6 +58,14 @@ def generate_trend_signal(
         or not slow_threshold_bps.is_finite()
         or fast_threshold_bps <= 0
         or slow_threshold_bps <= 0
+        or not fast_efficiency_min.is_finite()
+        or not slow_efficiency_min.is_finite()
+        or not min_stop_distance_pct.is_finite()
+        or not max_stop_distance_pct.is_finite()
+        or not D(0) <= fast_efficiency_min <= D(1)
+        or not D(0) <= slow_efficiency_min <= D(1)
+        or min_stop_distance_pct <= 0
+        or max_stop_distance_pct < min_stop_distance_pct
     ):
         return TrendSignal(
             pair_id, "NONE", D(0), D(0), D(0), D(0), "INVALID_STRATEGY_THRESHOLDS"
@@ -92,8 +104,8 @@ def generate_trend_signal(
         )
     sigma = D(str(sigma_value))
     stop_distance = max(
-        MIN_STOP_DISTANCE_PCT,
-        min(MAX_STOP_DISTANCE_PCT, sigma * D(2)),
+        min_stop_distance_pct,
+        min(max_stop_distance_pct, sigma * D(2)),
     )
 
     long_candidate = (
@@ -113,8 +125,8 @@ def generate_trend_signal(
         )
 
     if (
-        fast_efficiency < MIN_FAST_EFFICIENCY
-        or slow_efficiency < MIN_SLOW_EFFICIENCY
+        fast_efficiency < fast_efficiency_min
+        or slow_efficiency < slow_efficiency_min
     ):
         return TrendSignal(
             pair_id, "NONE", fast, slow, D(0), stop_distance,
