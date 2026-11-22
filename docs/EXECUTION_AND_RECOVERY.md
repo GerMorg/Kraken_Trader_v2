@@ -1,3 +1,19 @@
+## v0.1.75: Börsenseitiger Spot-/Margin-Schutz und vereinfachte Ausführung
+
+Der Operator sieht nur noch `real_orders_enabled`. Der Schlüssel fehlt in alten Optionsdateien und ist deshalb standardmäßig `false`; alte `mode`, `live_enabled`, `kill_switch` und `validate_shadow_orders` werden nicht mehr ausgewertet. Das ist eine sichere, abwärtskompatible Migration: Eine alte Konfiguration mit `mode=LIVE` aktiviert nach dem Upgrade keine Orders. Zusätzlich bleibt `INTERNAL_LIVE_EXECUTION_RELEASED` code-seitig `false` und kann nicht über HA-Optionen geändert werden.
+
+Jede neue Spot- oder Spot-Margin-Position und jede Erhöhung erhält im selben Kraken-`AddOrder`-Request eine bedingte Gegenorder:
+- `close[ordertype]=trailing-stop`
+- `close[price]=+N%`, Standardoffset 3.0%
+
+Der Trailing-Offset ist ein relativer Rücklauf vom günstigsten Kurs seit Aktivierung; Kraken verwaltet das Nachziehen. Die angehängte Conditional-Close-Order folgt den durch die Primärorder ausgeführten Mengen. `OrderAuthority` verlangt eine nichtleere `descr.close`-Bestätigung in der Börsenantwort. Fehlt sie, wird die Hauptorder nicht als abgelehnt umgedeutet: Sie bleibt als `ACKNOWLEDGED` dokumentiert und der persistente `PROTECTIVE_ORDER`-Breaker sperrt neue Risikoerhöhungen zur manuellen Prüfung.
+
+Die Antwortbestätigung belegt nur, dass Kraken den Conditional-Close-Auftrag mit der Primärorder angenommen/beschrieben hat. Sie ist kein Fill-Nachweis, keine Garantie der Stop-Ausführung und ersetzt nicht den späteren Abgleich mit OpenOrders, ClosedOrders, Trades und Positionen. Die Schutzorder selbst hat im AddOrder-Response keine separate Child-Order-ID; der Zusammenhang wird über die Primärorder und die `descr.close`-Beschreibung auditiert.
+
+Manuell oder extern angelegte aktuelle offene Orders ohne lokalen Intent werden nun als extern verwaltet protokolliert. Sie lösen nicht allein einen Bot-Order-Reconciliation-Fehler aus. Die App übernimmt aber weder Eigentum noch Änderungs-/Stornierungsbefugnis über diese Orders. Ungeklärte lokale Submit-Intents, doppelte Matches, inkonsistente Mengen und nicht identifizierbare Bot-Aufträge bleiben fail-closed.
+
+In 0.1.75 werden die bestehenden Schutzorders zyklisch noch nicht automatisch geändert oder storniert. Ein zukünftiger Protection-Manager muss pro Produkt die tatsächliche offene Position, den verbleibenden Schutzumfang und die Exchange-Order-IDs zusammenführen, bevor er Amend/Cancel aufruft. Bei manuellen Schließungen darf eine übrig gebliebene Stoporder keinesfalls eine Gegenposition eröffnen.
+
 # Ausführung, Orderzustände und Wiederherstellung
 
 ## v0.1.74: Aktuelle offene Orders von historischen Beobachtungen trennen
