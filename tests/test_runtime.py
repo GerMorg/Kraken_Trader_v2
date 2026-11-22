@@ -350,6 +350,19 @@ def make_runtime():
     return TraderRuntime(Settings(), db, audit), db, audit
 
 
+def test_default_runtime_has_no_background_microstructure_worker():
+    runtime, db, audit = make_runtime()
+
+    assert runtime.settings.real_orders_enabled is False
+    assert runtime.microstructure.enabled is False
+    assert runtime.microstructure._thread is None
+    assert runtime.microstructure.status()["connection_state"] == "DISABLED"
+
+    runtime.close()
+    audit.close()
+    db.close()
+
+
 def account_snapshot(positions):
     return {
         "captured_at": time.time(),
