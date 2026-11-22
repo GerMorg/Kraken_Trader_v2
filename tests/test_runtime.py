@@ -1723,7 +1723,11 @@ def test_futures_demo_signal_evaluation_uses_spot_crypto_intersection_and_never_
             self.calls.append((symbol, kwargs))
             return {"candles": candles, "more_candles": False}
 
-    fake_client = FakeChartClient()
+    fake_client = FakeChartClient(
+        api_key="demo-public-key",
+        api_secret="demo-private-secret",
+        environment="demo",
+    )
 
     def factory(**kwargs):
         return fake_client
