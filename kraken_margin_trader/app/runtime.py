@@ -1670,7 +1670,10 @@ class TraderRuntime:
                     if closed_history_included and closed_orders is not None:
                         for order_id, order in closed_orders.items():
                             self.persistence.record_exchange_order(order_id, order, source="CLOSED")
-                        order_reconciliation = reconcile_order_intents(self.persistence)
+                        order_reconciliation = reconcile_order_intents(
+                            self.persistence,
+                            current_open_order_ids=set(open_orders.keys()),
+                        )
                         self.audit.emit(
                             "ORDER_RECONCILIATION_SUMMARY",
                             cycle_id=cycle_id,
