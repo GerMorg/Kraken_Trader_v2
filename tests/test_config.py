@@ -182,3 +182,53 @@ def test_minimum_margin_level_is_operator_configurable():
     config = Settings.from_mapping({"risk_min_margin_level_pct": "650"})
     assert config.risk_min_margin_level_pct == Decimal("650")
     assert config.safe_summary()["risk_min_margin_level_pct"] == "650"
+
+
+def test_strategy_efficiency_and_stop_thresholds_are_operator_configurable():
+    config = Settings.from_mapping({
+        "strategy_fast_efficiency_min": "0.05",
+        "strategy_slow_efficiency_min": "0.01",
+        "strategy_stop_min_pct": "0.25",
+        "strategy_stop_max_pct": "12.5",
+    })
+    assert config.strategy_fast_efficiency_min == Decimal("0.05")
+    assert config.strategy_slow_efficiency_min == Decimal("0.01")
+    assert config.strategy_stop_min_pct == Decimal("0.25")
+    assert config.strategy_stop_max_pct == Decimal("12.5")
+    assert config.safe_summary()["strategy_stop_max_pct"] == "12.5"
+
+
+def test_invalid_or_inverted_strategy_thresholds_fall_back_to_defaults():
+    config = Settings.from_mapping({
+        "strategy_fast_efficiency_min": "1.1",
+        "strategy_slow_efficiency_min": "-0.1",
+        "strategy_stop_min_pct": "10",
+        "strategy_stop_max_pct": "5",
+    })
+    defaults = Settings()
+    assert config.strategy_fast_efficiency_min == defaults.strategy_fast_efficiency_min
+    assert config.strategy_slow_efficiency_min == defaults.strategy_slow_efficiency_min
+    assert config.strategy_stop_min_pct == defaults.strategy_stop_min_pct
+    assert config.strategy_stop_max_pct == defaults.strategy_stop_max_pct
+
+
+def test_operational_polling_and_market_scan_controls_have_no_app_owned_upper_caps():
+    config = Settings.from_mapping({
+        "cycle_interval_seconds": 86400,
+        "max_market_candidates": 200,
+        "market_max_age_seconds": 86400,
+    })
+    assert config.cycle_interval_seconds == 86400
+    assert config.max_market_candidates == 200
+    assert config.market_max_age_seconds == 86400
+
+
+def test_operational_controls_keep_only_minimums_needed_for_api_and_data_quality():
+    config = Settings.from_mapping({
+        "cycle_interval_seconds": 10,
+        "max_market_candidates": 0,
+        "market_max_age_seconds": 2,
+    })
+    assert config.cycle_interval_seconds == 60
+    assert config.max_market_candidates == 12
+    assert config.market_max_age_seconds == 15
