@@ -60,3 +60,30 @@ def test_invalid_strategy_thresholds_fail_closed():
         "XBTUSD", [Decimal("100") + Decimal(i) for i in range(100)],
         fast_threshold_bps=Decimal("NaN"),
     ).reason == "INVALID_STRATEGY_THRESHOLDS"
+
+
+def test_trend_efficiency_and_stop_ranges_are_operator_configurable():
+    rising = [Decimal("100") + Decimal(i) / Decimal(10) for i in range(100)]
+    permissive = generate_trend_signal(
+        "XBTUSD",
+        rising,
+        fast_efficiency_min=Decimal("0"),
+        slow_efficiency_min=Decimal("0"),
+        min_stop_distance_pct=Decimal("0.25"),
+        max_stop_distance_pct=Decimal("12"),
+    )
+    assert permissive.direction == "LONG"
+    assert permissive.stop_distance_pct >= Decimal("0.25")
+    assert permissive.stop_distance_pct <= Decimal("12")
+
+
+def test_invalid_strategy_efficiency_and_stop_ranges_fail_closed():
+    prices = [Decimal("100") + Decimal(i) / Decimal(10) for i in range(100)]
+    assert generate_trend_signal(
+        "XBTUSD", prices, fast_efficiency_min=Decimal("1.1")
+    ).reason == "INVALID_STRATEGY_THRESHOLDS"
+    assert generate_trend_signal(
+        "XBTUSD", prices,
+        min_stop_distance_pct=Decimal("5"),
+        max_stop_distance_pct=Decimal("4"),
+    ).reason == "INVALID_STRATEGY_THRESHOLDS"
