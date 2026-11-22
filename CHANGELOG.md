@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.76 — Isolierter Futures-Demo-Order-Lifecycle und Fourier-Research
+
+- Ergänzt einen separat persistierten Kraken-Futures-Demo-Adapter für Send/Edit/Cancel mit eigenständiger Demo-Authentifizierung und festem Demo-Host; die Produktions-Futures-API bleibt Read-only.
+- Persistiert Futures-Order-Intents mit eindeutiger Decision-/Client-Order-ID und expliziten Zuständen. Mehrdeutige Submit-Timeouts bleiben UNKNOWN_RECONCILING; es erfolgt kein blinder Wiederholungsauftrag.
+- Ergänzt eine eigenständige Futures-Signal- und Risikostruktur mit 1,5x Pilot-Hebelcap, 1 % geplantem Trade-Risikobudget, einer gleichzeitigen Position und separatem Reduce-only-Stop.
+- Reduziert den aktiven Strategie-Research-Pfad auf TSM-Baseline plus Fourier-Zyklus-Kandidat. Mean Reversion, das unkalibrierte logistische Modell und Volatility Breakout erzeugen keine neuen Kandidaten mehr.
+- Implementiert eine rollende Frequenzanalyse aus H1-Logrenditen mit zwei benachbarten Fenstern, spektraler Konzentration/Entropie und Periodenstabilitätsprüfung.
+- Ergänzt ein AppLog-Portfolio-Risikostatus-Ereignis, das Tagesverlust und Drawdown unabhängig von einem aktuellen Richtungssignal meldet.
+- Fügt getrennte Futures-Demo-Zugangsdaten hinzu (standardmäßig deaktiviert); bestehende Produktions-Read-only-Credentials und historische Daten bleiben unverändert.
+
 ## 0.1.75 — Vereinfachter Regelbetrieb und Spot-Trailing-Schutz
 
 - Ersetzt PAPER/SHADOW/LIVE sowie Live-/Kill-Switch-Kombinationen durch den einzelnen Operator-Schalter `real_orders_enabled`; alte Optionsdateien ohne diesen Schlüssel bleiben sicher im Simulationsbetrieb.

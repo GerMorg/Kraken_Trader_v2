@@ -92,3 +92,4 @@ def test_futures_readonly_is_disabled_without_explicit_configuration():
     assert config.futures_readonly_enabled is False
     assert config.futures_api_key == ""
     assert config.futures_api_secret == ""
+

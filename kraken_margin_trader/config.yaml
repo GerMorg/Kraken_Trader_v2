@@ -1,10 +1,10 @@
 name: Kraken Margin Trader
-version: 0.1.75
+version: 0.1.76
 slug: kraken_margin_trader
 description: >-
   Kraken-Trading-App mit getrennten Spot-Margin- und Futures-Produktstrecken.
-  Ein einziger Operator-Schalter fordert echte Orders an; ein interner Release-Gate bleibt zusätzlich erforderlich.
-  Spot-Einstiegsorders erhalten eine börsenseitige Trailing-Stop-Gegenorder. Futures bleibt vorerst Read-only.
+  Spot/Margin und Futures bleiben technisch und risikoseitig getrennt.
+  Futures-Ordertests verwenden eigene Demo-Zugangsdaten; die Produktions-API bleibt Read-only.
 url: https://github.com/GerMorg/Kraken_Trader_v2
 arch: [amd64, aarch64]
 startup: application

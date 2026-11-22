@@ -197,3 +197,29 @@ def evaluate_entry(
         leverage,
         margin_required,
     )
+
+
+
+@dataclass(frozen=True)
+class PortfolioRiskStatus:
+    allowed: bool
+    reasons: tuple[str, ...]
+
+
+def portfolio_entry_risk_status(
+    *,
+    daily_pnl_pct: Decimal | None,
+    drawdown_pct: Decimal | None,
+    settings: Settings,
+) -> PortfolioRiskStatus:
+    """Report portfolio-level entry blockers even when no directional signal exists."""
+    reasons: list[str] = []
+    if daily_pnl_pct is None or not daily_pnl_pct.is_finite():
+        reasons.append("DAILY_PNL_BASELINE_UNKNOWN")
+    elif daily_pnl_pct <= -settings.risk_daily_loss_pct:
+        reasons.append("DAILY_LOSS_LIMIT")
+    if drawdown_pct is None or not drawdown_pct.is_finite():
+        reasons.append("DRAWDOWN_BASELINE_UNKNOWN")
+    elif drawdown_pct >= settings.risk_max_drawdown_pct:
+        reasons.append("DRAWDOWN_LIMIT")
+    return PortfolioRiskStatus(not reasons, tuple(reasons))

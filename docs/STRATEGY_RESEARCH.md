@@ -1,3 +1,11 @@
+## Aktiver Kandidatenumfang ab App-Version 0.1.76
+
+Der aktive Kandidatenpfad wurde bewusst auf zwei Hypothesen reduziert: TSM als einfache Baseline und Fourier Cycle als separater Research-Kandidat. Der bisherige Mean-Reversion-24h-Kandidat, das unkalibrierte logistische Modell und Volatility Breakout werden nicht mehr erzeugt. Historische Beobachtungen bleiben für Audit und Vergleich in SQLite erhalten.
+
+Der Fourier-Kandidat nutzt zwei H1-Fenster zu je 128 Logrenditen, eine Hann-gefensterte DFT, spektrale Konzentration/Entropie und eine Periodenstabilitätsprüfung. Seine Phaseprojektion ist ein Diagnosewert, keine Wahrscheinlichkeit und kein erwarteter Return. Die Implementierung und Ablehnungskriterien sind in FOURIER_RESEARCH.md dokumentiert. Kein aktiver Entry, keine Parameterpromotion.
+
+---
+
 # Strategie- und Research-Hypothese
 
 # Regime-Conditioned Residual Recoil (RCR) — Variante D ab 0.1.54

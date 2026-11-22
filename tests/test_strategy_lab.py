@@ -134,11 +134,11 @@ def test_strategy_lab_compares_fixed_candidates_and_keeps_live_gate_closed():
     assert report["method"]["test_data_used_for_model_fitting_or_threshold_selection"] is False
     assert [item["strategy"] for item in report["candidates"]] == [
         "current_tsm",
-        "mean_reversion_24h",
-        "logistic_regression_baseline",
+        "fourier_cycle",
     ]
-    assert report["machine_learning_model"]["status"] == "FITTED_ON_TRAIN_SPLIT_ONLY"
-    assert report["machine_learning_model"]["training_samples"] >= 200
+    assert report["fourier_method"]["status"] == "FIXED_RULE_NO_MODEL_FIT"
+    assert report["fourier_method"]["release_gate_eligible"] is False
+    assert report["method"]["fourier_thresholds_selected_using_test_data"] is False
     assert "5" in report["candidates"][0]["splits"]["test"]["margin_net_sensitivity"]
     for candidate in report["candidates"]:
         for metrics in candidate["splits"].values():
@@ -153,17 +153,11 @@ def test_strategy_lab_compares_fixed_candidates_and_keeps_live_gate_closed():
             }
 
 
-def test_ml_fit_is_unchanged_when_only_test_period_prices_change():
+def test_test_split_prices_do_not_change_fixed_fourier_rule():
     original = compare(synthetic_candles(1500))
     changed = compare(synthetic_candles(1500, test_shift_from=1200))
-
-    original_model = original["machine_learning_model"]
-    changed_model = changed["machine_learning_model"]
-    assert original_model["training_samples"] == changed_model["training_samples"]
-    assert original_model["coefficients"] == changed_model["coefficients"]
-    assert original_model["intercept"] == changed_model["intercept"]
-    assert original_model["standardization_means"] == changed_model["standardization_means"]
-    assert original_model["standardization_scales"] == changed_model["standardization_scales"]
+    assert original["fourier_method"] == changed["fourier_method"]
+    assert original["method"]["fourier_thresholds_selected_using_test_data"] is False
 
 
 def test_strategy_lab_rejects_non_hourly_data_and_invalid_cost_assumptions():
@@ -190,7 +184,7 @@ def test_strategy_lab_rejects_non_hourly_data_and_invalid_cost_assumptions():
         )
 
 
-def test_live_shadow_candidates_produce_four_separate_predictions_with_walk_forward_ml():
+def test_live_shadow_candidates_produce_two_separate_predictions():
     from app.strategy_lab import generate_live_shadow_candidate_signals
 
     candles = synthetic_candles(720)
@@ -212,69 +206,66 @@ def test_live_shadow_candidates_produce_four_separate_predictions_with_walk_forw
         holding_bars=8,
         tsm_version="tsm-0.2.0",
     )
-
-    assert [item["candidate_name"] for item in signals] == [
-        "current_tsm",
-        "mean_reversion_24h",
-        "logistic_regression_wf",
-        "volatility_breakout",
-    ]
+    assert [item["candidate_name"] for item in signals] == ["current_tsm", "fourier_cycle"]
     assert all(item["direction"] in {"LONG", "SHORT", "NONE"} for item in signals)
     assert signals[0]["candidate_version"] == "tsm-0.2.0"
-    model = signals[2]
-    assert model["features"]["training_status"] == "FITTED_ON_PRIOR_MATURED_LABELS"
-    assert model["features"]["training_sample_count"] >= 200
-    assert model["features"]["training_labels_may_overlap"] is True
-    assert model["features"]["probability_is_calibrated"] is False
+    assert signals[1]["candidate_version"] == "fourier-cycle-0.1.0"
+    assert signals[1]["features"]["research_only"] is True
+    assert signals[1]["features"]["score_is_calibrated_probability"] is False
     assert all("order" not in str(item).lower() for item in signals)
 
 
-def test_live_walk_forward_model_does_not_train_on_the_current_decision_bar():
+
+def test_tsm_uses_73_contiguous_hourly_bars_while_fourier_requires_257():
     from app.strategy_lab import generate_live_shadow_candidate_signals
 
-    candles = synthetic_candles(720)
-    changed_last = list(candles)
-    last = changed_last[-1]
-    changed_open = last.open * D("1.02")
-    changed_close = last.close * D("1.03")
-    changed_last[-1] = Candle(
-        timestamp=last.timestamp,
-        open=changed_open,
-        high=max(changed_open, changed_close) * D("1.002"),
-        low=min(changed_open, changed_close) * D("0.998"),
-        close=changed_close,
-        volume=last.volume,
-        trades=last.trades,
-    )
-
-    def convert(data):
-        return [
-            {
-                "ts": item.timestamp,
-                "open": item.open,
-                "high": item.high,
-                "low": item.low,
-                "close": item.close,
-                "volume": item.volume,
-            }
-            for item in data
-        ]
-
-    original = generate_live_shadow_candidate_signals(
-        convert(candles),
+    candles = synthetic_candles(100)
+    raw_bars = [
+        {
+            "ts": item.timestamp,
+            "open": item.open,
+            "high": item.high,
+            "low": item.low,
+            "close": item.close,
+            "volume": item.volume,
+        }
+        for item in candles
+    ]
+    signals = generate_live_shadow_candidate_signals(
+        raw_bars,
         fast_threshold_bps=D("120"),
         slow_threshold_bps=D("180"),
-        holding_bars=8,
-    )[2]
-    changed = generate_live_shadow_candidate_signals(
-        convert(changed_last),
+    )
+    assert signals[0]["signal_reason"] != "INSUFFICIENT_HISTORY"
+    assert signals[0]["features"]["contiguous_h1_bars_used"] == 100
+    assert signals[1]["direction"] == "NONE"
+    assert signals[1]["signal_reason"] == "INSUFFICIENT_HISTORY"
+
+
+def test_tsm_resets_its_lookback_after_hourly_data_gap():
+    from app.strategy_lab import generate_live_shadow_candidate_signals
+
+    candles = synthetic_candles(300)
+    raw_bars = [
+        {
+            "ts": item.timestamp,
+            "open": item.open,
+            "high": item.high,
+            "low": item.low,
+            "close": item.close,
+            "volume": item.volume,
+        }
+        for item in candles
+    ]
+    raw_bars[-50:] = [
+        {**row, "ts": row["ts"] + 3600}
+        for row in raw_bars[-50:]
+    ]
+    signals = generate_live_shadow_candidate_signals(
+        raw_bars,
         fast_threshold_bps=D("120"),
         slow_threshold_bps=D("180"),
-        holding_bars=8,
-    )[2]
-
-    assert original["features"]["training_sample_count"] == changed["features"]["training_sample_count"]
-    assert (
-        original["features"]["positive_training_label_rate_pct"]
-        == changed["features"]["positive_training_label_rate_pct"]
     )
+    assert signals[0]["signal_reason"] == "INSUFFICIENT_HISTORY"
+    assert signals[0]["features"]["contiguous_h1_bars_used"] == 50
+    assert signals[1]["signal_reason"] == "HOURLY_HISTORY_GAP_IN_FOURIER_WINDOW"

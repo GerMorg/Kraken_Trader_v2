@@ -325,3 +325,34 @@ def test_api_key_check_rejects_missing_permissions_schema() -> None:
     )
     with pytest.raises(FuturesAPIError, match="FUTURES_RESPONSE_SCHEMA_INVALID"):
         client.get_api_key_info()
+
+
+
+def test_internal_post_primitive_is_demo_only_and_endpoint_allowlisted():
+    transport = FakeTransport({"result": "success", "sendStatus": {"status": "placed"}})
+    client = FuturesAPIClient(
+        api_key=TEST_KEY,
+        api_secret=TEST_SECRET,
+        environment="demo",
+        transport=transport,
+    )
+    payload = client._request_post(
+        "/derivatives/api/v3/sendorder",
+        post_data="orderType=mkt&symbol=PF_XBTUSD&side=buy&size=1&reduceOnly=false",
+    )
+    assert payload["sendStatus"]["status"] == "placed"
+    assert transport.requests[0].get_method() == "POST"
+
+    production = FuturesAPIClient(
+        api_key=TEST_KEY,
+        api_secret=TEST_SECRET,
+        environment="production_read_only",
+        transport=transport,
+    )
+    with pytest.raises(FuturesAPIError, match="FUTURES_MUTATION_DEMO_ONLY"):
+        production._request_post(
+            "/derivatives/api/v3/sendorder",
+            post_data="orderType=mkt&symbol=PF_XBTUSD&side=buy&size=1",
+        )
+    with pytest.raises(FuturesAPIError, match="FUTURES_MUTATION_DEMO_ONLY"):
+        client._request_post("/derivatives/api/v3/transfer", post_data="amount=1")

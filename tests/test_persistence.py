@@ -510,7 +510,7 @@ def test_multi_asset_research_runs_are_immutable_idempotent_and_reviewable():
     schema_version = db.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
-    assert schema_version == "14"
+    assert schema_version == "15"
     db.close()
 
 
@@ -617,7 +617,7 @@ def test_additive_depth_migration_preserves_existing_multi_asset_rows(tmp_path):
     schema_version = migrated.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
-    assert schema_version == "14"
+    assert schema_version == "15"
     migrated.close()
 
 
@@ -666,4 +666,36 @@ def test_futures_readonly_snapshot_rejects_mutation_capable_permissions(general,
     }
     with pytest.raises(ValueError, match="FUTURES_SNAPSHOT_PERMISSION_INVALID"):
         db.record_futures_readonly_snapshot(snapshot)
+    db.close()
+
+
+
+def test_futures_order_intents_are_durable_idempotent_and_state_validated():
+    db = Persistence(":memory:")
+    intent = {
+        "intent_id": "futures-i1",
+        "decision_id": "futures-d1",
+        "client_order_id": "futures-c1",
+        "symbol": "PF_XBTUSD",
+        "side": "buy",
+        "size": "0.01",
+        "order_type": "mkt",
+        "reduce_only": False,
+    }
+    assert db.create_futures_order_intent(intent) is True
+    assert db.create_futures_order_intent({
+        **intent, "intent_id": "futures-i2", "client_order_id": "futures-c2"
+    }) is False
+    db.transition_futures_order_intent("futures-i1", "PRECHECK_PASSED")
+    db.transition_futures_order_intent("futures-i1", "SUBMITTING")
+    db.transition_futures_order_intent(
+        "futures-i1", "ACKNOWLEDGED", {"raw_status": "placed"},
+        exchange_order_id="exchange-1",
+    )
+    stored = db.futures_order_intent("futures-i1")
+    assert stored["state"] == "ACKNOWLEDGED"
+    assert stored["exchange_order_id"] == "exchange-1"
+    with pytest.raises(ValueError, match="INVALID_FUTURES_ORDER_STATE_TRANSITION"):
+        db.transition_futures_order_intent("futures-i1", "SUBMITTING")
+    assert len(db.unresolved_futures_order_intents()) == 1
     db.close()
