@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "kraken-margin-trader"
 version = "0.1.79"
-description = "Auditable Kraken Spot/Margin trading and isolated Kraken Futures demo adapter"
+description = "Auditable Kraken Spot/Margin trading and production read-only Kraken Futures market data"
 requires-python = ">=3.12"
 dependencies = ["websockets>=15,<17"]
 
