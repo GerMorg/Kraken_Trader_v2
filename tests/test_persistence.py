@@ -510,7 +510,7 @@ def test_multi_asset_research_runs_are_immutable_idempotent_and_reviewable():
     schema_version = db.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
-    assert schema_version == "14"
+    assert schema_version == "15"
     db.close()
 
 
@@ -617,7 +617,7 @@ def test_additive_depth_migration_preserves_existing_multi_asset_rows(tmp_path):
     schema_version = migrated.connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()["value"]
-    assert schema_version == "14"
+    assert schema_version == "15"
     migrated.close()
 
 
