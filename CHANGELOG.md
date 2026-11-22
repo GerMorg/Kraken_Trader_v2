@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.78 — Konfigurierbare Verlustlimits und Futures-H1-Signalstrecke
+
+- Entfernt die code-owned Obergrenzen 3 % Tagesverlust und 8 % Drawdown. Die Werte werden aus HA übernommen, müssen endlich und positiv sein und werden im Portfolio-Risk-Status unverändert ausgewiesen.
+- Belässt die übrigen getrennten Positions-, Exposure-, Margin-, Reserve- und Hebelgrenzen unverändert.
+- Ergänzt den separaten Futures-Charts-GET-Endpunkt für Trade-H1-Kerzen sowie eine strikte OHLC-/Zeitstempelvalidierung.
+- Bewertet pro Zyklus maximal fünf der liquidesten linearen USD-Perpetuals, deren Basisassets zugleich im aktuellen Spot-USD-Krypto-Universum liegen.
+- Verwendet ausschließlich abgeschlossene, zusammenhängende H1-Kerzen für unabhängige Futures-TSM-Signale; protokolliert Momentum, Datenqualität und Ausführungsblocker.
+- Erzeugt weiterhin keine Futures-Demo-Orders. Fehlender validierter Edge, vollständige Handelskosten, Funding und Initial-Margin-Tier blockieren den Ausführungspfad. Produktions-Futures bleibt Read-only.
+
 ## 0.1.77 — Futures-Demo-Read-Snapshot und klare Einstiegssperren
 
 - Integriert einen optionalen, standardmäßig deaktivierten Futures-Demo-Read-Snapshot in den HA-Zyklus. Dafür werden separate Demo-API-Zugangsdaten verwendet; Produktions-Futures-Credentials bleiben unverändert.

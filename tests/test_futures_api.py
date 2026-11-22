@@ -356,3 +356,71 @@ def test_internal_post_primitive_is_demo_only_and_endpoint_allowlisted():
         )
     with pytest.raises(FuturesAPIError, match="FUTURES_MUTATION_DEMO_ONLY"):
         client._request_post("/derivatives/api/v3/transfer", post_data="amount=1")
+
+
+def test_public_futures_chart_candles_use_separate_charts_path_and_are_schema_checked() -> None:
+    transport = FakeTransport({
+        "candles": [{
+            "time": 1795302000000,
+            "open": "100",
+            "high": "102",
+            "low": "99",
+            "close": "101",
+            "volume": "12",
+        }],
+        "more_candles": False,
+    })
+    client = FuturesAPIClient(transport=transport)
+
+    result = client.get_ohlc_candles("pf_xbtusd", count=90)
+
+    assert len(result["candles"]) == 1
+    request = transport.requests[0]
+    assert request.full_url == (
+        DEMO_BASE_URL + "/api/charts/v1/trade/PF_XBTUSD/1h?count=90"
+    )
+    assert request.get_method() == "GET"
+    assert request.get_header("Apikey") is None
+    assert request.get_header("Authent") is None
+
+
+@pytest.mark.parametrize(
+    ("symbol", "tick_type", "resolution", "count", "error"),
+    [
+        ("PI_XBTUSD", "trade", "1h", 90, "FUTURES_CHART_SYMBOL_INVALID"),
+        ("PF_XBTUSD&sendorder=true", "trade", "1h", 90, "FUTURES_CHART_SYMBOL_INVALID"),
+        ("PF_XBTUSD", "invalid", "1h", 90, "FUTURES_CHART_TICK_TYPE_INVALID"),
+        ("PF_XBTUSD", "trade", "2h", 90, "FUTURES_CHART_RESOLUTION_INVALID"),
+        ("PF_XBTUSD", "trade", "1h", 501, "FUTURES_CHART_COUNT_OUT_OF_RANGE"),
+    ],
+)
+def test_futures_chart_request_rejects_invalid_parameters_before_transport(
+    symbol: str, tick_type: str, resolution: str, count: int, error: str
+) -> None:
+    transport = FakeTransport({"candles": [], "more_candles": False})
+    client = FuturesAPIClient(transport=transport)
+    with pytest.raises(ValueError, match=error):
+        client.get_ohlc_candles(
+            symbol,
+            tick_type=tick_type,
+            resolution=resolution,
+            count=count,
+        )
+    assert transport.requests == []
+
+
+def test_futures_chart_response_rejects_invalid_ohlc_prices() -> None:
+    transport = FakeTransport({
+        "candles": [{
+            "time": 1795302000000,
+            "open": "100",
+            "high": "90",
+            "low": "99",
+            "close": "101",
+            "volume": "12",
+        }],
+        "more_candles": False,
+    })
+    client = FuturesAPIClient(transport=transport)
+    with pytest.raises(FuturesAPIError, match="FUTURES_CHART_RESPONSE_SCHEMA_INVALID"):
+        client.get_ohlc_candles("PF_XBTUSD")

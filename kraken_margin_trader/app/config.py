@@ -25,8 +25,6 @@ HARD_LIMITS: dict[str, Decimal] = {
     "risk_max_margin_pct": D("25"),
     "risk_max_leverage": D("3"),
     "risk_max_open_positions": D("4"),
-    "risk_daily_loss_pct": D("3"),
-    "risk_max_drawdown_pct": D("8"),
     "risk_cash_reserve_pct": D("20"),
 }
 
@@ -37,6 +35,12 @@ def _decimal(raw: Mapping[str, Any], key: str, default: str) -> Decimal:
         return value if value.is_finite() else D(default)
     except (InvalidOperation, ValueError, TypeError):
         return D(default)
+
+
+def _positive_decimal(raw: Mapping[str, Any], key: str, default: str) -> Decimal:
+    """Read an operator-defined percentage without a code-owned upper cap."""
+    value = _decimal(raw, key, default)
+    return value if value > 0 else D(default)
 
 
 def _int(raw: Mapping[str, Any], key: str, default: int, lower: int, upper: int) -> int:
@@ -106,8 +110,6 @@ class Settings:
             ("risk_max_gross_pct", "80"),
             ("risk_max_net_pct", "50"),
             ("risk_max_margin_pct", "25"),
-            ("risk_daily_loss_pct", "3"),
-            ("risk_max_drawdown_pct", "8"),
         ):
             decimals[key] = max(
                 D("0"), min(_decimal(raw, key, default), HARD_LIMITS[key])
@@ -145,9 +147,9 @@ class Settings:
             risk_max_margin_pct=decimals["risk_max_margin_pct"],
             risk_max_leverage=_int(raw, "risk_max_leverage", 3, 1, 3),
             risk_max_open_positions=_int(raw, "risk_max_open_positions", 4, 1, 4),
-            risk_daily_loss_pct=decimals["risk_daily_loss_pct"],
-            risk_max_drawdown_pct=decimals["risk_max_drawdown_pct"],
             risk_cash_reserve_pct=reserve,
+            risk_daily_loss_pct=_positive_decimal(raw, "risk_daily_loss_pct", "3"),
+            risk_max_drawdown_pct=_positive_decimal(raw, "risk_max_drawdown_pct", "8"),
             tax_report_enabled=_bool(raw, "tax_report_enabled", True),
         )
 

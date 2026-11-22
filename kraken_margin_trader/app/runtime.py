@@ -23,6 +23,11 @@ from app.kraken import (
 )
 from app.execution import LiveExecutionBlocked, OrderAuthority, OrderIntent, signal_decision_id
 from app.futures_api import FuturesAPIClient, FuturesAPIError
+from app.futures_trading import (
+    derive_crypto_linear_usd_perpetual_symbols,
+    generate_futures_signal,
+    parse_closed_hourly_closes,
+)
 from app.entry_guards import entry_pair_exposure
 from app.history_sync import history_sources_ready, reconcile_trade_ledger_coverage, sync_history_source
 from app.market import closed_bar_is_fresh, executable_reference_price, parse_ohlc_rows, parse_tickers, quote_is_fresh, usd_crypto_universe, volume_for_notional_usd
@@ -1265,6 +1270,231 @@ class TraderRuntime:
         )
         return summary
 
+    def _evaluate_futures_demo_signals(
+        self,
+        cycle_id: str,
+        spot_usd_instruments: list[Any],
+        *,
+        snapshot_id: str | None,
+    ) -> dict[str, Any]:
+        """Evaluate a small independent Futures H1 signal set; never create orders."""
+        summary: dict[str, Any] = {
+            "status": "DISABLED",
+            "snapshot_id": snapshot_id,
+            "candidate_count": 0,
+            "directional_signal_count": 0,
+            "data_error_count": 0,
+            "orders_created": False,
+        }
+        if not self.settings.futures_demo_enabled:
+            return summary
+        if not snapshot_id:
+            summary["status"] = "NO_CURRENT_DEMO_SNAPSHOT"
+            return summary
+
+        snapshot = self.persistence.latest_futures_demo_snapshot()
+        if snapshot is None or snapshot.get("snapshot_id") != snapshot_id:
+            summary["status"] = "CURRENT_DEMO_SNAPSHOT_NOT_PERSISTED"
+            return summary
+        data = snapshot.get("data")
+        if not isinstance(data, dict):
+            summary["status"] = "DEMO_SNAPSHOT_DATA_INVALID"
+            return summary
+
+        instrument_payload = data.get("instruments")
+        ticker_payload = data.get("tickers")
+        raw_instruments = (
+            instrument_payload.get("instruments")
+            if isinstance(instrument_payload, dict) else None
+        )
+        raw_tickers = (
+            ticker_payload.get("tickers")
+            if isinstance(ticker_payload, dict) else None
+        )
+        if not isinstance(raw_instruments, list) or not isinstance(raw_tickers, list):
+            summary["status"] = "DEMO_MARKET_DATA_MISSING"
+            return summary
+
+        spot_bases = {
+            str(instrument.base).strip().upper()
+            for instrument in spot_usd_instruments
+            if str(getattr(instrument, "quote", "")).strip().upper() == "USD"
+            and str(getattr(instrument, "base", "")).strip()
+        }
+        allowed_symbols = derive_crypto_linear_usd_perpetual_symbols(
+            raw_instruments,
+            spot_usd_base_assets=spot_bases,
+        )
+        ticker_by_symbol: dict[str, dict[str, Any]] = {}
+        for row in raw_tickers:
+            if not isinstance(row, dict):
+                continue
+            symbol = str(row.get("symbol", "")).strip().upper()
+            if symbol not in allowed_symbols or row.get("suspended") is not False:
+                continue
+            try:
+                volume_quote = D(str(row.get("volumeQuote", "")))
+                if not volume_quote.is_finite() or volume_quote <= 0:
+                    volume_base = D(str(row.get("vol24h", "")))
+                    mark_price = D(str(row.get("markPrice", "")))
+                    volume_quote = volume_base * mark_price
+            except (ArithmeticError, TypeError, ValueError):
+                continue
+            if not volume_quote.is_finite() or volume_quote <= 0:
+                continue
+            ticker_by_symbol[symbol] = {**row, "_ranking_quote_volume_usd": volume_quote}
+
+        candidates = sorted(
+            ticker_by_symbol.values(),
+            key=lambda row: (
+                -row["_ranking_quote_volume_usd"],
+                str(row.get("symbol", "")),
+            ),
+        )[:5]
+        summary["candidate_count"] = len(candidates)
+        if not candidates:
+            summary["status"] = "NO_ELIGIBLE_CRYPTO_LINEAR_USD_PERPETUALS"
+            self.persistence.record_event("FUTURES_DEMO_SIGNAL_SUMMARY", {
+                "cycle_id": cycle_id,
+                **summary,
+                "allowed_symbol_count": len(allowed_symbols),
+                "spot_usd_base_asset_count": len(spot_bases),
+            })
+            self.audit.emit(
+                "FUTURES_DEMO_SIGNAL_SUMMARY",
+                cycle_id=cycle_id,
+                **summary,
+                allowed_symbol_count=len(allowed_symbols),
+                spot_usd_base_asset_count=len(spot_bases),
+            )
+            return summary
+
+        client = FuturesAPIClient(
+            api_key=self.settings.futures_demo_api_key,
+            api_secret=self.settings.futures_demo_api_secret,
+            environment="demo",
+        )
+        now_epoch = D(str(time.time()))
+        execution_blockers = [
+            "FUTURES_DEMO_SIGNAL_ONLY",
+            "FUTURES_EDGE_NOT_VALIDATED",
+            "FUTURES_FEES_AND_SLIPPAGE_NOT_COMPLETE",
+            "FUTURES_FUNDING_HOLD_COST_NOT_COMPLETE",
+            "FUTURES_EXCHANGE_INITIAL_MARGIN_TIER_NOT_RECONCILED",
+            "FUTURES_DEMO_ORDER_RUNTIME_NOT_CONNECTED",
+        ]
+        for row in candidates:
+            symbol = str(row["symbol"]).strip().upper()
+            try:
+                candle_payload = client.get_ohlc_candles(
+                    symbol,
+                    tick_type="trade",
+                    resolution="1h",
+                    count=90,
+                )
+                closes, last_bar_epoch, candle_status = parse_closed_hourly_closes(
+                    candle_payload["candles"],
+                    now_epoch_seconds=now_epoch,
+                )
+                if candle_status != "READY":
+                    event_payload = {
+                        "cycle_id": cycle_id,
+                        "snapshot_id": snapshot_id,
+                        "symbol": symbol,
+                        "status": candle_status,
+                        "direction": "NONE",
+                        "hourly_bars_used": len(closes),
+                        "last_closed_bar_epoch": last_bar_epoch,
+                        "execution_allowed": False,
+                        "execution_blockers": execution_blockers,
+                        "order_created": False,
+                    }
+                else:
+                    signal = generate_futures_signal(symbol, closes)
+                    bid = D(str(row.get("bid", "NaN")))
+                    ask = D(str(row.get("ask", "NaN")))
+                    spread_bps: Decimal | None = None
+                    if (
+                        bid.is_finite() and ask.is_finite()
+                        and bid > 0 and ask >= bid
+                    ):
+                        mid = (bid + ask) / D(2)
+                        if mid > 0:
+                            spread_bps = (ask - bid) / mid * D(10000)
+                    event_payload = {
+                        "cycle_id": cycle_id,
+                        "snapshot_id": snapshot_id,
+                        "symbol": symbol,
+                        "status": signal.reason,
+                        "direction": signal.direction,
+                        "momentum_24h_bps": str(signal.momentum_24h_bps),
+                        "momentum_72h_bps": str(signal.momentum_72h_bps),
+                        "strategy_version": signal.strategy_version,
+                        "hourly_bars_used": len(closes),
+                        "last_closed_bar_epoch": last_bar_epoch,
+                        "spread_bps": str(spread_bps) if spread_bps is not None else None,
+                        "funding_rate": row.get("fundingRate"),
+                        "funding_rate_prediction": row.get("fundingRatePrediction"),
+                        "quote_volume_24h_usd_for_ranking_only": str(
+                            row["_ranking_quote_volume_usd"]
+                        ),
+                        "execution_allowed": False,
+                        "execution_blockers": execution_blockers,
+                        "order_created": False,
+                    }
+                    if signal.has_direction:
+                        summary["directional_signal_count"] += 1
+                self.persistence.record_event(
+                    "FUTURES_DEMO_SIGNAL_EVALUATED", event_payload
+                )
+                self.audit.emit("FUTURES_DEMO_SIGNAL_EVALUATED", **event_payload)
+            except FuturesAPIError as exc:
+                summary["data_error_count"] += 1
+                error_payload = {
+                    "cycle_id": cycle_id,
+                    "snapshot_id": snapshot_id,
+                    "symbol": symbol,
+                    "error_code": exc.code,
+                    "order_created": False,
+                }
+                self.persistence.record_event(
+                    "FUTURES_DEMO_SIGNAL_DATA_ERROR", error_payload
+                )
+                self.audit.emit("FUTURES_DEMO_SIGNAL_DATA_ERROR", **error_payload)
+            except Exception:
+                summary["data_error_count"] += 1
+                error_payload = {
+                    "cycle_id": cycle_id,
+                    "snapshot_id": snapshot_id,
+                    "symbol": symbol,
+                    "error_code": "FUTURES_SIGNAL_EVALUATION_UNEXPECTED_ERROR",
+                    "order_created": False,
+                }
+                self.persistence.record_event(
+                    "FUTURES_DEMO_SIGNAL_DATA_ERROR", error_payload
+                )
+                self.audit.emit("FUTURES_DEMO_SIGNAL_DATA_ERROR", **error_payload)
+
+        summary["status"] = (
+            "COMPLETE" if summary["data_error_count"] == 0 else "PARTIAL"
+        )
+        self.persistence.record_event("FUTURES_DEMO_SIGNAL_SUMMARY", {
+            "cycle_id": cycle_id,
+            **summary,
+            "allowed_symbol_count": len(allowed_symbols),
+            "spot_usd_base_asset_count": len(spot_bases),
+            "max_symbols_evaluated": 5,
+        })
+        self.audit.emit(
+            "FUTURES_DEMO_SIGNAL_SUMMARY",
+            cycle_id=cycle_id,
+            **summary,
+            allowed_symbol_count=len(allowed_symbols),
+            spot_usd_base_asset_count=len(spot_bases),
+            max_symbols_evaluated=5,
+        )
+        return summary
+
     def close(self) -> None:
         """Stop the public market-data observer before SQLite is closed."""
         self.microstructure.close()
@@ -1414,6 +1644,10 @@ class TraderRuntime:
         futures_demo_summary: dict[str, Any] = {
             "status": "DISABLED", "snapshot_id": None, "endpoint_error_count": 0
         }
+        futures_demo_signal_summary: dict[str, Any] = {
+            "status": "DISABLED", "snapshot_id": None, "candidate_count": 0,
+            "directional_signal_count": 0, "data_error_count": 0, "orders_created": False,
+        }
         try:
             failure_stage = "FUTURES_READONLY_SNAPSHOT"
             futures_readonly_summary = self._run_futures_readonly_snapshot(cycle_id)
@@ -1444,6 +1678,12 @@ class TraderRuntime:
             ranked=sorted((i for i in instruments if i.pair_id in tickers),
                 key=lambda i:tickers[i.pair_id].volume_quote_24h,reverse=True)
             candidates=ranked[:self.settings.max_market_candidates]; counts["candidates"]=len(candidates)
+            failure_stage = "FUTURES_DEMO_SIGNAL_EVALUATION"
+            futures_demo_signal_summary = self._evaluate_futures_demo_signals(
+                cycle_id,
+                instruments,
+                snapshot_id=futures_demo_summary.get("snapshot_id"),
+            )
             if BACKGROUND_RESEARCH_ENABLED:
                 self.microstructure.update_symbols([
                     instrument.wsname for instrument in ranked[:12]
@@ -3150,6 +3390,11 @@ class TraderRuntime:
                 "futures_demo_status": futures_demo_summary.get("status"),
                 "futures_demo_snapshot_id": futures_demo_summary.get("snapshot_id"),
                 "futures_demo_endpoint_error_count": futures_demo_summary.get("endpoint_error_count"),
+                "futures_demo_signal_status": futures_demo_signal_summary.get("status"),
+                "futures_demo_signal_candidate_count": futures_demo_signal_summary.get("candidate_count"),
+                "futures_demo_directional_signal_count": futures_demo_signal_summary.get("directional_signal_count"),
+                "futures_demo_signal_data_error_count": futures_demo_signal_summary.get("data_error_count"),
+                "futures_demo_orders_created": False,
                 "history_ready_for_entries": history_ready_for_entries,
                 "history_evidence_gaps": list(history_evidence_gaps),
                 "active_circuit_breaker_count": len(final_breaker_rows),
