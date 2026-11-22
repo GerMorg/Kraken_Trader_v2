@@ -303,9 +303,15 @@ class OrderAuthority:
             description.get("close")
             if isinstance(description, dict) else None
         )
+        normalized_close_description = (
+            close_description.strip().lower().replace("-", " ")
+            if isinstance(close_description, str) else ""
+        )
+        # A non-empty description could describe a plain stop-loss or take-profit.
+        # Only acknowledge the requested protection when Kraken describes a trailing stop.
         protection_confirmed = (
             not protection_required
-            or (isinstance(close_description, str) and bool(close_description.strip()))
+            or "trailing stop" in normalized_close_description
         )
         selected_trailing_stop_offset = _trailing_stop_offset_for_intent(
             intent, self.settings.trailing_stop_offset_pct
