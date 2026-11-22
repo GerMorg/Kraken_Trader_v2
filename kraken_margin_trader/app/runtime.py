@@ -2555,11 +2555,11 @@ class TraderRuntime:
                         fill_confirmed=False,
                         result=submission.get("result", {}),
                     )
-                elif self.persistence.create_intent(intent, initial_state="SHADOW_ONLY"):
+                elif self.persistence.create_intent(intent, initial_state="SIMULATION_ONLY"):
                     counts["intents"] += 1
                     self.audit.emit(
-                        "SHADOW_INTENT_PERSISTED_NO_ORDER_SENT",
-                        state="SHADOW_ONLY",
+                        "SIMULATION_INTENT_RECORDED_NO_ORDER_SENT",
+                        state="SIMULATION_ONLY",
                         **intent,
                     )
             recovered_transient_public_network_breaker = _recover_transient_public_network_breaker(
