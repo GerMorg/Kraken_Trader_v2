@@ -1,5 +1,11 @@
 # Ausführung, Orderzustände und Wiederherstellung
 
+## v0.1.74: Aktuelle offene Orders von historischen Beobachtungen trennen
+
+Der erfolgreich validierte `OpenOrders`-Snapshot des aktuellen Runtime-Zyklus ist die alleinige Quelle dafür, welche Börsenorders in diesem Zyklus aktuell offen sind. Die Reconciliation erhält dafür explizit die Menge der aktuellen Exchange-Order-IDs. Persistierte Datensätze mit `source=OPEN`, deren Order-ID im aktuellen Snapshot nicht enthalten ist, bleiben in `exchange_orders` und der Audit-Historie erhalten, werden aber weder als gegenwärtig offene externe Order gewertet noch zum Fortschreiben eines lokalen Intents verwendet. Damit wird vermieden, dass eine ältere OPEN-Beobachtung nach einem späteren Schließen oder nach begrenzter ClosedOrders-Historie dauerhaft als offen interpretiert wird.
+
+Persistierte `source=CLOSED`-Datensätze bleiben als historische Evidenz für lokale Submit-Intents verfügbar. Ein ungelöster lokaler Intent, dessen Order-ID weder im aktuellen `OpenOrders`-Snapshot noch in den verfügbaren geschlossenen Orders belegt ist, bleibt dagegen ungelöst und löst weiterhin `SUBMITTED_INTENT_NOT_VISIBLE_IN_EXCHANGE_SNAPSHOT` aus. Die Änderung löscht keine Orders, ändert keine Exchangezustände und hebt keinen Circuit Breaker manuell auf. `ORDER_RECONCILIATION_SUMMARY` weist `current_open_orders`, `stale_open_records_excluded` und `reconciliation_evidence_orders` aus.
+
 ## v0.1.38: Begrenzte Wiederherstellung nach Netzwerkfehler
 
 Nur ein persistierter Breaker mit Name `KRAKEN_API` und exakt dem Grund `KRAKEN_PUBLIC_NETWORK_ERROR` wird nach einem gesunden Folgezyklus aufgelöst. Der Zyklus muss Online-Status, nichtleere USD-Instrumente und Ticker vor und nach den Konten-/Historienabfragen, erfolgreiche private Leseberechtigungen, vollständige Historie ohne Qualitätslücken und einen verfügbaren Kontosnapshot belegen. Die Auflösung ist an den erwarteten Grund gebunden und wird mit `CIRCUIT_BREAKER_RECOVERED` protokolliert; der Datenbankeintrag bleibt als inaktiv erhalten. Andere Breaker sowie die unabhängigen Portfolio-, Kosten-, Strategie- und internen Live-Freigabegates bleiben bestehen. Es werden dadurch keine echten Orders freigegeben.
