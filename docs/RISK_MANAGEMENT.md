@@ -1,3 +1,9 @@
+## Hebel, Gebühren und Schutz — Klarstellung 0.1.75
+
+Der maximale verfügbare Börsenhebel ist kein Kostenrabatt. Spot-Handelsgebühren werden auf das gehandelte Nominalvolumen berechnet; höherer Hebel senkt nur den erforderlichen Eigenkapitaleinsatz für dieses Nominalvolumen. Bei Spot Margin kommen je nach Kredit/Produkt Margin-Opening-Gebühren und Rolloverkosten hinzu. Ein automatisch maximaler Hebel kann durch größeres mögliches Nominalvolumen den absoluten Gebühren- und Verlustbetrag erhöhen. Die Anwendung verwendet daher den höchsten für das Instrument unterstützten Hebel innerhalb der code-eigenen Risikogrenze und prüft das Exposure weiterhin unabhängig davon.
+
+Ein Börsen-Trailing-Stop ersetzt weder Positionsgrößen- noch Liquidationsrisiko-Prüfungen. Ein Stop kann bei Kurslücken, geringer Liquidität oder Marginproblemen schlechter als erwartet ausgeführt werden oder zurückgewiesen werden. Für Futures wird zusätzlich eine eigene Reduce-only-Schutzorder benötigt; die Spot Conditional-Close-Logik gilt dort nicht.
+
 # Risikomanagement — AGGRESSIVE_BUT_CAPPED
 
 Das Profil erlaubt ausdrücklich Margin und Short-Handel als Designziel. Hebel erzeugt jedoch keinen eigenen Prognosevorteil; er skaliert Verluste, Kosten und Liquidationsrisiken. Die Limits hier sind **harte Anwendungshöchstgrenzen**, keine Garantie, dass das gewählte Risiko gering oder ein Trade profitabel sei.
