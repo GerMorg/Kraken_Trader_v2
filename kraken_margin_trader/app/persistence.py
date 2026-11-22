@@ -1845,7 +1845,7 @@ class Persistence:
         return [int(row["year"]) for row in rows]
 
     def record_futures_readonly_snapshot(self, snapshot: dict[str, Any]) -> bool:
-        """Append one isolated production Futures read-only snapshot.
+        """Append one isolated production or Demo Futures read-only snapshot.
 
         Raw exchange responses are stored only in this dedicated table, never mixed
         with Spot balances, fills, orders or tax events.
@@ -1864,10 +1864,15 @@ class Persistence:
         result_status = str(snapshot["result_status"]).strip().upper()
         counts = snapshot["counts"]
         data = snapshot["data"]
-        if not snapshot_id or not captured_at or environment != "production_read_only":
+        if not snapshot_id or not captured_at or environment not in {
+            "production_read_only", "demo_read_only"
+        }:
             raise ValueError("FUTURES_SNAPSHOT_IDENTITY_INVALID")
-        if general_permission != "READ_ONLY" or transfer_permission == "FULL_ACCESS":
-            raise ValueError("FUTURES_SNAPSHOT_PERMISSION_INVALID")
+        if environment == "production_read_only":
+            if general_permission != "READ_ONLY" or transfer_permission == "FULL_ACCESS":
+                raise ValueError("FUTURES_SNAPSHOT_PERMISSION_INVALID")
+        elif general_permission != "UNVERIFIED" or transfer_permission != "UNVERIFIED":
+            raise ValueError("FUTURES_DEMO_SNAPSHOT_PERMISSION_MUST_BE_UNVERIFIED")
         if result_status not in {"COMPLETE", "PARTIAL"}:
             raise ValueError("FUTURES_SNAPSHOT_STATUS_INVALID")
         if not isinstance(counts, dict) or not isinstance(data, dict):
@@ -1890,6 +1895,21 @@ class Persistence:
         with self.lock:
             row = self.connection.execute(
                 "SELECT * FROM futures_readonly_snapshots "
+                "WHERE environment='production_read_only' "
+                "ORDER BY captured_at DESC,snapshot_id DESC LIMIT 1"
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["counts"] = json.loads(str(result.pop("counts_json")))
+        result["data"] = json.loads(str(result.pop("raw_json")))
+        return result
+
+    def latest_futures_demo_snapshot(self) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT * FROM futures_readonly_snapshots "
+                "WHERE environment='demo_read_only' "
                 "ORDER BY captured_at DESC,snapshot_id DESC LIMIT 1"
             ).fetchone()
         if row is None:

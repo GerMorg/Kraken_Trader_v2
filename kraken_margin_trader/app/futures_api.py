@@ -256,7 +256,7 @@ class FuturesAPIClient:
             "Content-Type": "application/x-www-form-urlencoded",
             "APIKey": self._api_key,
             "Authent": authent,
-            "User-Agent": "KrakenTraderV2-FuturesDemo/0.1.76",
+            "User-Agent": "KrakenTraderV2-FuturesDemo/0.1.77",
         }
         request = Request(
             self._base_url + endpoint_path,
@@ -297,7 +297,7 @@ class FuturesAPIClient:
     ) -> dict[str, Any]:
         headers = {
             "Accept": "application/json",
-            "User-Agent": "KrakenTraderV2-FuturesReadOnly/0.1.70",
+            "User-Agent": "KrakenTraderV2-FuturesReadOnly/0.1.77",
         }
         if authenticated:
             if not self.credentials_present:

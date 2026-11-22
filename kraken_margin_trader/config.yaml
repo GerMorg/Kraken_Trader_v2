@@ -1,10 +1,11 @@
 name: Kraken Margin Trader
-version: 0.1.76
+version: 0.1.77
 slug: kraken_margin_trader
 description: >-
   Kraken-Trading-App mit getrennten Spot-Margin- und Futures-Produktstrecken.
   Spot/Margin und Futures bleiben technisch und risikoseitig getrennt.
-  Futures-Ordertests verwenden eigene Demo-Zugangsdaten; die Produktions-API bleibt Read-only.
+  Der optionale Futures-Demo-Lesezugriff verwendet eigene Zugangsdaten und ist standardmäßig deaktiviert.
+  Die Produktions-Futures-API bleibt Read-only; Demo-Orders sind noch nicht runtime-freigegeben.
 url: https://github.com/GerMorg/Kraken_Trader_v2
 arch: [amd64, aarch64]
 startup: application
@@ -22,7 +23,10 @@ options:
   kraken_api_secret: ""
   kraken_futures_api_key: ""
   kraken_futures_api_secret: ""
+  kraken_futures_demo_api_key: ""
+  kraken_futures_demo_api_secret: ""
   futures_readonly_enabled: false
+  futures_demo_enabled: false
   real_orders_enabled: false
   cycle_interval_seconds: 300
   max_market_candidates: 12
@@ -47,7 +51,10 @@ schema:
   kraken_api_secret: password
   kraken_futures_api_key: password
   kraken_futures_api_secret: password
+  kraken_futures_demo_api_key: password
+  kraken_futures_demo_api_secret: password
   futures_readonly_enabled: bool
+  futures_demo_enabled: bool
   real_orders_enabled: bool
   cycle_interval_seconds: int(60,3600)
   max_market_candidates: int(1,30)
