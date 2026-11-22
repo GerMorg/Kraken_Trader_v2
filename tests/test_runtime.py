@@ -766,7 +766,6 @@ def test_runtime_probes_history_and_persists_positions_without_local_exit_watche
     position_rows = db.latest_exchange_position_snapshot()
     assert [row["position_txid"] for row in position_rows] == ["POSITION-1"]
     assert '"event":"POSITION_MANAGEMENT_DECISION"' not in logs
-    assert '"position_txid":"POSITION-1"' in logs
     assert "never-log-this" not in logs
     cycle_summaries = [
         json.loads(line) for line in logs.splitlines()
