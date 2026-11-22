@@ -547,6 +547,7 @@ def compare_strategies(
 LIVE_SHADOW_CANDIDATE_VERSIONS = {
     "current_tsm": "tsm-0.2.0",
     "fourier_cycle": "fourier-cycle-0.1.0",
+    "volatility_compression_breakout": "compression-breakout-0.1.0",
 }
 
 
@@ -558,7 +559,7 @@ def generate_live_shadow_candidate_signals(
     holding_bars: int = 8,
     tsm_version: str = "tsm-0.2.0",
 ) -> list[dict[str, Any]]:
-    """Produce TSM and Fourier diagnostics for research only; never creates orders."""
+    """Produce TSM, Fourier and compression-breakout shadow candidates; never creates orders."""
     if holding_bars < 1:
         raise ValueError("LIVE_SHADOW_HOLDING_BARS_MUST_BE_POSITIVE")
     candles: list[Candle] = []
@@ -603,6 +604,15 @@ def generate_live_shadow_candidate_signals(
         fast_threshold_bps=fast_threshold_bps,
         slow_threshold_bps=slow_threshold_bps,
     )
+    market_regime = "UNKNOWN"
+    if len(tsm_history) >= 73:
+        if tsm.trend_efficiency_72h >= D("0.25"):
+            market_regime = "TRENDING"
+        elif tsm.trend_efficiency_72h <= D("0.12"):
+            market_regime = "RANGING"
+        else:
+            market_regime = "TRANSITIONAL"
+
     tsm_candidate = {
         "candidate_name": "current_tsm",
         "candidate_version": tsm_version,
@@ -614,6 +624,7 @@ def generate_live_shadow_candidate_signals(
             "momentum_slow_bps": str(tsm.momentum_slow_bps),
             "trend_efficiency_24h": str(tsm.trend_efficiency_24h),
             "trend_efficiency_72h": str(tsm.trend_efficiency_72h),
+            "market_regime": market_regime,
             "stop_distance_pct": str(tsm.stop_distance_pct),
             "contiguous_h1_bars_used": len(tsm_history),
             "score_is_calibrated_probability": False,
@@ -654,12 +665,117 @@ def generate_live_shadow_candidate_signals(
             "period_stability_pct": spectrum.period_stability_pct if spectrum is not None else None,
             "predicted_next_return_bps": spectrum.predicted_next_return_bps if spectrum is not None else None,
             "amplitude_to_sigma": spectrum.amplitude_to_sigma if spectrum is not None else None,
+            "market_regime": market_regime,
             "score_is_calibrated_probability": False,
             "research_only": True,
             "parameters_fitted_on_forward_or_test_data": False,
         },
     }
-    return [tsm_candidate, fourier_candidate]
+
+    breakout_direction = "NONE"
+    breakout_reason = "INSUFFICIENT_COMPRESSION_HISTORY"
+    breakout_distance_bps: Decimal | None = None
+    recent_range_pct: Decimal | None = None
+    baseline_range_pct: Decimal | None = None
+    compression_ratio: Decimal | None = None
+    volume_ratio: Decimal | None = None
+    # 168 historical bars form a seven-day baseline, followed by 24 completed
+    # compression bars and the current completed breakout bar. The current bar
+    # is never included in the reference range or volume baseline.
+    if len(candles) >= 193:
+        compression_window = candles[-193:]
+        compression_contiguous = all(
+            right.timestamp - left.timestamp == 3600
+            for left, right in zip(compression_window, compression_window[1:])
+        )
+        if not compression_contiguous:
+            breakout_reason = "HOURLY_HISTORY_GAP_IN_COMPRESSION_WINDOW"
+        else:
+            baseline_bars = compression_window[:168]
+            prior_24h = compression_window[168:192]
+            current_bar = compression_window[192]
+            prior_high = max(item.high for item in prior_24h)
+            prior_low = min(item.low for item in prior_24h)
+            recent_mid = (prior_high + prior_low) / D(2)
+            if recent_mid > 0:
+                recent_range_pct = (prior_high - prior_low) / recent_mid * D(100)
+
+            daily_range_pct: list[Decimal] = []
+            for offset in range(0, 168, 24):
+                block = baseline_bars[offset:offset + 24]
+                block_high = max(item.high for item in block)
+                block_low = min(item.low for item in block)
+                block_mid = (block_high + block_low) / D(2)
+                if block_mid > 0:
+                    daily_range_pct.append(
+                        (block_high - block_low) / block_mid * D(100)
+                    )
+            if len(daily_range_pct) == 7:
+                baseline_range_pct = median(daily_range_pct)
+            if (
+                recent_range_pct is not None
+                and baseline_range_pct is not None
+                and baseline_range_pct > 0
+            ):
+                compression_ratio = recent_range_pct / baseline_range_pct
+
+            median_volume = median([item.volume for item in prior_24h])
+            if median_volume > 0:
+                volume_ratio = current_bar.volume / median_volume
+
+            if current_bar.close > prior_high:
+                breakout_direction = "LONG"
+                breakout_distance_bps = (
+                    current_bar.close - prior_high
+                ) / prior_high * D(10000)
+            elif current_bar.close < prior_low:
+                breakout_direction = "SHORT"
+                breakout_distance_bps = (
+                    prior_low - current_bar.close
+                ) / prior_low * D(10000)
+
+            if breakout_direction == "NONE":
+                breakout_reason = "NO_RANGE_BREAKOUT"
+            elif compression_ratio is None or volume_ratio is None:
+                breakout_direction = "NONE"
+                breakout_reason = "COMPRESSION_OR_VOLUME_BASELINE_INVALID"
+            elif compression_ratio > D("0.75") or volume_ratio < D("1.5"):
+                breakout_direction = "NONE"
+                breakout_reason = "BREAKOUT_NOT_CONFIRMED_BY_COMPRESSION_OR_VOLUME"
+            else:
+                breakout_reason = "QUALIFIED_COMPRESSION_BREAKOUT"
+
+    breakout_candidate = {
+        "candidate_name": "volatility_compression_breakout",
+        "candidate_version": LIVE_SHADOW_CANDIDATE_VERSIONS[
+            "volatility_compression_breakout"
+        ],
+        "direction": breakout_direction,
+        "signal_reason": breakout_reason,
+        "score": volume_ratio if breakout_direction != "NONE" and volume_ratio is not None else D(0),
+        "features": {
+            "market_regime": market_regime,
+            "breakout_distance_bps": (
+                str(breakout_distance_bps) if breakout_distance_bps is not None else None
+            ),
+            "prior_24h_range_pct": str(recent_range_pct) if recent_range_pct is not None else None,
+            "baseline_7d_median_daily_range_pct": (
+                str(baseline_range_pct) if baseline_range_pct is not None else None
+            ),
+            "range_compression_ratio": (
+                str(compression_ratio) if compression_ratio is not None else None
+            ),
+            "hourly_volume_ratio_vs_prior_24h_median": (
+                str(volume_ratio) if volume_ratio is not None else None
+            ),
+            "required_range_compression_ratio_max": "0.75",
+            "required_hourly_volume_ratio_min": "1.5",
+            "score_is_calibrated_probability": False,
+            "research_only": True,
+            "features_use_current_bar_only_for_breakout_confirmation": True,
+        },
+    }
+    return [tsm_candidate, fourier_candidate, breakout_candidate]
 
 
 def strategy_candidate_observation_id(

@@ -184,7 +184,7 @@ def test_strategy_lab_rejects_non_hourly_data_and_invalid_cost_assumptions():
         )
 
 
-def test_live_shadow_candidates_produce_two_separate_predictions():
+def test_live_shadow_candidates_produce_three_separate_predictions():
     from app.strategy_lab import generate_live_shadow_candidate_signals
 
     candles = synthetic_candles(720)
@@ -206,11 +206,16 @@ def test_live_shadow_candidates_produce_two_separate_predictions():
         holding_bars=8,
         tsm_version="tsm-0.2.0",
     )
-    assert [item["candidate_name"] for item in signals] == ["current_tsm", "fourier_cycle"]
+    assert [item["candidate_name"] for item in signals] == [
+        "current_tsm", "fourier_cycle", "volatility_compression_breakout"
+    ]
     assert all(item["direction"] in {"LONG", "SHORT", "NONE"} for item in signals)
     assert signals[0]["candidate_version"] == "tsm-0.2.0"
     assert signals[1]["candidate_version"] == "fourier-cycle-0.1.0"
     assert signals[1]["features"]["research_only"] is True
+    assert signals[2]["candidate_version"] == "compression-breakout-0.1.0"
+    assert signals[2]["features"]["research_only"] is True
+    assert signals[2]["features"]["score_is_calibrated_probability"] is False
     assert signals[1]["features"]["score_is_calibrated_probability"] is False
     assert all("order" not in str(item).lower() for item in signals)
 
@@ -269,3 +274,47 @@ def test_tsm_resets_its_lookback_after_hourly_data_gap():
     assert signals[0]["signal_reason"] == "INSUFFICIENT_HISTORY"
     assert signals[0]["features"]["contiguous_h1_bars_used"] == 50
     assert signals[1]["signal_reason"] == "HOURLY_HISTORY_GAP_IN_FOURIER_WINDOW"
+
+
+
+def test_compression_breakout_requires_prior_range_compression_and_volume_confirmation():
+    from app.strategy_lab import generate_live_shadow_candidate_signals
+
+    raw_bars = []
+    for index in range(168):
+        raw_bars.append({
+            "ts": index * 3600,
+            "open": "100",
+            "high": "101",
+            "low": "99",
+            "close": "100",
+            "volume": "10",
+        })
+    for index in range(168, 192):
+        raw_bars.append({
+            "ts": index * 3600,
+            "open": "100",
+            "high": "100.25",
+            "low": "99.75",
+            "close": "100",
+            "volume": "10",
+        })
+    raw_bars.append({
+        "ts": 192 * 3600,
+        "open": "100",
+        "high": "100.6",
+        "low": "99.9",
+        "close": "100.5",
+        "volume": "20",
+    })
+
+    candidates = generate_live_shadow_candidate_signals(
+        raw_bars,
+        fast_threshold_bps=D("120"),
+        slow_threshold_bps=D("180"),
+    )
+    breakout = candidates[2]
+    assert breakout["direction"] == "LONG"
+    assert breakout["signal_reason"] == "QUALIFIED_COMPRESSION_BREAKOUT"
+    assert D(str(breakout["features"]["range_compression_ratio"])) <= D("0.75")
+    assert D(str(breakout["features"]["hourly_volume_ratio_vs_prior_24h_median"])) >= D("1.5")

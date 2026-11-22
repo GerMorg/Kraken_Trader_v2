@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.80 — Separates adaptive shadow learning and adds a compression-breakout hypothesis
+
+- Activates a lightweight, independently configurable forward-shadow learning path by default. It records versioned TSM, Fourier and volatility-compression breakout observations using the H1 candles and ticker/fee evidence already loaded by the normal market cycle.
+- Keeps the heavier background research worker, multi-asset lab and L2 WebSocket collector disabled. Candidate settlement and calibration are run only when new candidate observations or matured outcomes were added; large historical summaries are not recalculated in unchanged cycles.
+- Fixes the candidate completeness gate: it now expects the three active candidate versions rather than four, preventing repeated incomplete-bar attempts.
+- Adds a range-compression breakout research candidate. Its reference range excludes the current bar, requires 193 contiguous H1 bars, a prior 24-hour range no wider than 75% of the seven-day daily-range median and hourly volume at least 1.5 times the prior 24-hour median.
+- Adds a low-compute Beta(5,5) experience diagnostic using matured costed forward labels and excluding same-pair overlapping observations. It reports per-regime smoothed historical positive-return rates; these are not calibrated probabilities and cannot influence signals, risk, sizing or orders.
+- Adds AppLog events SHADOW_STRATEGY_LAB_SUMMARY and STRATEGY_EXPERIENCE_CALIBRATION, CYCLE_SUMMARY status fields and a HA option to disable the learning path.
+- Adds no ML/NN or external data dependencies, no database reset, no order authority changes and no automatic parameter promotion. The internal real-order release gate stays closed.
+
 ## 0.1.79 — Operator-Risikogrenzen und Futures-Marktdaten ohne Demo
 
 - Entfernt code-owned Obergrenzen für Trade-Risikobudget, Positionsgröße, Gross-/Net-Exposure, Margin-Auslastung, Hebel und maximale offene Spot-/Margin-Positionen. Diese Werte werden vom Betreiber vorgegeben; negative oder nicht-endliche Eingaben fallen auf Standardwerte zurück.

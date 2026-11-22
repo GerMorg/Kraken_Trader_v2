@@ -1,8 +1,10 @@
-## Aktiver Kandidatenumfang ab App-Version 0.1.76
+## Aktiver Shadow-Kandidatenumfang ab App-Version 0.1.80
 
-Der aktive Kandidatenpfad wurde bewusst auf zwei Hypothesen reduziert: TSM als einfache Baseline und Fourier Cycle als separater Research-Kandidat. Der bisherige Mean-Reversion-24h-Kandidat, das unkalibrierte logistische Modell und Volatility Breakout werden nicht mehr erzeugt. Historische Beobachtungen bleiben für Audit und Vergleich in SQLite erhalten.
+Der leichte, separat konfigurierbare Shadow-Pfad zeichnet drei voneinander getrennte Hypothesen auf: TSM als Trendbaseline, Fourier Cycle als Spektraldiagnose und Volatility-Compression-Breakout. Der Breakout verlangt eine 24-Stunden-Range, die höchstens 75 % der Median-Range der vorangegangenen sieben Tage beträgt, einen Bruch der vorherigen Range durch den Schlusskurs der aktuellen abgeschlossenen Kerze und mindestens das 1,5-Fache des medianen Stundenvolumens der vorangegangenen 24 Stunden. Die Breakout-Referenzdaten schließen die aktuelle Kerze aus; benötigt werden 193 zusammenhängende H1-Kerzen.
 
-Der Fourier-Kandidat nutzt zwei H1-Fenster zu je 128 Logrenditen, eine Hann-gefensterte DFT, spektrale Konzentration/Entropie und eine Periodenstabilitätsprüfung. Seine Phaseprojektion ist ein Diagnosewert, keine Wahrscheinlichkeit und kein erwarteter Return. Die Implementierung und Ablehnungskriterien sind in FOURIER_RESEARCH.md dokumentiert. Kein aktiver Entry, keine Parameterpromotion.
+Alle drei Kandidaten werden pro geschlossener H1-Kerze und Strategieversion in SQLite gespeichert, auch wenn sie keine Richtung liefern. Ergebnisse sind Forward-Labels mit aktuellem Exit-Spread als Kostenproxy, keine echten Fills oder Portfolio-PnL. Eine neutrale Beta(5,5)-Erfahrungsauswertung verwendet nur ausgereifte, kostenbehaftete und pro Paar nicht überlappende Labels. Sie ist eine historische Trefferquoten-Diagnose, keine kalibrierte Vorhersage und kein automatischer Strategiewähler.
+
+Der Fourier-Kandidat nutzt zwei H1-Fenster zu je 128 Logrenditen, eine Hann-gefensterte DFT, spektrale Konzentration/Entropie und eine Periodenstabilitätsprüfung. Seine Phaseprojektion ist ein Diagnosewert, keine Wahrscheinlichkeit und kein erwarteter Return. Die Implementierung und Ablehnungskriterien sind in FOURIER_RESEARCH.md dokumentiert. Kein Kandidat erzeugt Order-Intents oder Orders; kein automatischer Parametertransfer.
 
 ---
 

@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from app import STRATEGY_VERSION
 from app.audit import AuditLogger
 from app.config import BACKGROUND_RESEARCH_ENABLED, INTERNAL_LIVE_EXECUTION_RELEASED, Settings
+from app.strategy_calibration import summarize_experience_calibration
 from app.costs import (
     cost_diagnostic, estimate_round_trip_cost, maker_fee_from_trade_volume,
     select_costed_plan, taker_fee_from_trade_volume, trade_volume_fee_diagnostics,
@@ -1459,6 +1460,8 @@ class TraderRuntime:
         history_window_unknown = False
         closed_history_snapshot_allowed = False
         multi_asset_research_summary: dict[str, Any] = {"status": "NOT_RUN", "release_gate_eligible": False}
+        strategy_lab_summary: dict[str, Any] = {"status": "DISABLED", "enabled": False}
+        strategy_calibration_summary: dict[str, Any] = {"status": "DISABLED", "groups": []}
         recovered_transient_sqlite_cantopen_breaker = False
         recovered_transient_public_network_breaker = False
         recovered_transient_market_data_breaker = False
@@ -1470,6 +1473,7 @@ class TraderRuntime:
             cycle_id=cycle_id,
             real_orders_enabled=self.settings.real_orders_enabled,
             background_research_enabled=BACKGROUND_RESEARCH_ENABLED,
+            strategy_learning_enabled=self.settings.strategy_learning_enabled,
         )
         futures_readonly_summary: dict[str, Any] = {
             "status": "DISABLED", "snapshot_id": None, "endpoint_error_count": 0
@@ -2244,35 +2248,36 @@ class TraderRuntime:
                             exception_type=type(exc).__name__,
                             reason=str(exc)[:120],
                         )
-                    if BACKGROUND_RESEARCH_ENABLED:
-                        try:
-                            candidate_settlement_events = settle_due_strategy_candidate_observations(
-                                self.persistence,
-                                pair=instrument.pair_id,
-                                current_exit_spread_bps=ticker.spread_bps,
-                                interval_minutes=60,
-                            )
-                            for candidate_event in candidate_settlement_events:
-                                event_name = candidate_event["event"]
-                                event_payload = {
-                                    "cycle_id": cycle_id,
-                                    **candidate_event["payload"],
-                                }
-                                self.persistence.record_event(event_name, event_payload)
-                                self.audit.emit(event_name, **event_payload)
-                                if event_name == "SHADOW_STRATEGY_CANDIDATE_OUTCOME_SETTLED":
-                                    counts["strategy_lab_outcomes_settled"] += 1
-                                elif event_name == "SHADOW_STRATEGY_CANDIDATE_OUTCOME_INCOMPLETE":
-                                    counts["strategy_lab_outcomes_incomplete"] += 1
-                        except (ArithmeticError, TypeError, ValueError) as exc:
-                            self.audit.emit(
-                                "SHADOW_STRATEGY_CANDIDATE_SETTLEMENT_ERROR",
-                                cycle_id=cycle_id,
-                                pair=instrument.wsname,
-                                exception_type=type(exc).__name__,
-                                reason=str(exc)[:120],
-                                release_gate_eligible=False,
-                            )
+
+                if self.settings.strategy_learning_enabled:
+                    try:
+                        candidate_settlement_events = settle_due_strategy_candidate_observations(
+                            self.persistence,
+                            pair=instrument.pair_id,
+                            current_exit_spread_bps=ticker.spread_bps,
+                            interval_minutes=60,
+                        )
+                        for candidate_event in candidate_settlement_events:
+                            event_name = candidate_event["event"]
+                            event_payload = {
+                                "cycle_id": cycle_id,
+                                **candidate_event["payload"],
+                            }
+                            self.persistence.record_event(event_name, event_payload)
+                            self.audit.emit(event_name, **event_payload)
+                            if event_name == "SHADOW_STRATEGY_CANDIDATE_OUTCOME_SETTLED":
+                                counts["strategy_lab_outcomes_settled"] += 1
+                            elif event_name == "SHADOW_STRATEGY_CANDIDATE_OUTCOME_INCOMPLETE":
+                                counts["strategy_lab_outcomes_incomplete"] += 1
+                    except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
+                        self.audit.emit(
+                            "SHADOW_STRATEGY_CANDIDATE_SETTLEMENT_ERROR",
+                            cycle_id=cycle_id,
+                            pair=instrument.wsname,
+                            exception_type=type(exc).__name__,
+                            reason=str(exc)[:120],
+                            release_gate_eligible=False,
+                        )
 
                 signal=generate_trend_signal(
                     instrument.pair_id,
@@ -2437,7 +2442,7 @@ class TraderRuntime:
                             signal_bar_ts=latest_bar_ts,
                             bar_age_seconds=bar_age_seconds,
                         )
-                if BACKGROUND_RESEARCH_ENABLED and bars:
+                if self.settings.strategy_learning_enabled and bars:
                     shadow_bar_ts = int(bars[-1]["ts"])
                     shadow_decision_ts = int(time.time())
                     shadow_bar_age = shadow_decision_ts - (shadow_bar_ts + 3600)
@@ -2445,7 +2450,7 @@ class TraderRuntime:
                         -60 <= shadow_bar_age <= 3900
                         and not self.persistence.strategy_candidate_bar_is_complete(
                             instrument.pair_id, shadow_bar_ts, interval_minutes=60,
-                            expected_candidate_count=4,
+                            expected_candidate_count=3,
                         )
                     ):
                         try:
@@ -3099,10 +3104,7 @@ class TraderRuntime:
                 failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_READ"
                 strategy_candidate_rows = self.persistence.strategy_candidate_observations(limit=100000)
                 strategy_lab_summary = summarize_strategy_candidate_research(strategy_candidate_rows)
-                strategy_lab_summary["enabled"] = BACKGROUND_RESEARCH_ENABLED
-                failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_WRITE"
-                self.persistence.record_event("SHADOW_STRATEGY_LAB_SUMMARY", strategy_lab_summary)
-                self.audit.emit("SHADOW_STRATEGY_LAB_SUMMARY", **strategy_lab_summary)
+                strategy_lab_summary["enabled"] = self.settings.strategy_learning_enabled
                 self.microstructure.flush_due()
                 microstructure_status = self.microstructure.status()
                 microstructure_quality = self.persistence.microstructure_quality_summary(now_epoch=int(time.time()))
@@ -3210,6 +3212,56 @@ class TraderRuntime:
                     microstructure_collector_running=False,
                     database_history_retained=True,
                 )
+            if self.settings.strategy_learning_enabled and (
+                counts["strategy_lab_observations_recorded"] > 0
+                or counts["strategy_lab_outcomes_settled"] > 0
+                or counts["strategy_lab_outcomes_incomplete"] > 0
+            ):
+                failure_stage = "FINALIZE_STRATEGY_LEARNING_SUMMARY"
+                strategy_candidate_rows = self.persistence.strategy_candidate_observations(
+                    limit=100000
+                )
+                strategy_lab_summary = summarize_strategy_candidate_research(
+                    strategy_candidate_rows
+                )
+                strategy_lab_summary["enabled"] = True
+                strategy_lab_summary["cycle_id"] = cycle_id
+                strategy_lab_summary["history_scope"] = (
+                    "LATEST_100000_CANDIDATE_OBSERVATIONS"
+                )
+                self.persistence.record_event(
+                    "SHADOW_STRATEGY_LAB_SUMMARY", strategy_lab_summary
+                )
+                self.audit.emit("SHADOW_STRATEGY_LAB_SUMMARY", **strategy_lab_summary)
+
+                strategy_calibration_summary = summarize_experience_calibration(
+                    strategy_candidate_rows,
+                    as_of_epoch=int(time.time()),
+                )
+                strategy_calibration_summary["cycle_id"] = cycle_id
+                strategy_calibration_summary["history_scope"] = (
+                    "LATEST_100000_CANDIDATE_OBSERVATIONS"
+                )
+                self.persistence.record_event(
+                    "STRATEGY_EXPERIENCE_CALIBRATION", strategy_calibration_summary
+                )
+                self.audit.emit(
+                    "STRATEGY_EXPERIENCE_CALIBRATION",
+                    **strategy_calibration_summary,
+                )
+            elif self.settings.strategy_learning_enabled:
+                strategy_lab_summary = {
+                    "status": "NOT_RECOMPUTED_NO_NEW_SHADOW_DATA",
+                    "enabled": True,
+                }
+                strategy_calibration_summary = {
+                    "status": "NOT_RECOMPUTED_NO_NEW_MATURED_LABELS",
+                    "groups": [],
+                }
+            else:
+                strategy_lab_summary = {"status": "DISABLED", "enabled": False}
+                strategy_calibration_summary = {"status": "DISABLED", "groups": []}
+
             final_breaker_rows = self.persistence.circuit_breakers()
             final_breaker_diagnostics = _circuit_breaker_diagnostics(final_breaker_rows, persistence=self.persistence)
             result = {
@@ -3219,6 +3271,10 @@ class TraderRuntime:
                 **counts,
                 "real_orders_enabled": self.settings.real_orders_enabled,
                 "background_research_enabled": BACKGROUND_RESEARCH_ENABLED,
+                "strategy_learning_enabled": self.settings.strategy_learning_enabled,
+                "strategy_learning_summary_status": strategy_lab_summary.get("status"),
+                "strategy_calibration_status": strategy_calibration_summary.get("status"),
+                "strategy_calibration_group_count": len(strategy_calibration_summary.get("groups", [])),
                 "internal_live_release": INTERNAL_LIVE_EXECUTION_RELEASED,
                 "futures_readonly_status": futures_readonly_summary.get("status"),
                 "futures_readonly_snapshot_id": futures_readonly_summary.get("snapshot_id"),

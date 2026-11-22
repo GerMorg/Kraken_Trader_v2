@@ -1,5 +1,5 @@
 name: Kraken Margin Trader
-version: 0.1.79
+version: 0.1.80
 slug: kraken_margin_trader
 description: >-
   Kraken-Trading-App mit getrennten Spot-Margin- und Futures-Produktstrecken.
@@ -27,6 +27,7 @@ options:
   futures_max_market_candidates: 5
   futures_strategy_fast_bps: 120
   futures_strategy_slow_bps: 180
+  strategy_learning_enabled: true
   real_orders_enabled: false
   cycle_interval_seconds: 300
   max_market_candidates: 12
@@ -60,6 +61,7 @@ schema:
   futures_max_market_candidates: int(1,)
   futures_strategy_fast_bps: float
   futures_strategy_slow_bps: float
+  strategy_learning_enabled: bool
   real_orders_enabled: bool
   cycle_interval_seconds: int(60,)
   max_market_candidates: int(1,)
