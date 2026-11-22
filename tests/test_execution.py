@@ -306,6 +306,37 @@ def test_reduce_and_settlement_orders_do_not_attach_new_trailing_stops():
     assert "close[price]" not in params
 
 
+def test_strategy_stop_distance_overrides_default_trailing_stop_offset():
+    intent = OrderIntent.create(
+        decision_id="adaptive-trailing-stop",
+        pair="XBTUSD",
+        action=Action.OPEN_MARGIN_SHORT,
+        side="SHORT",
+        volume=D("0.1"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+        evidence={"trailing_stop_offset_pct": "4.25"},
+    )
+    params = build_add_order_params(intent, instrument(), validate_only=True)
+    assert params["close[ordertype]"] == "trailing-stop"
+    assert params["close[price]"] == "+4.25%"
+
+
+def test_invalid_strategy_stop_distance_fails_before_order_submission():
+    intent = OrderIntent.create(
+        decision_id="invalid-adaptive-trailing-stop",
+        pair="XBTUSD",
+        action=Action.OPEN_MARGIN_LONG,
+        side="LONG",
+        volume=D("0.1"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+        evidence={"trailing_stop_offset_pct": "NaN"},
+    )
+    with pytest.raises(ValueError, match="TRAILING_STOP_OFFSET_INVALID"):
+        build_add_order_params(intent, instrument(), validate_only=True)
+
+
 def test_trailing_stop_offset_is_validated_before_order_submission():
     intent = OrderIntent.create(
         decision_id="bad-trail-offset",
