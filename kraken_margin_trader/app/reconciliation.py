@@ -154,14 +154,16 @@ def reconcile_order_intents(
         "unmatched_submitted_intents": 0,
         "ambiguous_matches": 0,
         "invalid_exchange_states": 0,
-        "unmatched_open_orders": 0,
+        "unmanaged_external_open_orders": 0,
         "full_portfolio_reconciliation": False,
     }
     unresolved = persistence.unresolved_intents()
     known_unresolved_ids = {str(row.get("client_order_id", "")) for row in unresolved}
 
-    # Only IDs from this cycle's validated OpenOrders snapshot prove an order is open now.
-    # Older source=OPEN rows are retained for audit but cannot create a stale breaker.
+    # A current exchange order without a local intent is an externally managed
+    # order (often deliberately created by the operator). Keep it visible and do
+    # not misclassify it as a failed bot submission. Account/position risk still
+    # includes exchange-reported balances, positions and reserved collateral.
     for order in reconciliation_orders:
         if (
             order.get("source") != "OPEN"
@@ -170,11 +172,20 @@ def reconcile_order_intents(
             continue
         client_id = str(order.get("client_order_id") or "").strip()
         if not client_id or client_id not in known_unresolved_ids:
-            stats["unmatched_open_orders"] += 1
-            persistence.trip_circuit_breaker(
-                "ORDER_RECONCILIATION",
-                "EXCHANGE_OPEN_ORDER_WITHOUT_MATCHING_LOCAL_INTENT",
-                {"order_id": order.get("order_id"), "client_order_id": client_id or None},
+            stats["unmanaged_external_open_orders"] += 1
+            persistence.record_event(
+                "EXTERNAL_OPEN_ORDER_UNMANAGED",
+                {
+                    "order_id": order.get("order_id"),
+                    "client_order_id": client_id or None,
+                    "pair": order.get("pair"),
+                    "side": order.get("side"),
+                    "status": order.get("status"),
+                    "volume": order.get("volume"),
+                    "volume_executed": order.get("volume_executed"),
+                    "operator_or_external_ownership_assumed": True,
+                    "bot_will_not_modify_or_cancel": True,
+                },
             )
 
     for intent in unresolved:
