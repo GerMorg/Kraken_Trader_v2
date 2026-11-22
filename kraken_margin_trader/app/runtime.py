@@ -2269,8 +2269,16 @@ class TraderRuntime:
                                 release_gate_eligible=False,
                             )
 
-                signal=generate_trend_signal(instrument.pair_id,[b["close"] for b in bars],
-                    fast_threshold_bps=self.settings.strategy_fast_bps,slow_threshold_bps=self.settings.strategy_slow_bps)
+                signal=generate_trend_signal(
+                    instrument.pair_id,
+                    [b["close"] for b in bars],
+                    fast_threshold_bps=self.settings.strategy_fast_bps,
+                    slow_threshold_bps=self.settings.strategy_slow_bps,
+                    fast_efficiency_min=self.settings.strategy_fast_efficiency_min,
+                    slow_efficiency_min=self.settings.strategy_slow_efficiency_min,
+                    min_stop_distance_pct=self.settings.strategy_stop_min_pct,
+                    max_stop_distance_pct=self.settings.strategy_stop_max_pct,
+                )
                 self.audit.emit("MARKET_SIGNAL_EVALUATED",cycle_id=cycle_id,pair=instrument.wsname,
                     direction=signal.direction,reason=signal.reason,momentum_fast_bps=signal.momentum_fast_bps,
                     momentum_slow_bps=signal.momentum_slow_bps,trend_efficiency_24h=signal.trend_efficiency_24h,
