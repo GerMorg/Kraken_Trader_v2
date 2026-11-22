@@ -9,6 +9,10 @@
 - Die Demo-Key-Berechtigungsstufen werden nicht verifiziert. Sie sind bewusst als \`UNVERIFIED\` gespeichert; erfolgreiche authentifizierte GET-Abfragen beweisen keine Write-Berechtigung.
 - \`CIRCUIT_BREAKER_STATUS.breaker_blocks_new_entries\` beschreibt ausschließlich aktive persistierte Circuit Breaker. Der Portfolio-Risikoblock wird unabhängig über \`PORTFOLIO_ENTRY_RISK_STATUS\` ausgegeben.
 
+## Gelesene Demo-Endpunkte
+
+Die Runtime ruft die sieben GET-Endpunkte Accounts, Open Positions, Open Orders, Fills, Leverage Preferences, Instruments und Tickers sequenziell auf. Schlägt die authentifizierte Kontoabfrage fehl, werden die weiteren privaten Leseabfragen übersprungen. Ein Teilresultat wird als PARTIAL gespeichert; fehlende Daten werden nicht als leere Positionen oder Orders interpretiert.
+
 ## Sicherheitsgrenzen
 
 - \`futures_demo_enabled\` ist standardmäßig \`false\`.
