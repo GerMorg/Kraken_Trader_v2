@@ -2966,51 +2966,7 @@ class TraderRuntime:
                 }
     
             else:
-                multi_asset_research_summary = {
-                    "status": "DISABLED_BY_ARCHITECTURE",
-                    "release_gate_eligible": False,
-                    "order_creation_allowed": False,
-                }
-                research_summary = {
-                    "validation_status": "BACKGROUND_RESEARCH_DISABLED",
-                    "costed_spot_proxy_observations": 0,
-                    "holdout_sample_available_for_review": False,
-                    "release_gate_eligible": False,
-                }
-                strategy_lab_summary = {
-                    "candidate_count": 0,
-                    "status": "BACKGROUND_RESEARCH_DISABLED",
-                    "release_gate_eligible": False,
-                    "candidates": [],
-                }
-                strategy_candidate_compact = []
-                compact_candidate_cohort = {}
                 microstructure_status = self.microstructure.status()
-                microstructure_quality = {
-                    "status_counts": {"VALID": 0, "PARTIAL": 0},
-                    "recent_usable_valid_bar_count": 0,
-                    "recent_usable_book_mark_count": 0,
-                    "recent_legacy_or_unqualified_valid_bar_count": 0,
-                    "recent_status_counts": {"VALID": 0, "PARTIAL": 0},
-                }
-                microstructure_history: dict[str, list[dict[str, Any]]] = {}
-                microstructure_forward_tsm = {
-                    "status": "BACKGROUND_RESEARCH_DISABLED",
-                    "matched_observation_count": 0,
-                }
-                microstructure_forward_candidates = {
-                    "status": "BACKGROUND_RESEARCH_DISABLED",
-                    "matched_observation_count": 0,
-                }
-                microstructure_early_tsm = {
-                    "status": "BACKGROUND_RESEARCH_DISABLED",
-                    "horizons": {},
-                }
-                microstructure_early_candidates = {
-                    "status": "BACKGROUND_RESEARCH_DISABLED",
-                    "horizons": {},
-                }
-                joint_candidate_portfolio = {"status": "BACKGROUND_RESEARCH_DISABLED", "scenarios": []}
                 self.audit.emit(
                     "BACKGROUND_RESEARCH_DISABLED",
                     cycle_id=cycle_id,
@@ -3037,99 +2993,15 @@ class TraderRuntime:
                 "recovered_transient_public_network_breaker": recovered_transient_public_network_breaker,
                 "recovered_transient_market_data_breaker": recovered_transient_market_data_breaker,
                 "recovered_transient_sqlite_cantopen_breaker": recovered_transient_sqlite_cantopen_breaker,
-                "shadow_research_validation_status": research_summary["validation_status"],
-                "shadow_research_costed_sample_count": research_summary["costed_spot_proxy_observations"],
-                "shadow_research_holdout_available": research_summary["holdout_sample_available_for_review"],
-                "shadow_research_release_gate_eligible": research_summary["release_gate_eligible"],
                 "background_research_status": (
                     "ENABLED" if BACKGROUND_RESEARCH_ENABLED else "DISABLED_BY_ARCHITECTURE"
                 ),
-                "shadow_strategy_lab_candidate_count": strategy_lab_summary["candidate_count"],
-                "shadow_strategy_lab_status": strategy_lab_summary["status"],
-                "shadow_strategy_lab_release_gate_eligible": strategy_lab_summary["release_gate_eligible"],
-                "shadow_strategy_lab_candidate_metrics": strategy_candidate_compact,
-                "kraken_fee_schedule_diagnostics": fee_schedule_diagnostics,
-                "microstructure_candidate_cohort_summary": compact_candidate_cohort,
-                "multi_asset_research_status": multi_asset_research_summary.get("status"),
-                "multi_asset_research_key": multi_asset_research_summary.get("research_key"),
-                "multi_asset_research_symbols": multi_asset_research_summary.get("symbols", []),
-                "multi_asset_research_runs_recorded": counts["multi_asset_research_runs_recorded"],
-                "microstructure_enabled": microstructure_status["enabled"],
+                "microstructure_collector_enabled": microstructure_status["enabled"],
                 "microstructure_connection_state": microstructure_status["connection_state"],
-                "microstructure_connected": microstructure_status["connected"],
+                "microstructure_messages_this_process": microstructure_status["messages"],
                 "microstructure_subscribed_symbol_count": microstructure_status["subscribed_symbol_count"],
-                "microstructure_subscribed_symbols": microstructure_status["subscribed_symbols"],
-                "microstructure_websocket_symbols": microstructure_status["websocket_symbols"],
-                "microstructure_subscription_expected_count": microstructure_status["subscription_expected_count"],
-                "microstructure_subscription_acknowledged_count": microstructure_status["subscription_acknowledged_count"],
-                "microstructure_subscription_rejected_count": microstructure_status["subscription_rejected_count"],
-                "microstructure_subscription_pending_count": microstructure_status["subscription_pending_count"],
-                "microstructure_subscription_coverage_pct": microstructure_status["subscription_coverage_pct"],
-                "microstructure_last_subscription_error": microstructure_status["last_subscription_error"],
-                "microstructure_last_subscription_channel": microstructure_status["last_subscription_channel"],
-                "microstructure_last_subscription_symbol": microstructure_status["last_subscription_symbol"],
-                "microstructure_messages": microstructure_status["messages"],
-                "microstructure_parse_errors": microstructure_status["parse_errors"],
-                "microstructure_book_snapshots": microstructure_status["book_snapshots"],
-                "microstructure_book_updates": microstructure_status["book_updates"],
-                "microstructure_trades": microstructure_status["trades"],
-                "microstructure_minute_bars_saved_total": microstructure_status["minute_bars_saved"],
-                "microstructure_persisted_minute_bars": self.persistence.microstructure_bar_count(),
-                "microstructure_valid_minute_bars": microstructure_quality["status_counts"]["VALID"],
-                "microstructure_recent_usable_valid_minute_bars": microstructure_quality["recent_usable_valid_bar_count"],
-                "microstructure_recent_usable_book_marks": microstructure_quality["recent_usable_book_mark_count"],
-                "microstructure_partial_minute_bars": microstructure_quality["status_counts"]["PARTIAL"],
-                "microstructure_recent_legacy_unqualified_valid_bars": microstructure_quality["recent_legacy_or_unqualified_valid_bar_count"],
-                "microstructure_recent_valid_minute_bars": microstructure_quality["recent_status_counts"]["VALID"],
-                "microstructure_recent_partial_minute_bars": microstructure_quality["recent_status_counts"]["PARTIAL"],
-                "microstructure_history_pair_count": len(microstructure_history),
-                "microstructure_history_bars_loaded": sum(len(rows) for rows in microstructure_history.values()),
-                "microstructure_forward_tsm_matched_count": microstructure_forward_tsm.get("matched_observation_count",0),
-                "microstructure_forward_candidate_matched_count": microstructure_forward_candidates.get("matched_observation_count",0),
-                "microstructure_early_horizon_status": microstructure_early_candidates.get("status"),
-                "microstructure_early_horizon_tsm_matched_counts": {
-                    horizon: report.get("matched_observation_count", 0)
-                    for horizon, report in microstructure_early_tsm.get("horizons", {}).items()
-                },
-                "microstructure_early_horizon_candidate_matched_counts": {
-                    horizon: report.get("matched_observation_count", 0)
-                    for horizon, report in microstructure_early_candidates.get("horizons", {}).items()
-                },
-                "joint_candidate_portfolio_scenario_count": len(joint_candidate_portfolio.get("scenarios",[])),
-                "microstructure_checksum_failures": microstructure_status["checksum_failures"],
-                "microstructure_trade_id_gaps": microstructure_status["trade_id_gaps"],
-                "microstructure_connection_gaps": microstructure_status["connection_gaps"],
-                "microstructure_reconnects": microstructure_status["reconnects"],
-                "microstructure_last_message_epoch": microstructure_status["last_message_epoch"],
-                "microstructure_last_error_type": microstructure_status["last_error_type"],
-                "microstructure_last_error_message": microstructure_status["last_error_message"],
-                "microstructure_last_disconnect_epoch": microstructure_status["last_disconnect_epoch"],
-                "microstructure_ping_timeout_count": microstructure_status["ping_timeout_count"],
-                "microstructure_websocket_control_ping_enabled": microstructure_status["websocket_control_ping_enabled"],
-                "microstructure_websocket_ping_interval_seconds": microstructure_status["websocket_ping_interval_seconds"],
-                "microstructure_websocket_ping_timeout_seconds": microstructure_status["websocket_ping_timeout_seconds"],
-                "microstructure_application_ping_interval_seconds": microstructure_status["application_ping_interval_seconds"],
-                "microstructure_application_ping_timeout_seconds": microstructure_status["application_ping_timeout_seconds"],
-                "microstructure_application_ping_sent_count": microstructure_status["application_ping_sent_count"],
-                "microstructure_application_pong_received_count": microstructure_status["application_pong_received_count"],
-                "microstructure_application_ping_timeout_count": microstructure_status["application_ping_timeout_count"],
-                "microstructure_application_ping_rejected_count": microstructure_status["application_ping_rejected_count"],
-                "microstructure_application_ping_unmatched_pong_count": microstructure_status["application_ping_unmatched_pong_count"],
-                "microstructure_application_pong_without_success_count": microstructure_status["application_pong_without_success_count"],
-                "microstructure_last_application_pong_success_field_present": microstructure_status["last_application_pong_success_field_present"],
-                "microstructure_last_application_ping_rtt_ms": microstructure_status["last_application_ping_rtt_ms"],
-                "microstructure_last_application_ping_error": microstructure_status["last_application_ping_error"],
-                "microstructure_last_application_ping_response_epoch": microstructure_status["last_application_ping_response_epoch"],
-                "multi_asset_variant_a_status": (
-                    multi_asset_research_summary.get("variant_a_volatility_harvesting", {}).get("status")
-                    if isinstance(multi_asset_research_summary.get("variant_a_volatility_harvesting"), dict)
-                    else None
-                ),
-                "multi_asset_variant_b_status": (
-                    multi_asset_research_summary.get("variant_b_relative_value_pairs", {}).get("status")
-                    if isinstance(multi_asset_research_summary.get("variant_b_relative_value_pairs"), dict)
-                    else None
-                ),
+                "microstructure_history_retained": True,
+                "kraken_fee_schedule_diagnostics": fee_schedule_diagnostics,
                 "multi_asset_release_gate_eligible": False,
                 "multi_asset_order_creation_allowed": False,
                 "note": (
