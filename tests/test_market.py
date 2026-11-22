@@ -12,9 +12,9 @@ def test_market_universe_allows_only_online_usd_crypto_pair():
       "OFFLINE":{"altname":"OFFLINE","wsname":"ABC/USD","status":"cancel_only","ordermin":"1","lot_decimals":2,"pair_decimals":2}}
     instruments=usd_crypto_universe(raw)
     assert [i.wsname for i in instruments]==["XBT/USD"]
-    assert margin_leverage_for(instruments[0],"buy",3)==2
+    assert margin_leverage_for(instruments[0],"buy",3)==3
 
-def test_does_not_assume_unsupported_maximum_leverage():
+def test_selects_highest_supported_leverage_below_code_owned_cap():
     instrument=usd_crypto_universe({"AUSD":{"altname":"AUSD","wsname":"A/USD","status":"online",
       "ordermin":"0.1","lot_decimals":2,"pair_decimals":2,"aclass_base":"currency","leverage_buy":[4,5],"leverage_sell":[]}})[0]
     assert margin_leverage_for(instrument,"buy",3) is None

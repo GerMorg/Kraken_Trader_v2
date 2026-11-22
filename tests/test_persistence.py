@@ -59,11 +59,11 @@ def test_circuit_breaker_persists_in_database():
     db.close()
 
 
-def test_shadow_intent_is_atomically_terminal_and_never_unresolved():
+def test_simulation_intent_is_atomically_terminal_and_never_unresolved():
     db = Persistence(":memory:")
     shadow = intent()
-    assert db.create_intent(shadow, initial_state="SHADOW_ONLY")
-    assert db.intent_state("i1") == "SHADOW_ONLY"
+    assert db.create_intent(shadow, initial_state="SIMULATION_ONLY")
+    assert db.intent_state("i1") == "SIMULATION_ONLY"
     assert db.unresolved_intents() == []
     with pytest.raises(ValueError, match="INVALID_ORDER_STATE_TRANSITION"):
         db.transition_intent("i1", "SUBMITTING")

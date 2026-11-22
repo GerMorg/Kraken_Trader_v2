@@ -1,3 +1,32 @@
+## Aktueller Regelbetrieb — Version 0.1.75
+
+**Diese Betriebsanweisung ersetzt die nachfolgenden historischen Abschnitte überall dort, wo sie widersprechen.** Ältere Hinweise zu `mode=SHADOW/PAPER/LIVE`, `live_enabled`, `kill_switch`, `validate_shadow_orders`, `shadow_strategy_lab_enabled` oder `microstructure_enabled` stammen aus früheren Versionen und gelten für 0.1.75 nicht mehr.
+
+### Eine Einstellung
+
+Die einzige benutzerseitige Ausführungsoption ist `real_orders_enabled`:
+- `false` (Standard): lokale Signal-/Entscheidungsprotokollierung, keine echte Order.
+- `true`: reale Orderausführung wird angefordert, sofern die gesamte interne Produkt-, Konto-, Risiko- und Release-Prüfung dies erlaubt.
+
+Eine alte Optionsdatei ohne `real_orders_enabled` bleibt im Simulationsbetrieb, selbst wenn darin frühere `mode=LIVE`-Werte gespeichert sind. Der interne Code-Release-Gate steht in 0.1.75 weiterhin auf `false`; daher ist eine echte Orderübermittlung derzeit absichtlich noch nicht freigegeben.
+
+### Schutzorders und manuelle Orders
+
+Jede Spot-/Spot-Margin-Einstiegsorder erhält im Kraken-`AddOrder`-Request eine angehängte Trailing-Stop-Conditional-Close-Order. Der Offset wird aus der volatilitätsabhängigen Signal-Stopdistanz (derzeit 1.5–5.0%) übernommen; der konfigurierte 3.0%-Wert dient nur als Rückfallwert. Prüfe im AppLog `PROTECTIVE_ORDER_ATTACHED_BY_EXCHANGE` bzw. `PROTECTIVE_ORDER_NOT_CONFIRMED`. Eine fehlende Bestätigung führt zu einem persistenten Breaker. Kraken dokumentiert das Conditional-Close-Volumen als gleich dem Primärorder-Volumen. Bei Teilfüllungen muss der Schutz daher separat mit dem tatsächlichen Fill und der Börsenposition reconciled werden; diese Demo-End-to-End-Prüfung ist noch offen. Ein angehängter Stop ist kein Fill- oder Ausführungspreisnachweis.
+
+Manuell angelegte offene Kraken-Orders erscheinen als `EXTERNAL_OPEN_ORDER_UNMANAGED`. Die App passt diese Orders nicht an und storniert sie nicht. Die manuell verwalteten Positionen und die Börsen-Sicherheiten bleiben vom Börsenkonto geliefert und können die verfügbare Risikokapazität beeinflussen.
+
+### CPU und Research
+
+Der normale Zyklus startet in 0.1.75 keinen Microstructure-WebSocket und verarbeitet keine großen Strategy-Lab-, Forward-Matching- oder Portfolio-Research-Abfragen. Bereits vorhandene Forschungsdaten bleiben erhalten. Die zyklische Routine konzentriert sich auf aktuelle Märkte, Konto-/Positionszustand, Strategieentscheidung, Risiko und Reconciliation. Beobachte nach dem Update CPU-Last, Cycle-Dauer und Logs über mehrere Zyklen; eine konkrete CPU-Prozentzahl kann aus dem Quellcode allein nicht garantiert werden.
+
+### Hebel
+Der Hebelwähler nimmt den höchsten instrumentseitig unterstützten Wert bis zum internen 3x-Hard-Cap. Die Positionsgröße wird trotzdem durch das konfigurierte Risikobudget und Portfolio-Limits begrenzt. Höherer Hebel senkt nicht die prozentuale Gebühr auf den Nominalwert.
+
+### Futures
+
+Der Produktions-Futures-Adapter bleibt Read-only. Es gibt aktuell keine Futures-Order-, Amend- oder Cancel-Funktion. Für Futures sind ein eigener Trading-Adapter und eine getrennte Futures-Entscheidungs-/Schutzorderstrecke vorgesehen. Der aktuelle Futures-Schlüssel mit `READ_ONLY`-Berechtigung darf nicht für Orderausführung verwendet werden.
+
 ## Version 0.1.52 — Kostenkalibrierung und Multi-Asset-Research (SHADOW only)
 
 Version 0.1.52 erweitert MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY und die SHADOW-Kostenmessung:

@@ -350,6 +350,19 @@ def make_runtime():
     return TraderRuntime(Settings(), db, audit), db, audit
 
 
+def test_default_runtime_has_no_background_microstructure_worker():
+    runtime, db, audit = make_runtime()
+
+    assert runtime.settings.real_orders_enabled is False
+    assert runtime.microstructure.enabled is False
+    assert runtime.microstructure._thread is None
+    assert runtime.microstructure.status()["connection_state"] == "DISABLED"
+
+    runtime.close()
+    audit.close()
+    db.close()
+
+
 def account_snapshot(positions):
     return {
         "captured_at": time.time(),
@@ -626,63 +639,18 @@ def test_runtime_fetches_a_fresh_pair_scoped_ticker_for_entry_evaluation():
     db.close()
 
 
-def test_validate_shadow_order_calls_central_authority_with_validate_only(monkeypatch):
-    from app.models import Action, Instrument
-    from decimal import Decimal
-    import app.runtime as runtime_module
-
-    runtime, db, audit = make_runtime()
-    runtime.settings = Settings.from_mapping({
-        "mode": "SHADOW", "validate_shadow_orders": True,
-        "kill_switch": True, "live_enabled": False,
+def test_legacy_validate_shadow_option_is_ignored_and_simulation_stays_safe():
+    settings = Settings.from_mapping({
+        "mode": "LIVE",
+        "live_enabled": True,
+        "kill_switch": False,
+        "validate_shadow_orders": True,
     })
-    instrument = Instrument(
-        "XXBTZUSD", "XBTUSD", "XBT/USD", "XBT", "USD", "online",
-        Decimal("0.0001"), 8, 1, (2, 3), (2, 3),
-    )
-    calls = []
+    assert settings.real_orders_enabled is False
+    assert settings.live_requested is False
+    assert not hasattr(settings, "validate_shadow_orders")
 
-    class FakeAuthority:
-        def __init__(self, client, persistence, settings, audit_logger):
-            assert client is runtime.client
-            assert persistence is db
-            assert settings.validate_shadow_orders is True
-            assert audit_logger is audit
-
-        def execute(self, order, selected_instrument, *, prechecks_passed, validate_only):
-            calls.append((order, selected_instrument, prechecks_passed, validate_only))
-            return {"state": "VALIDATED"}
-
-    monkeypatch.setattr(runtime_module, "OrderAuthority", FakeAuthority)
-    intent = {
-        "intent_id": "shadow-validation-id",
-        "decision_id": "cycle:XXBTZUSD:LONG",
-        "client_order_id": "shadow-client-id",
-        "pair": "XXBTZUSD",
-        "action": Action.OPEN_MARGIN_LONG.value,
-        "side": "LONG",
-        "volume": "0.01",
-        "leverage": 2,
-        "product_type": "SPOT_MARGIN",
-        "decision_evidence": {"net_edge_is_uncalibrated_proxy": True},
-    }
-
-    result = runtime._validate_shadow_order(intent, instrument)
-
-    assert result == {"state": "VALIDATED"}
-    assert len(calls) == 1
-    order, selected, prechecks_passed, validate_only = calls[0]
-    assert order.action == Action.OPEN_MARGIN_LONG
-    assert order.volume == Decimal("0.01")
-    assert selected is instrument
-    assert prechecks_passed is True
-    assert validate_only is True
-    audit.close()
-    db.close()
-
-
-
-def test_runtime_probes_history_when_key_metadata_is_missing_and_keeps_position_monitoring(monkeypatch):
+def test_runtime_probes_history_and_persists_positions_without_local_exit_watcher(monkeypatch):
     import json
 
     import app.runtime as runtime_module
@@ -793,8 +761,11 @@ def test_runtime_probes_history_when_key_metadata_is_missing_and_keeps_position_
     ]
     assert reconciled_events
     assert reconciled_events[-1]["payload"]["history_ready_for_entries"] is False
-    assert '"action":"REDUCE_LONG"' in logs
-    assert '"position_txid":"POSITION-1"' in logs
+    # The lightweight runtime persists the exchange position snapshot, but no
+    # longer runs the removed local-only SHADOW exit recommendation watcher.
+    position_rows = db.latest_exchange_position_snapshot()
+    assert [row["position_txid"] for row in position_rows] == ["POSITION-1"]
+    assert '"event":"POSITION_MANAGEMENT_DECISION"' not in logs
     assert "never-log-this" not in logs
     cycle_summaries = [
         json.loads(line) for line in logs.splitlines()
@@ -802,8 +773,11 @@ def test_runtime_probes_history_when_key_metadata_is_missing_and_keeps_position_
     ]
     assert cycle_summaries
     assert cycle_summaries[-1]["payload"]["internal_live_release"] is False
-    assert cycle_summaries[-1]["payload"]["microstructure_application_pong_without_success_count"] == 0
-    assert cycle_summaries[-1]["payload"]["microstructure_last_application_pong_success_field_present"] is None
+    assert cycle_summaries[-1]["payload"]["background_research_status"] == "DISABLED_BY_ARCHITECTURE"
+    assert cycle_summaries[-1]["payload"]["microstructure_collector_enabled"] is False
+    assert cycle_summaries[-1]["payload"]["microstructure_connection_state"] == "DISABLED"
+    assert cycle_summaries[-1]["payload"]["microstructure_messages_this_process"] == 0
+    assert cycle_summaries[-1]["payload"]["microstructure_history_retained"] is True
     audit.close()
     db.close()
 

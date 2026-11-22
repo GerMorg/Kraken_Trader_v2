@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import os
 import signal
 import sys
+import threading
 import time
 from types import FrameType
 
@@ -38,24 +39,30 @@ def main() -> int:
         audit.close(); db.close()
         return 0
     runtime=TraderRuntime(settings,db,audit)
-    running=True
+    running = True
+    shutdown_event = threading.Event()
+
     def stop_handler(signum: int, frame: FrameType | None) -> None:
         nonlocal running
-        running=False
-        audit.emit("SHUTDOWN_SIGNAL_RECEIVED",signal=signum)
+        running = False
+        shutdown_event.set()
+        audit.emit("SHUTDOWN_SIGNAL_RECEIVED", signal=signum)
     signal.signal(signal.SIGTERM,stop_handler)
     signal.signal(signal.SIGINT,stop_handler)
-    audit.emit("STARTUP_STATUS",mode=settings.mode,credentials_present=settings.credentials_present,
-               live_requested=settings.live_requested,internal_live_release=INTERNAL_LIVE_EXECUTION_RELEASED,
+    audit.emit("STARTUP_STATUS",real_orders_enabled=settings.real_orders_enabled,
+               credentials_present=settings.credentials_present,
+               internal_live_release=INTERNAL_LIVE_EXECUTION_RELEASED,
                log_path=log_path,database=db_path,
                note="Unattended live order execution is not released in this version.")
     try:
         while running:
             started=time.monotonic()
             runtime.cycle()
-            remaining=max(0.0,settings.cycle_interval_seconds-(time.monotonic()-started))
-            while running and remaining>0:
-                interval=min(1.0,remaining); time.sleep(interval); remaining-=interval
+            remaining = max(
+                0.0, settings.cycle_interval_seconds - (time.monotonic() - started)
+            )
+            if remaining > 0:
+                shutdown_event.wait(remaining)
     finally:
         runtime.close()
         audit.emit("SHUTDOWN_COMPLETE")

@@ -13,7 +13,7 @@ import time
 from typing import Any
 
 _ALLOWED = {
-    "INTENT_CREATED": {"PRECHECK_PASSED", "REJECTED", "BLOCKED", "SHADOW_ONLY"},
+    "INTENT_CREATED": {"PRECHECK_PASSED", "REJECTED", "BLOCKED", "SHADOW_ONLY", "SIMULATION_ONLY"},
     "PRECHECK_PASSED": {"VALIDATING", "SUBMITTING", "REJECTED", "BLOCKED"},
     "VALIDATING": {"VALIDATED", "REJECTED", "UNKNOWN_RECONCILING"},
     "VALIDATED": {"BLOCKED"},
@@ -22,7 +22,7 @@ _ALLOWED = {
     "OPEN": {"PARTIALLY_FILLED", "FILLED", "CANCELED", "EXPIRED", "UNKNOWN_RECONCILING"},
     "PARTIALLY_FILLED": {"PARTIALLY_FILLED", "FILLED", "CANCELED", "UNKNOWN_RECONCILING"},
     "UNKNOWN_RECONCILING": {"ACKNOWLEDGED", "OPEN", "PARTIALLY_FILLED", "FILLED", "CANCELED", "REJECTED", "EXPIRED"},
-    "FILLED": set(), "CANCELED": set(), "REJECTED": set(), "EXPIRED": set(), "BLOCKED": set(), "SHADOW_ONLY": set(),
+    "FILLED": set(), "CANCELED": set(), "REJECTED": set(), "EXPIRED": set(), "BLOCKED": set(), "SHADOW_ONLY": set(), "SIMULATION_ONLY": set(),
 }
 
 def _json(value: Any) -> str:
@@ -1355,7 +1355,7 @@ class Persistence:
         required = ("intent_id", "decision_id", "client_order_id", "pair", "action", "side", "volume")
         if any(not intent.get(key) for key in required):
             raise ValueError("INTENT_REQUIRED_FIELD_MISSING")
-        if initial_state not in {"INTENT_CREATED", "SHADOW_ONLY"}:
+        if initial_state not in {"INTENT_CREATED", "SHADOW_ONLY", "SIMULATION_ONLY"}:
             raise ValueError("INTENT_INITIAL_STATE_INVALID")
         now = _now()
         with self.lock:

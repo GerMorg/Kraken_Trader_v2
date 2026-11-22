@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import uuid
 from typing import Any
 
@@ -63,8 +63,32 @@ class OrderIntent:
                    volume, product_type.upper(), leverage, position_txid, settlement_currency,
                    settlement_amount_verified, evidence or {})
 
-def build_add_order_params(intent: OrderIntent, instrument: Instrument, *,
-                           validate_only: bool) -> dict[str, Any]:
+def _trailing_stop_offset_for_intent(
+    intent: OrderIntent,
+    default_offset_pct: Decimal,
+) -> Decimal:
+    """Use the strategy's risk stop distance when present; otherwise use the HA default."""
+    raw = intent.decision_evidence.get(
+        "trailing_stop_offset_pct", default_offset_pct
+    )
+    try:
+        selected = D(str(raw))
+    except (ArithmeticError, InvalidOperation, TypeError, ValueError):
+        raise ValueError("TRAILING_STOP_OFFSET_INVALID") from None
+    if not selected.is_finite():
+        raise ValueError("TRAILING_STOP_OFFSET_INVALID")
+    if selected < D("0.5") or selected > D("20"):
+        raise ValueError("TRAILING_STOP_OFFSET_OUT_OF_RANGE")
+    return selected
+
+
+def build_add_order_params(
+    intent: OrderIntent,
+    instrument: Instrument,
+    *,
+    validate_only: bool,
+    trailing_stop_offset_pct: Decimal = D("3.0"),
+) -> dict[str, Any]:
     if intent.pair not in {instrument.pair_id, instrument.altname, instrument.wsname}:
         raise ValueError("ORDER_PAIR_INSTRUMENT_MISMATCH")
     if not intent.volume.is_finite() or intent.volume <= 0:
@@ -153,6 +177,15 @@ def build_add_order_params(intent: OrderIntent, instrument: Instrument, *,
                               "validate":validate_only}
     if leverage is not None:
         params["leverage"] = leverage
+    # Kraken attaches a conditional close to the entry. The exchange creates the
+    # opposite-side trailing stop; Kraken defines its volume as the primary order volume.
+    protective_entry = intent.action == Action.OPEN_SPOT_LONG or intent.action in opens
+    if protective_entry:
+        selected_trailing_stop_offset = _trailing_stop_offset_for_intent(
+            intent, trailing_stop_offset_pct
+        )
+        params["close[ordertype]"] = "trailing-stop"
+        params["close[price]"] = f"+{format(selected_trailing_stop_offset, 'f')}%"
     # reduce_only is documented for margin orders; do not send it on cash spot.
     if intent.action in closes and intent.product_type == "SPOT_MARGIN":
         params["reduce_only"] = True
@@ -183,22 +216,20 @@ class OrderAuthority:
             self.persistence.transition_intent(intent.intent_id,"REJECTED",{"reason":"PRECHECK_FAILED"})
             return {"state":"REJECTED","reason":"PRECHECK_FAILED"}
         self.persistence.transition_intent(intent.intent_id,"PRECHECK_PASSED")
-        if not validate_only and not self.settings.live_requested:
+        if not validate_only and not self.settings.real_orders_enabled:
             self.persistence.transition_intent(
                 intent.intent_id,
                 "BLOCKED",
-                {"reason": "LIVE_SWITCH_OR_KILL_SWITCH"},
+                {"reason": "REAL_ORDERS_SWITCH_DISABLED"},
             )
             self.audit.emit(
-                "LIVE_ORDER_BLOCKED_BY_OPERATOR_SWITCHES",
+                "REAL_ORDER_BLOCKED_BY_OPERATOR_SWITCH",
                 intent_id=intent.intent_id,
                 pair=intent.pair,
                 action=intent.action.value,
-                mode=self.settings.mode,
-                live_enabled=self.settings.live_enabled,
-                kill_switch=self.settings.kill_switch,
+                real_orders_enabled=self.settings.real_orders_enabled,
             )
-            raise LiveExecutionBlocked("LIVE_SWITCH_OR_KILL_SWITCH")
+            raise LiveExecutionBlocked("REAL_ORDERS_SWITCH_DISABLED")
         if not validate_only and not INTERNAL_LIVE_EXECUTION_RELEASED:
             self.persistence.transition_intent(
                 intent.intent_id,
@@ -210,13 +241,18 @@ class OrderAuthority:
                 intent_id=intent.intent_id,
                 pair=intent.pair,
                 action=intent.action.value,
-                mode=self.settings.mode,
+                real_orders_enabled=self.settings.real_orders_enabled,
                 internal_live_release=INTERNAL_LIVE_EXECUTION_RELEASED,
                 order_submission_attempted=False,
             )
             raise LiveExecutionBlocked("INTERNAL_LIVE_EXECUTION_NOT_RELEASED")
         try:
-            params = build_add_order_params(intent,instrument,validate_only=validate_only)
+            params = build_add_order_params(
+                intent,
+                instrument,
+                validate_only=validate_only,
+                trailing_stop_offset_pct=self.settings.trailing_stop_offset_pct,
+            )
         except ValueError as exc:
             self.persistence.transition_intent(intent.intent_id,"REJECTED",{"reason":str(exc)})
             self.audit.emit("ORDER_INTENT_REJECTED_PRE_SUBMIT",intent_id=intent.intent_id,reason=str(exc))
@@ -255,6 +291,76 @@ class OrderAuthority:
                 reason="ADD_ORDER_RESPONSE_TXID_MISSING_OR_INVALID",
             )
             raise KrakenAmbiguousError("ADD_ORDER_RESPONSE_TXID_MISSING_OR_INVALID")
-        self.persistence.transition_intent(intent.intent_id,"ACKNOWLEDGED",{"txid":txids})
-        self.audit.emit("ORDER_ACKNOWLEDGED_REQUIRES_RECONCILIATION",intent_id=intent.intent_id)
-        return {"state":"ACKNOWLEDGED","result":result}
+        protection_required = (
+            intent.action == Action.OPEN_SPOT_LONG
+            or intent.action in {
+                Action.OPEN_MARGIN_LONG, Action.OPEN_MARGIN_SHORT,
+                Action.INCREASE_LONG, Action.INCREASE_SHORT,
+            }
+        )
+        description = result.get("descr")
+        close_description = (
+            description.get("close")
+            if isinstance(description, dict) else None
+        )
+        normalized_close_description = (
+            close_description.strip().lower().replace("-", " ")
+            if isinstance(close_description, str) else ""
+        )
+        # A non-empty description could describe a plain stop-loss or take-profit.
+        # Only acknowledge the requested protection when Kraken describes a trailing stop.
+        protection_confirmed = (
+            not protection_required
+            or "trailing stop" in normalized_close_description
+        )
+        selected_trailing_stop_offset = _trailing_stop_offset_for_intent(
+            intent, self.settings.trailing_stop_offset_pct
+        ) if protection_required else self.settings.trailing_stop_offset_pct
+        acknowledgement = {
+            "txid": txids,
+            "protective_order_required": protection_required,
+            "protective_order_type": "trailing-stop" if protection_required else None,
+            "protective_order_status": (
+                "EXCHANGE_CONFIRMED_ATTACHED" if protection_confirmed and protection_required
+                else "NOT_REQUIRED" if not protection_required
+                else "UNCONFIRMED"
+            ),
+            "trailing_stop_offset_pct": (
+                str(selected_trailing_stop_offset) if protection_required else None
+            ),
+        }
+        self.persistence.transition_intent(intent.intent_id,"ACKNOWLEDGED",acknowledgement)
+        self.audit.emit(
+            "ORDER_ACKNOWLEDGED_REQUIRES_RECONCILIATION",
+            intent_id=intent.intent_id,
+            **{key: value for key, value in acknowledgement.items() if key != "txid"},
+        )
+        if protection_required and not protection_confirmed:
+            self.persistence.trip_circuit_breaker(
+                "PROTECTIVE_ORDER",
+                "EXCHANGE_DID_NOT_CONFIRM_CONDITIONAL_CLOSE",
+                {"intent_id": intent.intent_id, "order_id": txids[0]},
+            )
+            self.audit.emit(
+                "PROTECTIVE_ORDER_NOT_CONFIRMED",
+                intent_id=intent.intent_id,
+                order_id=txids[0],
+                new_entries_blocked=True,
+                operator_reconciliation_required=True,
+            )
+        elif protection_required:
+            self.audit.emit(
+                "PROTECTIVE_ORDER_ATTACHED_BY_EXCHANGE",
+                intent_id=intent.intent_id,
+                primary_order_id=txids[0],
+                order_type="trailing-stop",
+                trailing_stop_offset_pct=str(selected_trailing_stop_offset),
+                conditional_close_volume_equals_primary_order=True,
+                partial_fill_protection_requires_reconciliation=True,
+                separate_child_order_id_returned=False,
+            )
+        return {
+            "state":"ACKNOWLEDGED",
+            "result":result,
+            "protective_order_status":acknowledgement["protective_order_status"],
+        }

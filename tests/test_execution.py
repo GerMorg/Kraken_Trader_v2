@@ -19,6 +19,8 @@ def test_margin_short_and_reduce_only_order_params():
       side="SHORT",volume=D("0.1"),product_type="SPOT_MARGIN",leverage=2)
     params=build_add_order_params(short,instrument(),validate_only=True)
     assert params["type"]=="sell" and params["leverage"]=="2" and params["validate"] is True
+    assert params["close[ordertype]"] == "trailing-stop"
+    assert params["close[price]"] == "+3.0%"
     close=OrderIntent.create(decision_id="d2",pair="XBTUSD",action=Action.CLOSE_SHORT,
       side="SHORT",volume=D("0.1"),product_type="SPOT_MARGIN",leverage=2)
     params=build_add_order_params(close,instrument(),validate_only=True)
@@ -56,7 +58,7 @@ def test_live_submission_is_blocked_until_internal_release_even_with_operator_sw
     authority = OrderAuthority(
         client,
         db,
-        Settings.from_mapping({"mode": "LIVE", "live_enabled": True, "kill_switch": False}),
+        Settings.from_mapping({"real_orders_enabled": True}),
         audit,
     )
 
@@ -77,7 +79,9 @@ def test_live_submission_after_internal_release_uses_operator_switches(monkeypat
     audit = AuditLogger(path="/definitely-invalid-root/events.jsonl", stream=io.StringIO())
     client = KrakenClient()
     calls = []
-    client.private = lambda method, params=None: calls.append((method, params)) or {"txid": ["O-LIVE-1"]}
+    client.private = lambda method, params=None: calls.append((method, params)) or {
+        "txid": ["O-LIVE-1"], "descr": {"order": "buy 0.1 XBT/USD", "close": "sell trailing stop +3.0%"},
+    }
     intent = OrderIntent.create(
         decision_id="live-d",
         pair="XBTUSD",
@@ -90,7 +94,7 @@ def test_live_submission_after_internal_release_uses_operator_switches(monkeypat
     authority = OrderAuthority(
         client,
         db,
-        Settings.from_mapping({"mode": "LIVE", "live_enabled": True, "kill_switch": False}),
+        Settings.from_mapping({"real_orders_enabled": True}),
         audit,
     )
 
@@ -106,12 +110,14 @@ def test_live_submission_after_internal_release_uses_operator_switches(monkeypat
         "cl_ord_id": intent.client_order_id,
         "validate": False,
         "leverage": "2",
+        "close[ordertype]": "trailing-stop",
+        "close[price]": "+3.0%",
     })]
     audit.close()
     db.close()
 
 
-def test_live_submission_still_respects_visible_kill_switch():
+def test_live_submission_is_blocked_when_single_operator_switch_is_off():
     db = Persistence(":memory:")
     audit = AuditLogger(path="/definitely-invalid-root/events.jsonl", stream=io.StringIO())
     client = KrakenClient()
@@ -129,10 +135,10 @@ def test_live_submission_still_respects_visible_kill_switch():
     authority = OrderAuthority(
         client,
         db,
-        Settings.from_mapping({"mode": "LIVE", "live_enabled": True, "kill_switch": True}),
+        Settings.from_mapping({"real_orders_enabled": False}),
         audit,
     )
-    with pytest.raises(LiveExecutionBlocked, match="LIVE_SWITCH_OR_KILL_SWITCH"):
+    with pytest.raises(LiveExecutionBlocked, match="REAL_ORDERS_SWITCH_DISABLED"):
         authority.execute(intent, instrument(), prechecks_passed=True, validate_only=False)
     assert calls == []
     assert db.intent_state(intent.intent_id) == "BLOCKED"
@@ -269,6 +275,141 @@ def test_settlement_rejects_currency_or_ledger_mismatch():
         build_add_order_params(intent, instrument(), validate_only=True)
 
 
+def test_spot_cash_long_uses_exchange_native_trailing_close():
+    intent = OrderIntent.create(
+        decision_id="spot-protection",
+        pair="XBTUSD",
+        action=Action.OPEN_SPOT_LONG,
+        side="LONG",
+        volume=D("0.1"),
+        product_type="CASH_SPOT",
+    )
+    params = build_add_order_params(
+        intent, instrument(), validate_only=True, trailing_stop_offset_pct=D("2.5")
+    )
+    assert params["close[ordertype]"] == "trailing-stop"
+    assert params["close[price]"] == "+2.5%"
+
+
+def test_reduce_and_settlement_orders_do_not_attach_new_trailing_stops():
+    close = OrderIntent.create(
+        decision_id="close-no-protection",
+        pair="XBTUSD",
+        action=Action.CLOSE_SHORT,
+        side="SHORT",
+        volume=D("0.1"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+    )
+    params = build_add_order_params(close, instrument(), validate_only=True)
+    assert "close[ordertype]" not in params
+    assert "close[price]" not in params
+
+
+def test_strategy_stop_distance_overrides_default_trailing_stop_offset():
+    intent = OrderIntent.create(
+        decision_id="adaptive-trailing-stop",
+        pair="XBTUSD",
+        action=Action.OPEN_MARGIN_SHORT,
+        side="SHORT",
+        volume=D("0.1"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+        evidence={"trailing_stop_offset_pct": "4.25"},
+    )
+    params = build_add_order_params(intent, instrument(), validate_only=True)
+    assert params["close[ordertype]"] == "trailing-stop"
+    assert params["close[price]"] == "+4.25%"
+
+
+def test_invalid_strategy_stop_distance_fails_before_order_submission():
+    intent = OrderIntent.create(
+        decision_id="invalid-adaptive-trailing-stop",
+        pair="XBTUSD",
+        action=Action.OPEN_MARGIN_LONG,
+        side="LONG",
+        volume=D("0.1"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+        evidence={"trailing_stop_offset_pct": "NaN"},
+    )
+    with pytest.raises(ValueError, match="TRAILING_STOP_OFFSET_INVALID"):
+        build_add_order_params(intent, instrument(), validate_only=True)
+
+
+def test_trailing_stop_offset_is_validated_before_order_submission():
+    intent = OrderIntent.create(
+        decision_id="bad-trail-offset",
+        pair="XBTUSD",
+        action=Action.OPEN_MARGIN_LONG,
+        side="LONG",
+        volume=D("0.1"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+    )
+    with pytest.raises(ValueError, match="TRAILING_STOP_OFFSET_OUT_OF_RANGE"):
+        build_add_order_params(
+            intent, instrument(), validate_only=True, trailing_stop_offset_pct=D("0")
+        )
+
+
+def _execute_margin_short_with_close_description(monkeypatch, close_description):
+    monkeypatch.setattr("app.execution.INTERNAL_LIVE_EXECUTION_RELEASED", True)
+    db = Persistence(":memory:")
+    audit = AuditLogger(path="/definitely-invalid-root/events.jsonl", stream=io.StringIO())
+    client = KrakenClient("k", "s")
+    response = {"txid": ["O-PROTECTION-CHECK"]}
+    if close_description is not None:
+        response["descr"] = {"order": "sell 0.1 XBTUSD @ market", "close": close_description}
+    client.private = lambda method, params=None: response
+    intent = OrderIntent.create(
+        decision_id="ack-without-protection",
+        pair="XBTUSD",
+        action=Action.OPEN_MARGIN_SHORT,
+        side="SHORT",
+        volume=D("0.1"),
+        product_type="SPOT_MARGIN",
+        leverage=2,
+    )
+    authority = OrderAuthority(
+        client, db, Settings.from_mapping({"real_orders_enabled": True}), audit
+    )
+    result = authority.execute(intent, instrument(), prechecks_passed=True, validate_only=False)
+    breakers = db.circuit_breakers()
+    state = db.intent_state(intent.intent_id)
+    audit.close()
+    db.close()
+    return result, breakers, state
+
+
+def test_order_ack_without_exchange_confirmation_of_protection_trips_breaker(monkeypatch):
+    result, breakers, state = _execute_margin_short_with_close_description(monkeypatch, None)
+
+    assert result["state"] == "ACKNOWLEDGED"
+    assert result["protective_order_status"] == "UNCONFIRMED"
+    assert state == "ACKNOWLEDGED"
+    assert any(
+        item["name"] == "PROTECTIVE_ORDER"
+        and item["reason"] == "EXCHANGE_DID_NOT_CONFIRM_CONDITIONAL_CLOSE"
+        for item in breakers
+    )
+
+
+def test_order_ack_with_non_trailing_conditional_close_does_not_count_as_protected(monkeypatch):
+    result, breakers, state = _execute_margin_short_with_close_description(
+        monkeypatch, "close position @ stop loss -3.0%"
+    )
+
+    assert result["state"] == "ACKNOWLEDGED"
+    assert result["protective_order_status"] == "UNCONFIRMED"
+    assert state == "ACKNOWLEDGED"
+    assert any(
+        item["name"] == "PROTECTIVE_ORDER"
+        and item["reason"] == "EXCHANGE_DID_NOT_CONFIRM_CONDITIONAL_CLOSE"
+        for item in breakers
+    )
+
+
 def test_missing_add_order_txid_keeps_intent_unknown_not_rejected(monkeypatch):
     monkeypatch.setattr("app.execution.INTERNAL_LIVE_EXECUTION_RELEASED", True)
     db = Persistence(":memory:")
@@ -276,7 +417,7 @@ def test_missing_add_order_txid_keeps_intent_unknown_not_rejected(monkeypatch):
     client = KrakenClient("k", "s")
     client.private = lambda method, params=None: {}
     settings = Settings.from_mapping({
-        "mode": "LIVE", "live_enabled": True, "kill_switch": False,
+        "real_orders_enabled": True,
     })
     authority = OrderAuthority(client, db, settings, audit)
     intent = OrderIntent.create(

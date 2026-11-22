@@ -1,3 +1,19 @@
+## v0.1.75: Börsenseitiger Spot-/Margin-Schutz und vereinfachte Ausführung
+
+Der Operator sieht nur noch `real_orders_enabled`. Der Schlüssel fehlt in alten Optionsdateien und ist deshalb standardmäßig `false`; alte `mode`, `live_enabled`, `kill_switch` und `validate_shadow_orders` werden nicht mehr ausgewertet. Das ist eine sichere, abwärtskompatible Migration: Eine alte Konfiguration mit `mode=LIVE` aktiviert nach dem Upgrade keine Orders. Zusätzlich bleibt `INTERNAL_LIVE_EXECUTION_RELEASED` code-seitig `false` und kann nicht über HA-Optionen geändert werden.
+
+Jede neue Spot- oder Spot-Margin-Position und jede Erhöhung erhält im selben Kraken-`AddOrder`-Request eine bedingte Gegenorder:
+- `close[ordertype]=trailing-stop`
+- `close[price]=+N%`, Standardoffset 3.0%
+
+Der Trailing-Offset ist ein relativer Rücklauf vom günstigsten Kurs seit Aktivierung; Kraken verwaltet das Nachziehen. Kraken dokumentiert das Volumen der Conditional-Close-Order als gleich dem Volumen der Primärorder. Bei einer Teilfüllung ist deshalb nicht anzunehmen, dass der Schutzumfang automatisch auf die tatsächlich ausgeführte Menge reduziert wird. Die Reconciliation muss Primärorder-Volumen, ausgeführtes Volumen und aktuelle Position vergleichen; bis die Demo-End-to-End-Tests für Teilfüllung und Storno bestanden sind, bleibt die interne Live-Freigabe geschlossen. `OrderAuthority` verlangt eine nichtleere `descr.close`-Bestätigung in der Börsenantwort. Fehlt sie, wird die Hauptorder nicht als abgelehnt umgedeutet: Sie bleibt als `ACKNOWLEDGED` dokumentiert und der persistente `PROTECTIVE_ORDER`-Breaker sperrt neue Risikoerhöhungen zur manuellen Prüfung.
+
+Die Antwortbestätigung belegt nur, dass Kraken den Conditional-Close-Auftrag mit der Primärorder angenommen/beschrieben hat. Sie ist kein Fill-Nachweis, keine Garantie der Stop-Ausführung und ersetzt nicht den späteren Abgleich mit OpenOrders, ClosedOrders, Trades und Positionen. Die Schutzorder selbst hat im AddOrder-Response keine separate Child-Order-ID; der Zusammenhang wird über die Primärorder und die `descr.close`-Beschreibung auditiert.
+
+Manuell oder extern angelegte aktuelle offene Orders ohne lokalen Intent werden nun als extern verwaltet protokolliert. Sie lösen nicht allein einen Bot-Order-Reconciliation-Fehler aus. Die App übernimmt aber weder Eigentum noch Änderungs-/Stornierungsbefugnis über diese Orders. Ungeklärte lokale Submit-Intents, doppelte Matches, inkonsistente Mengen und nicht identifizierbare Bot-Aufträge bleiben fail-closed.
+
+In 0.1.75 werden die bestehenden Schutzorders zyklisch noch nicht automatisch geändert oder storniert. Ein zukünftiger Protection-Manager muss pro Produkt die tatsächliche offene Position, den verbleibenden Schutzumfang und die Exchange-Order-IDs zusammenführen, bevor er Amend/Cancel aufruft. Bei manuellen Schließungen darf eine übrig gebliebene Stoporder keinesfalls eine Gegenposition eröffnen.
+
 # Ausführung, Orderzustände und Wiederherstellung
 
 ## v0.1.74: Aktuelle offene Orders von historischen Beobachtungen trennen
@@ -66,4 +82,4 @@ Bis diese Kriterien erfüllt und belegt sind, bleibt unbeaufsichtigter Live-Marg
 
 ## Position-level exit decision persistence
 
-Jeder Runtime-Zyklus wertet offene Einzelpositionen mit aktuellen Tickerdaten aus und speichert `POSITION_MANAGEMENT_DECISION` sowohl als Event als auch in der Auditspur. Vorschläge enthalten die Positions-ID, Einstiegsschätzung, relevante Ausstiegsseite, Kursbewegung, Restmenge, vorgeschlagene Menge, Konfiguration und explizit `execution_mode=SHADOW_ONLY`. Auch die Nicht-Entscheidung und nicht unterstützte Positionen werden sichtbar protokolliert. Der Plan erstellt keine Kraken Conditional-Close-Order und setzt keine exchange-native Stop- oder Take-Profit-Order. Die dauerhafte Reconciliation- und Live-Freigabesicherheit wird davon nicht aufgehoben.
+Historischer Stand vor v0.1.75: Jeder Runtime-Zyklus wertet offene Einzelpositionen mit aktuellen Tickerdaten aus und speichert `POSITION_MANAGEMENT_DECISION` sowohl als Event als auch in der Auditspur. Vorschläge enthalten die Positions-ID, Einstiegsschätzung, relevante Ausstiegsseite, Kursbewegung, Restmenge, vorgeschlagene Menge, Konfiguration und explizit `execution_mode=SHADOW_ONLY`. Auch die Nicht-Entscheidung und nicht unterstützte Positionen werden sichtbar protokolliert. Der Plan erstellt keine Kraken Conditional-Close-Order und setzt keine exchange-native Stop- oder Take-Profit-Order. Die dauerhafte Reconciliation- und Live-Freigabesicherheit wird davon nicht aufgehoben.

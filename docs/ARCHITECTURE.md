@@ -1,3 +1,26 @@
+## Vereinfachtes Zielbild — Version 0.1.75
+
+Die operative Runtime wird auf wenige klar abgegrenzte Aufgaben reduziert. Die historischen Research-Module bleiben als nicht aktive Entwicklungswerkzeuge erhalten, sind aber kein Bestandteil des normalen Handelszyklus.
+
+- **Spot-/Spot-Margin-Adapter:** Kraken REST, USD-Instrumente, Konten, Margin, Orders, Fills, Ledger und Spot-Kosten.
+- **Futures-Adapter:** eigener Futures REST Client, getrennte Credentials, Wallets, Positionen, Orders, Fills, Funding und Kosten. Der aktuelle Produktionsadapter ist Read-only; er ist noch kein Futures-Trading-Adapter.
+- **Produktgetrennte Entscheidungslogik:** Spot Margin und Futures erhalten eigene Signale, Regime, Kosten, Risikoregeln und Positionsmodelle. Kein Strategy- oder Kontoobjekt wird zwischen Produkten wiederverwendet.
+- **Gemeinsame Ablaufkontrolle:** Intent, Exchange-Bestätigung, tatsächlicher Fill, Schutzorder, laufende Reconciliation und kontrollierter Exit. Die gemeinsame Ebene kennt den Produkttyp, delegiert aber die Börsenparameter an den passenden Adapter.
+- **Eine Operator-Einstellung:** `real_orders_enabled`. Fehlende oder alte Optionen bedeuten Simulation. Die interne Code-Freigabe bleibt ein separater, nicht per HA überschreibbarer Release-Gate.
+- **Börsenseitiger Schutz:** Spot-/Margin-Einstiegsorders erhalten eine Kraken Conditional-Close-Trailing-Stop-Order. Futures benötigt eine separate Reduce-only-Schutzorder über den eigenen Futures-Adapter.
+- **Kein Research im Regelzyklus:** WebSocket-Microstructure, Strategy-Lab, Forward-Matching und gemeinsame Research-Backtests laufen in 0.1.75 nicht im normalen HA-Zyklus. Die Daten und Module bleiben für spätere, getrennte Offline-Auswertung erhalten.
+- **Kein lokaler Shadow-Exit-Watcher:** lokale Take-Profit-/Stop-Empfehlungen ohne Orderausführung wurden aus dem aktiven Runtime-Zyklus entfernt. Exit-Schutz wird über Kraken-Orders verwaltet und bei Reconciliation überprüft.
+
+### Betriebsgrenzen in 0.1.75
+
+Die Spot-/Margin-Orderpayload enthält für neue Long-/Short-Positionen und Erhöhungen `close[ordertype]=trailing-stop` sowie einen relativen Offset. Der Offset wird aus der volatilitätsabhängigen Stopdistanz des Signals (aktuell 1.5–5.0%) übernommen; der HA-Wert 3.0% ist nur Rückfallwert ohne Signalwert. Kraken muss die Conditional-Close-Beschreibung in der AddOrder-Antwort zurückgeben. Fehlt diese Bestätigung nach akzeptierter Hauptorder, wird `PROTECTIVE_ORDER` persistent ausgelöst und jede weitere Risikoerhöhung gesperrt.
+
+Kraken dokumentiert das Conditional-Close-Volumen als identisch mit dem Volumen der Primärorder. Bei einer Teilfüllung darf daher nicht angenommen werden, dass der Schutz automatisch exakt auf die tatsächlich ausgeführte Menge reduziert wurde. Teilfüllungs-, Storno- und Restmengenverhalten muss vor Live-Freigabe im Demo-End-to-End-Test nachgewiesen werden. Eine angehängte Conditional-Close-Beschreibung ist kein Nachweis eines bereits ausgeführten Fills und kein garantierter Ausführungspreis. Die Börse verwaltet den Trailing-Stop nach Auslösung des Primärauftrags; die Runtime prüft Position und Orders anschließend zyklisch. Das automatische Anpassen bestehender Stoporders und das sichere Stornieren redundanter Stops nach manuellen Teil-/Vollschließungen sind noch nicht vollständig implementiert.
+
+Manuelle oder externe offene Orders ohne lokalen Intent werden als `EXTERNAL_OPEN_ORDER_UNMANAGED` klassifiziert. Die App verändert oder storniert diese Orders nicht. Börsenseitig gemeldete Positionen und gebundene Sicherheiten bleiben trotzdem Teil des Account-/Risikokontexts.
+
+Futures bleibt Read-only. Ein produktiver Futures-Orderadapter erfordert eine getrennte Implementierung mit Demo-Validierung, eigenem Send-/Cancel-/Amend-Lifecycle, bestätigter Reduce-only-Schutzorder und einem API-Key mit Orderrechten ohne Transfer-/Auszahlungsrechte.
+
 # Architektur und implementierter Datenfluss
 
 ## Tatsächliche Bausteine
