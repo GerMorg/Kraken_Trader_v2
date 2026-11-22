@@ -45,8 +45,9 @@ def main() -> int:
         audit.emit("SHUTDOWN_SIGNAL_RECEIVED",signal=signum)
     signal.signal(signal.SIGTERM,stop_handler)
     signal.signal(signal.SIGINT,stop_handler)
-    audit.emit("STARTUP_STATUS",mode=settings.mode,credentials_present=settings.credentials_present,
-               live_requested=settings.live_requested,internal_live_release=INTERNAL_LIVE_EXECUTION_RELEASED,
+    audit.emit("STARTUP_STATUS",real_orders_enabled=settings.real_orders_enabled,
+               credentials_present=settings.credentials_present,
+               internal_live_release=INTERNAL_LIVE_EXECUTION_RELEASED,
                log_path=log_path,database=db_path,
                note="Unattended live order execution is not released in this version.")
     try:
