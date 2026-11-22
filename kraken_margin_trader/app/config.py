@@ -17,14 +17,14 @@ INTERNAL_LIVE_EXECUTION_RELEASED = False
 # It may be re-enabled in a separate, explicitly scheduled research worker later.
 BACKGROUND_RESEARCH_ENABLED = False
 
-HARD_LIMITS = {
+HARD_LIMITS: dict[str, Decimal] = {
     "risk_per_trade_pct": D("0.5"),
     "risk_max_position_pct": D("20"),
     "risk_max_gross_pct": D("80"),
     "risk_max_net_pct": D("50"),
     "risk_max_margin_pct": D("25"),
     "risk_max_leverage": D("3"),
-    "risk_max_open_positions": 4,
+    "risk_max_open_positions": D("4"),
     "risk_daily_loss_pct": D("3"),
     "risk_max_drawdown_pct": D("8"),
     "risk_cash_reserve_pct": D("20"),
