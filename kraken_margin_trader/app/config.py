@@ -70,8 +70,6 @@ class Settings:
     expected_holding_hours: int = 8
     strategy_fast_bps: Decimal = D("120")
     strategy_slow_bps: Decimal = D("180")
-    position_take_profit_pct: Decimal = D("3.5")
-    position_take_profit_fraction: Decimal = D("0.5")
     trailing_stop_offset_pct: Decimal = D("3.0")
     risk_per_trade_pct: Decimal = D("0.5")
     risk_max_position_pct: Decimal = D("20")
@@ -131,12 +129,6 @@ class Settings:
             strategy_slow_bps=max(
                 D("50"), min(D("2000"), _decimal(raw, "strategy_slow_bps", "180"))
             ),
-            position_take_profit_pct=max(
-                D("0.5"), min(D("20"), _decimal(raw, "position_take_profit_pct", "3.5"))
-            ),
-            position_take_profit_fraction=max(
-                D("0.1"), min(D("0.9"), _decimal(raw, "position_take_profit_fraction", "0.5"))
-            ),
             trailing_stop_offset_pct=max(
                 D("0.5"), min(D("20"), _decimal(raw, "trailing_stop_offset_pct", "3.0"))
             ),
@@ -173,8 +165,6 @@ class Settings:
                 self.futures_api_key.strip() and self.futures_api_secret.strip()
             ),
             "cycle_interval_seconds": self.cycle_interval_seconds,
-            "position_take_profit_pct": str(self.position_take_profit_pct),
-            "position_take_profit_fraction": str(self.position_take_profit_fraction),
             "trailing_stop_offset_pct": str(self.trailing_stop_offset_pct),
             "risk_per_trade_pct": str(self.risk_per_trade_pct),
             "risk_max_position_pct": str(self.risk_max_position_pct),
