@@ -62,7 +62,10 @@ class Settings:
     api_secret: str = ""
     futures_api_key: str = ""
     futures_api_secret: str = ""
+    futures_demo_api_key: str = ""
+    futures_demo_api_secret: str = ""
     futures_readonly_enabled: bool = False
+    futures_demo_enabled: bool = False
     real_orders_enabled: bool = False
     cycle_interval_seconds: int = 300
     max_market_candidates: int = 12
@@ -117,7 +120,10 @@ class Settings:
             api_secret=str(raw.get("kraken_api_secret", "") or ""),
             futures_api_key=str(raw.get("kraken_futures_api_key", "") or ""),
             futures_api_secret=str(raw.get("kraken_futures_api_secret", "") or ""),
+            futures_demo_api_key=str(raw.get("kraken_futures_demo_api_key", "") or ""),
+            futures_demo_api_secret=str(raw.get("kraken_futures_demo_api_secret", "") or ""),
             futures_readonly_enabled=_bool(raw, "futures_readonly_enabled", False),
+            futures_demo_enabled=_bool(raw, "futures_demo_enabled", False),
             real_orders_enabled=_bool(raw, "real_orders_enabled", False),
             cycle_interval_seconds=_int(raw, "cycle_interval_seconds", 300, 60, 3600),
             max_market_candidates=_int(raw, "max_market_candidates", 12, 1, 30),
@@ -163,6 +169,10 @@ class Settings:
             "futures_readonly_enabled": self.futures_readonly_enabled,
             "futures_credentials_present": bool(
                 self.futures_api_key.strip() and self.futures_api_secret.strip()
+            ),
+            "futures_demo_enabled": self.futures_demo_enabled,
+            "futures_demo_credentials_present": bool(
+                self.futures_demo_api_key.strip() and self.futures_demo_api_secret.strip()
             ),
             "cycle_interval_seconds": self.cycle_interval_seconds,
             "trailing_stop_offset_pct": str(self.trailing_stop_offset_pct),

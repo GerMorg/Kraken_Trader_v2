@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.77 — Futures-Demo-Read-Snapshot und klare Einstiegssperren
+
+- Integriert einen optionalen, standardmäßig deaktivierten Futures-Demo-Read-Snapshot in den HA-Zyklus. Dafür werden separate Demo-API-Zugangsdaten verwendet; Produktions-Futures-Credentials bleiben unverändert.
+- Liest im Demo-Host ausschließlich Accounts, offene Positionen, offene Orders, Fills, Leverage-Präferenzen, Instrumente und Ticker. Es werden keine Demo-Orders oder sonstigen Mutationen gesendet.
+- Persistiert Demo-Snapshots getrennt von Produktions-Read-only-Snapshots. Da die Demo-Key-Berechtigungsstufen in diesem Runtime-Pfad nicht geprüft werden, werden sie ausdrücklich als UNVERIFIED protokolliert.
+- Benennt das Circuit-Breaker-Feld in `breaker_blocks_new_entries` um und begrenzt seine Bedeutung auf persistierte Circuit Breaker. Portfolio-Tagesverlust und Drawdown bleiben separat unter `PORTFOLIO_ENTRY_RISK_STATUS` sichtbar.
+- Die Demo-Order-Runtime bleibt noch nicht eingebunden; die bestehenden Send/Edit/Cancel-Klassen erzeugen in dieser Version keine automatischen Futures-Orders.
+
 ## 0.1.76 — Isolierter Futures-Demo-Order-Lifecycle und Fourier-Research
 
 - Ergänzt einen separat persistierten Kraken-Futures-Demo-Adapter für Send/Edit/Cancel mit eigenständiger Demo-Authentifizierung und festem Demo-Host; die Produktions-Futures-API bleibt Read-only.

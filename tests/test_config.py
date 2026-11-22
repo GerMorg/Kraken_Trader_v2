@@ -87,6 +87,35 @@ def test_futures_credentials_are_separate_and_redacted_from_safe_summary():
     assert "futures-secret-do-not-log" not in str(summary)
 
 
+
+def test_futures_demo_credentials_and_enable_switch_are_separate_and_redacted():
+    config = Settings.from_mapping({
+        "kraken_futures_api_key": "production-readonly-key",
+        "kraken_futures_api_secret": "production-readonly-secret",
+        "futures_readonly_enabled": True,
+        "kraken_futures_demo_api_key": "demo-key",
+        "kraken_futures_demo_api_secret": "demo-secret",
+        "futures_demo_enabled": True,
+    })
+    summary = config.safe_summary()
+    assert config.futures_api_key == "production-readonly-key"
+    assert config.futures_demo_api_key == "demo-key"
+    assert config.futures_readonly_enabled is True
+    assert config.futures_demo_enabled is True
+    assert summary["futures_demo_enabled"] is True
+    assert summary["futures_demo_credentials_present"] is True
+    assert "demo-key" not in str(summary)
+    assert "demo-secret" not in str(summary)
+    assert "production-readonly-key" not in str(summary)
+    assert "production-readonly-secret" not in str(summary)
+
+
+def test_futures_demo_read_is_disabled_and_credentials_empty_by_default():
+    config = Settings()
+    assert config.futures_demo_enabled is False
+    assert config.futures_demo_api_key == ""
+    assert config.futures_demo_api_secret == ""
+
 def test_futures_readonly_is_disabled_without_explicit_configuration():
     config = Settings()
     assert config.futures_readonly_enabled is False
