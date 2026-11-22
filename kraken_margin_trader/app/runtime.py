@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from app import STRATEGY_VERSION
 from app.audit import AuditLogger
-from app.config import INTERNAL_LIVE_EXECUTION_RELEASED, Settings
+from app.config import BACKGROUND_RESEARCH_ENABLED, INTERNAL_LIVE_EXECUTION_RELEASED, Settings
 from app.costs import (
     cost_diagnostic, estimate_round_trip_cost, maker_fee_from_trade_volume,
     select_costed_plan, taker_fee_from_trade_volume, trade_volume_fee_diagnostics,
@@ -853,7 +853,7 @@ class TraderRuntime:
         self.tax_reports=AustrianTaxReports()
         self._last_tax_report_signature: dict[int, tuple[str, ...]] = {}
         self.microstructure = MarketMicrostructureCollector(
-            persistence, enabled=settings.microstructure_enabled
+            persistence, enabled=BACKGROUND_RESEARCH_ENABLED
         )
 
     def _run_futures_readonly_snapshot(self, cycle_id: str) -> dict[str, Any]:
@@ -1236,7 +1236,12 @@ class TraderRuntime:
         wallet_reconciliation: dict[str, Any] | None = None
         order_reconciliation: dict[str, Any] | None = None
         position_reconciliation: dict[str, Any] | None = None
-        self.audit.emit("CYCLE_START",cycle_id=cycle_id,mode=self.settings.mode)
+        self.audit.emit(
+            "CYCLE_START",
+            cycle_id=cycle_id,
+            real_orders_enabled=self.settings.real_orders_enabled,
+            background_research_enabled=BACKGROUND_RESEARCH_ENABLED,
+        )
         futures_readonly_summary: dict[str, Any] = {
             "status": "DISABLED", "snapshot_id": None, "endpoint_error_count": 0
         }
@@ -1268,10 +1273,9 @@ class TraderRuntime:
             ranked=sorted((i for i in instruments if i.pair_id in tickers),
                 key=lambda i:tickers[i.pair_id].volume_quote_24h,reverse=True)
             candidates=ranked[:self.settings.max_market_candidates]; counts["candidates"]=len(candidates)
-            if self.settings.microstructure_enabled:
+            if BACKGROUND_RESEARCH_ENABLED:
                 self.microstructure.update_symbols([
-                    instrument.wsname
-                    for instrument in ranked[:self.settings.microstructure_max_symbols]
+                    instrument.wsname for instrument in ranked[:12]
                 ])
             account=None; snapshot=None; trade_volume={}
             fee_schedule_diagnostics: dict[str, Any] = {
@@ -1319,8 +1323,8 @@ class TraderRuntime:
                 )
                 api_permission_gaps = api_key_permission_gate_reasons(
                     key_assessment,
-                    validate_shadow_orders=self.settings.validate_shadow_orders,
-                    live_requested=self.settings.live_requested,
+                    validate_shadow_orders=False,
+                    live_requested=self.settings.real_orders_enabled,
                 )
                 api_permissions_ready = not api_permission_gaps
                 history_metadata_untrusted = bool(
@@ -1842,7 +1846,7 @@ class TraderRuntime:
                     {item.pair_id: item for item in instruments},
                     take_profit_pct=self.settings.position_take_profit_pct,
                     take_profit_fraction=self.settings.position_take_profit_fraction,
-                    stop_loss_pct=self.settings.position_stop_loss_pct,
+                    stop_loss_pct=self.settings.trailing_stop_offset_pct,
                 )
                 counts["position_exits_checked"] = len(exit_decisions)
                 for decision in exit_decisions:
@@ -1972,59 +1976,61 @@ class TraderRuntime:
                 for bar in bars:
                     self.persistence.record_bar(instrument.pair_id,60,bar["ts"],str(bar["open"]),str(bar["high"]),
                                                 str(bar["low"]),str(bar["close"]),str(bar["volume"]))
-                try:
-                    settlement_events = settle_due_observations(
-                        self.persistence,
-                        pair=instrument.pair_id,
-                        current_exit_spread_bps=ticker.spread_bps,
-                        interval_minutes=60,
-                    )
-                    for research_event in settlement_events:
-                        event_name = research_event["event"]
-                        payload = research_event["payload"]
-                        self.persistence.record_event(event_name, payload)
-                        self.audit.emit(event_name, **payload)
-                        if event_name == "SHADOW_RESEARCH_OUTCOME_SETTLED":
-                            counts["research_outcomes_settled"] += 1
-                        elif event_name == "SHADOW_RESEARCH_OUTCOME_INCOMPLETE":
-                            counts["research_outcomes_incomplete"] += 1
-                except (ArithmeticError, TypeError, ValueError) as exc:
-                    self.audit.emit(
-                        "SHADOW_RESEARCH_SETTLEMENT_ERROR",
-                        cycle_id=cycle_id,
-                        pair=instrument.wsname,
-                        exception_type=type(exc).__name__,
-                        reason=str(exc)[:120],
-                    )
-                if self.settings.shadow_strategy_lab_enabled:
+                if BACKGROUND_RESEARCH_ENABLED:
                     try:
-                        candidate_settlement_events = settle_due_strategy_candidate_observations(
+                        settlement_events = settle_due_observations(
                             self.persistence,
                             pair=instrument.pair_id,
                             current_exit_spread_bps=ticker.spread_bps,
                             interval_minutes=60,
                         )
-                        for candidate_event in candidate_settlement_events:
-                            event_name = candidate_event["event"]
-                            event_payload = {
-                                "cycle_id": cycle_id,
-                                **candidate_event["payload"],
-                            }
-                            self.persistence.record_event(event_name, event_payload)
-                            self.audit.emit(event_name, **event_payload)
-                            if event_name == "SHADOW_STRATEGY_CANDIDATE_OUTCOME_SETTLED":
-                                counts["strategy_lab_outcomes_settled"] += 1
-                            elif event_name == "SHADOW_STRATEGY_CANDIDATE_OUTCOME_INCOMPLETE":
-                                counts["strategy_lab_outcomes_incomplete"] += 1
+                        for research_event in settlement_events:
+                            event_name = research_event["event"]
+                            payload = research_event["payload"]
+                            self.persistence.record_event(event_name, payload)
+                            self.audit.emit(event_name, **payload)
+                            if event_name == "SHADOW_RESEARCH_OUTCOME_SETTLED":
+                                counts["research_outcomes_settled"] += 1
+                            elif event_name == "SHADOW_RESEARCH_OUTCOME_INCOMPLETE":
+                                counts["research_outcomes_incomplete"] += 1
                     except (ArithmeticError, TypeError, ValueError) as exc:
                         self.audit.emit(
-                            "SHADOW_STRATEGY_CANDIDATE_SETTLEMENT_ERROR",
+                            "SHADOW_RESEARCH_SETTLEMENT_ERROR",
                             cycle_id=cycle_id,
                             pair=instrument.wsname,
                             exception_type=type(exc).__name__,
                             reason=str(exc)[:120],
-                            release_gate_eligible=False,
                         )
+                    if BACKGROUND_RESEARCH_ENABLED:
+                        try:
+                            candidate_settlement_events = settle_due_strategy_candidate_observations(
+                                self.persistence,
+                                pair=instrument.pair_id,
+                                current_exit_spread_bps=ticker.spread_bps,
+                                interval_minutes=60,
+                            )
+                            for candidate_event in candidate_settlement_events:
+                                event_name = candidate_event["event"]
+                                event_payload = {
+                                    "cycle_id": cycle_id,
+                                    **candidate_event["payload"],
+                                }
+                                self.persistence.record_event(event_name, event_payload)
+                                self.audit.emit(event_name, **event_payload)
+                                if event_name == "SHADOW_STRATEGY_CANDIDATE_OUTCOME_SETTLED":
+                                    counts["strategy_lab_outcomes_settled"] += 1
+                                elif event_name == "SHADOW_STRATEGY_CANDIDATE_OUTCOME_INCOMPLETE":
+                                    counts["strategy_lab_outcomes_incomplete"] += 1
+                        except (ArithmeticError, TypeError, ValueError) as exc:
+                            self.audit.emit(
+                                "SHADOW_STRATEGY_CANDIDATE_SETTLEMENT_ERROR",
+                                cycle_id=cycle_id,
+                                pair=instrument.wsname,
+                                exception_type=type(exc).__name__,
+                                reason=str(exc)[:120],
+                                release_gate_eligible=False,
+                            )
+    
                 signal=generate_trend_signal(instrument.pair_id,[b["close"] for b in bars],
                     fast_threshold_bps=self.settings.strategy_fast_bps,slow_threshold_bps=self.settings.strategy_slow_bps)
                 self.audit.emit("MARKET_SIGNAL_EVALUATED",cycle_id=cycle_id,pair=instrument.wsname,
@@ -2038,7 +2044,7 @@ class TraderRuntime:
                 maker_fee=maker_fee_from_trade_volume(
                     trade_volume,(instrument.pair_id,instrument.altname,instrument.wsname)
                 )
-                if self.settings.shadow_strategy_lab_enabled and bars:
+                if BACKGROUND_RESEARCH_ENABLED and bars:
                     portfolio_histories[instrument.wsname] = bars
                     portfolio_instruments[instrument.wsname] = instrument
                     portfolio_market_costs[instrument.wsname] = {
@@ -2050,7 +2056,7 @@ class TraderRuntime:
                         "margin_buy_supported": any(level >= 2 for level in instrument.leverage_buy),
                         "margin_sell_supported": any(level >= 2 for level in instrument.leverage_sell),
                     }
-                if bars and signal.reason not in {"INSUFFICIENT_HISTORY", "INVALID_PRICE_HISTORY"}:
+                if BACKGROUND_RESEARCH_ENABLED and bars and signal.reason not in {"INSUFFICIENT_HISTORY", "INVALID_PRICE_HISTORY"}:
                     decision_ts = int(time.time())
                     latest_bar_ts = int(bars[-1]["ts"])
                     bar_close_epoch = latest_bar_ts + 3600
@@ -2523,7 +2529,7 @@ class TraderRuntime:
                     "signal_bar_ts":signal_bar_ts,"idempotency_scope":"ONE_ENTRY_THESIS_PER_PAIR_DIRECTION_CLOSED_HOURLY_BAR",
                     "net_edge_is_uncalibrated_proxy":True,"estimated_cost_bps":str(cost.total_round_trip_bps),
                     "margin_fee_source":"UNCONFIRMED" if is_margin else "NOT_APPLICABLE"}}
-                if self.settings.live_requested:
+                if self.settings.real_orders_enabled:
                     authority = OrderAuthority(
                         self.client, self.persistence, self.settings, self.audit
                     )
@@ -2559,7 +2565,7 @@ class TraderRuntime:
                         fill_confirmed=False,
                         result=submission.get("result", {}),
                     )
-                elif self.settings.validate_shadow_orders:
+                elif False:  # validation-only order calls were removed with the PAPER/SHADOW mode split
                     try:
                         validation = self._validate_shadow_order(intent, instrument)
                     except KrakenAmbiguousError as exc:
@@ -2626,382 +2632,436 @@ class TraderRuntime:
                 invalid_candidate_count=counts["market_ticker_refresh_failed"],
                 account_snapshot_available=account is not None,
             )
-            failure_stage = "FINALIZE_MULTI_ASSET_STRATEGY_RESEARCH"
-            if self.settings.shadow_strategy_lab_enabled:
-                try:
-                    nonempty_histories = [
-                        rows for rows in portfolio_histories.values() if rows
-                    ]
-                    candidate_bar_ts = (
-                        min(int(rows[-1]["ts"]) for rows in nonempty_histories)
-                        if len(nonempty_histories) >= 2 else None
-                    )
-                    latest_bar_is_common = (
-                        candidate_bar_ts is not None
-                        and all(
-                            any(int(bar["ts"]) == candidate_bar_ts for bar in rows)
-                            for rows in nonempty_histories
+            if BACKGROUND_RESEARCH_ENABLED:
+                failure_stage = "FINALIZE_MULTI_ASSET_STRATEGY_RESEARCH"
+                if self.settings.shadow_strategy_lab_enabled:
+                    try:
+                        nonempty_histories = [
+                            rows for rows in portfolio_histories.values() if rows
+                        ]
+                        candidate_bar_ts = (
+                            min(int(rows[-1]["ts"]) for rows in nonempty_histories)
+                            if len(nonempty_histories) >= 2 else None
                         )
-                    )
-                    if (
-                        latest_bar_is_common
-                        and candidate_bar_ts is not None
-                        and self.persistence.multi_asset_research_bar_exists(candidate_bar_ts)
-                    ):
-                        multi_asset_research_summary = {
-                            "status": "ALREADY_RECORDED_FOR_COMMON_BAR",
-                            "as_of_bar_ts": candidate_bar_ts,
-                            "snapshot_persisted": True,
-                            "release_gate_eligible": False,
-                            "order_creation_allowed": False,
-                        }
-                    else:
-                        # Collect one fresh Kraken L2 snapshot per common H1 research
-                        # bar. This is current execution-cost evidence only; it is never
-                        # retroactively applied to historical candles or treated as fills.
-                        depth_sampled_symbols: list[str] = []
-                        depth_unavailable_symbols: list[str] = []
-                        research_bar_age = (
-                            int(time.time()) - (candidate_bar_ts + 3600)
-                            if candidate_bar_ts is not None else None
+                        latest_bar_is_common = (
+                            candidate_bar_ts is not None
+                            and all(
+                                any(int(bar["ts"]) == candidate_bar_ts for bar in rows)
+                                for rows in nonempty_histories
+                            )
                         )
                         if (
                             latest_bar_is_common
-                            and research_bar_age is not None
-                            and -60 <= research_bar_age <= 3900
+                            and candidate_bar_ts is not None
+                            and self.persistence.multi_asset_research_bar_exists(candidate_bar_ts)
                         ):
-                            for symbol in sorted(portfolio_histories):
-                                depth_instrument = portfolio_instruments.get(symbol)
-                                if depth_instrument is None:
-                                    depth_unavailable_symbols.append(symbol)
-                                    continue
-                                try:
-                                    depth_result = self.client.public(
-                                        "Depth", {"pair": depth_instrument.altname, "count": 10}
-                                    )
-                                    depth_book = (
-                                        depth_result.get(depth_instrument.pair_id)
-                                        or depth_result.get(depth_instrument.altname)
-                                        or depth_result.get(depth_instrument.wsname)
-                                    )
-                                    if not isinstance(depth_book, dict) and len(depth_result) == 1:
-                                        only_value = next(iter(depth_result.values()))
-                                        depth_book = only_value if isinstance(only_value, dict) else None
-                                    if not isinstance(depth_book, dict):
+                            multi_asset_research_summary = {
+                                "status": "ALREADY_RECORDED_FOR_COMMON_BAR",
+                                "as_of_bar_ts": candidate_bar_ts,
+                                "snapshot_persisted": True,
+                                "release_gate_eligible": False,
+                                "order_creation_allowed": False,
+                            }
+                        else:
+                            # Collect one fresh Kraken L2 snapshot per common H1 research
+                            # bar. This is current execution-cost evidence only; it is never
+                            # retroactively applied to historical candles or treated as fills.
+                            depth_sampled_symbols: list[str] = []
+                            depth_unavailable_symbols: list[str] = []
+                            research_bar_age = (
+                                int(time.time()) - (candidate_bar_ts + 3600)
+                                if candidate_bar_ts is not None else None
+                            )
+                            if (
+                                latest_bar_is_common
+                                and research_bar_age is not None
+                                and -60 <= research_bar_age <= 3900
+                            ):
+                                for symbol in sorted(portfolio_histories):
+                                    depth_instrument = portfolio_instruments.get(symbol)
+                                    if depth_instrument is None:
                                         depth_unavailable_symbols.append(symbol)
                                         continue
-
-                                    def valid_depth_levels(raw_levels: Any) -> list[list[str]]:
-                                        parsed: list[list[str]] = []
-                                        if not isinstance(raw_levels, list):
+                                    try:
+                                        depth_result = self.client.public(
+                                            "Depth", {"pair": depth_instrument.altname, "count": 10}
+                                        )
+                                        depth_book = (
+                                            depth_result.get(depth_instrument.pair_id)
+                                            or depth_result.get(depth_instrument.altname)
+                                            or depth_result.get(depth_instrument.wsname)
+                                        )
+                                        if not isinstance(depth_book, dict) and len(depth_result) == 1:
+                                            only_value = next(iter(depth_result.values()))
+                                            depth_book = only_value if isinstance(only_value, dict) else None
+                                        if not isinstance(depth_book, dict):
+                                            depth_unavailable_symbols.append(symbol)
+                                            continue
+    
+                                        def valid_depth_levels(raw_levels: Any) -> list[list[str]]:
+                                            parsed: list[list[str]] = []
+                                            if not isinstance(raw_levels, list):
+                                                return parsed
+                                            for level in raw_levels:
+                                                if not isinstance(level, (list, tuple)) or len(level) < 2:
+                                                    continue
+                                                try:
+                                                    price = D(str(level[0]))
+                                                    quantity = D(str(level[1]))
+                                                except (ArithmeticError, TypeError, ValueError):
+                                                    continue
+                                                if (
+                                                    price.is_finite() and quantity.is_finite()
+                                                    and price > 0 and quantity > 0
+                                                ):
+                                                    parsed.append([str(price), str(quantity)])
                                             return parsed
-                                        for level in raw_levels:
-                                            if not isinstance(level, (list, tuple)) or len(level) < 2:
-                                                continue
-                                            try:
-                                                price = D(str(level[0]))
-                                                quantity = D(str(level[1]))
-                                            except (ArithmeticError, TypeError, ValueError):
-                                                continue
-                                            if (
-                                                price.is_finite() and quantity.is_finite()
-                                                and price > 0 and quantity > 0
-                                            ):
-                                                parsed.append([str(price), str(quantity)])
-                                        return parsed
-
-                                    bids = valid_depth_levels(depth_book.get("bids"))
-                                    asks = valid_depth_levels(depth_book.get("asks"))
-                                    if not bids or not asks:
-                                        depth_unavailable_symbols.append(symbol)
-                                        continue
-                                    snapshot_ts = int(time.time())
-                                    portfolio_market_costs[symbol]["order_book_l2"] = {
-                                        "snapshot_ts": snapshot_ts,
-                                        "bids": bids,
-                                        "asks": asks,
-                                        "source": "KRAKEN_PUBLIC_DEPTH",
-                                        "levels_requested": 10,
-                                    }
-                                    if candidate_bar_ts is not None:
-                                        depth_saved = self.persistence.record_market_depth_snapshot({
-                                            "pair": symbol,
+    
+                                        bids = valid_depth_levels(depth_book.get("bids"))
+                                        asks = valid_depth_levels(depth_book.get("asks"))
+                                        if not bids or not asks:
+                                            depth_unavailable_symbols.append(symbol)
+                                            continue
+                                        snapshot_ts = int(time.time())
+                                        portfolio_market_costs[symbol]["order_book_l2"] = {
                                             "snapshot_ts": snapshot_ts,
-                                            "research_bar_ts": int(candidate_bar_ts),
-                                            "source": "KRAKEN_PUBLIC_DEPTH",
                                             "bids": bids,
                                             "asks": asks,
-                                            "taker_fee_bps": portfolio_market_costs[symbol].get("taker_fee_bps"),
-                                            "maker_fee_bps": portfolio_market_costs[symbol].get("maker_fee_bps"),
-                                            "spread_bps": portfolio_market_costs[symbol].get("spread_bps"),
-                                        })
-                                        if depth_saved:
-                                            counts["market_depth_snapshots_recorded"] += 1
-                                    depth_sampled_symbols.append(symbol)
-                                except Exception:
-                                    # Depth enrichment is optional research evidence:
-                                    # never turn a transient public-data failure into a
-                                    # failed trading cycle or assume zero execution cost.
-                                    depth_unavailable_symbols.append(symbol)
-
-                        from app.portfolio_strategies import run_multi_asset_strategy_research
-
-                        historical_depth_by_symbol = {
-                            symbol: self.persistence.market_depth_snapshots(symbol, limit=720)
-                            for symbol in portfolio_histories
-                        }
-                        multi_asset_research_summary = run_multi_asset_strategy_research(
-                            portfolio_histories,
-                            portfolio_market_costs,
-                            now_epoch=int(time.time()),
-                            depth_history=historical_depth_by_symbol,
-                        )
-                        multi_asset_research_summary["current_order_book_observation_summary"] = {
-                            "source": "KRAKEN_PUBLIC_DEPTH",
-                            "snapshot_count": len(depth_sampled_symbols),
-                            "sampled_symbols": depth_sampled_symbols,
-                            "unavailable_symbols": depth_unavailable_symbols,
-                            "once_per_new_common_h1_bar": True,
-                            "historical_cost_evidence": False,
-                            "actual_fills": False,
-                        }
-                        multi_asset_research_summary["snapshot_persisted"] = False
-                        depth_cost_diagnostics = (
-                            multi_asset_research_summary.get("cost_assumptions", {}).get(
-                                "time_separated_l2_cost_diagnostics", {}
+                                            "source": "KRAKEN_PUBLIC_DEPTH",
+                                            "levels_requested": 10,
+                                        }
+                                        if candidate_bar_ts is not None:
+                                            depth_saved = self.persistence.record_market_depth_snapshot({
+                                                "pair": symbol,
+                                                "snapshot_ts": snapshot_ts,
+                                                "research_bar_ts": int(candidate_bar_ts),
+                                                "source": "KRAKEN_PUBLIC_DEPTH",
+                                                "bids": bids,
+                                                "asks": asks,
+                                                "taker_fee_bps": portfolio_market_costs[symbol].get("taker_fee_bps"),
+                                                "maker_fee_bps": portfolio_market_costs[symbol].get("maker_fee_bps"),
+                                                "spread_bps": portfolio_market_costs[symbol].get("spread_bps"),
+                                            })
+                                            if depth_saved:
+                                                counts["market_depth_snapshots_recorded"] += 1
+                                        depth_sampled_symbols.append(symbol)
+                                    except Exception:
+                                        # Depth enrichment is optional research evidence:
+                                        # never turn a transient public-data failure into a
+                                        # failed trading cycle or assume zero execution cost.
+                                        depth_unavailable_symbols.append(symbol)
+    
+                            from app.portfolio_strategies import run_multi_asset_strategy_research
+    
+                            historical_depth_by_symbol = {
+                                symbol: self.persistence.market_depth_snapshots(symbol, limit=720)
+                                for symbol in portfolio_histories
+                            }
+                            multi_asset_research_summary = run_multi_asset_strategy_research(
+                                portfolio_histories,
+                                portfolio_market_costs,
+                                now_epoch=int(time.time()),
+                                depth_history=historical_depth_by_symbol,
                             )
-                            if isinstance(multi_asset_research_summary.get("cost_assumptions"), dict)
-                            else {}
-                        )
-                        multi_asset_research_summary["historical_depth_evidence"] = {
-                            "persisted_snapshot_count": self.persistence.market_depth_snapshot_count(),
-                            "snapshots_recorded_this_cycle": counts["market_depth_snapshots_recorded"],
-                            "pair_snapshots_are_time_separated_for_future_calibration": True,
-                            "historical_round_trip_cost_available": bool(
-                                depth_cost_diagnostics.get("completed_round_trip_simulation_count", 0)
-                            ),
-                            "time_separated_cost_status": depth_cost_diagnostics.get(
-                                "status", "NOT_AVAILABLE"
-                            ),
-                            "actual_fills": False,
-                        }
-                        multi_asset_research_summary["fee_schedule_evidence"] = {
-                            "source": "KRAKEN_PRIVATE_TRADE_VOLUME",
-                            "fee_schedule_requested": True,
-                            "taker_fee_pair_count": sum(
-                                item.get("taker_fee_bps") is not None
-                                for item in portfolio_market_costs.values()
-                            ),
-                            "maker_fee_pair_count": sum(
-                                item.get("maker_fee_bps") is not None
-                                for item in portfolio_market_costs.values()
-                            ),
-                            "maker_rates_are_fill_assumptions": False,
-                        }
-                        if (
-                            multi_asset_research_summary.get("status") == "RESEARCH_COMPLETE"
-                            and multi_asset_research_summary.get("as_of_bar_freshness") == "FRESH"
-                        ):
-                            saved = self.persistence.record_multi_asset_research_run(
-                                multi_asset_research_summary
+                            multi_asset_research_summary["current_order_book_observation_summary"] = {
+                                "source": "KRAKEN_PUBLIC_DEPTH",
+                                "snapshot_count": len(depth_sampled_symbols),
+                                "sampled_symbols": depth_sampled_symbols,
+                                "unavailable_symbols": depth_unavailable_symbols,
+                                "once_per_new_common_h1_bar": True,
+                                "historical_cost_evidence": False,
+                                "actual_fills": False,
+                            }
+                            multi_asset_research_summary["snapshot_persisted"] = False
+                            depth_cost_diagnostics = (
+                                multi_asset_research_summary.get("cost_assumptions", {}).get(
+                                    "time_separated_l2_cost_diagnostics", {}
+                                )
+                                if isinstance(multi_asset_research_summary.get("cost_assumptions"), dict)
+                                else {}
                             )
-                            multi_asset_research_summary["snapshot_persisted"] = saved
-                            if saved:
-                                counts["multi_asset_research_runs_recorded"] += 1
-                                self.persistence.record_event(
-                                    "MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY",
-                                    multi_asset_research_summary,
+                            multi_asset_research_summary["historical_depth_evidence"] = {
+                                "persisted_snapshot_count": self.persistence.market_depth_snapshot_count(),
+                                "snapshots_recorded_this_cycle": counts["market_depth_snapshots_recorded"],
+                                "pair_snapshots_are_time_separated_for_future_calibration": True,
+                                "historical_round_trip_cost_available": bool(
+                                    depth_cost_diagnostics.get("completed_round_trip_simulation_count", 0)
+                                ),
+                                "time_separated_cost_status": depth_cost_diagnostics.get(
+                                    "status", "NOT_AVAILABLE"
+                                ),
+                                "actual_fills": False,
+                            }
+                            multi_asset_research_summary["fee_schedule_evidence"] = {
+                                "source": "KRAKEN_PRIVATE_TRADE_VOLUME",
+                                "fee_schedule_requested": True,
+                                "taker_fee_pair_count": sum(
+                                    item.get("taker_fee_bps") is not None
+                                    for item in portfolio_market_costs.values()
+                                ),
+                                "maker_fee_pair_count": sum(
+                                    item.get("maker_fee_bps") is not None
+                                    for item in portfolio_market_costs.values()
+                                ),
+                                "maker_rates_are_fill_assumptions": False,
+                            }
+                            if (
+                                multi_asset_research_summary.get("status") == "RESEARCH_COMPLETE"
+                                and multi_asset_research_summary.get("as_of_bar_freshness") == "FRESH"
+                            ):
+                                saved = self.persistence.record_multi_asset_research_run(
+                                    multi_asset_research_summary
                                 )
-                                self.audit.emit(
-                                    "MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY",
-                                    **multi_asset_research_summary,
-                                )
-                            else:
-                                multi_asset_research_summary["duplicate_snapshot"] = True
-                except Exception as exc:
+                                multi_asset_research_summary["snapshot_persisted"] = saved
+                                if saved:
+                                    counts["multi_asset_research_runs_recorded"] += 1
+                                    self.persistence.record_event(
+                                        "MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY",
+                                        multi_asset_research_summary,
+                                    )
+                                    self.audit.emit(
+                                        "MULTI_ASSET_STRATEGY_RESEARCH_SUMMARY",
+                                        **multi_asset_research_summary,
+                                    )
+                                else:
+                                    multi_asset_research_summary["duplicate_snapshot"] = True
+                    except Exception as exc:
+                        multi_asset_research_summary = {
+                            "status": "RESEARCH_FAILED",
+                            "exception_type": type(exc).__name__,
+                            "release_gate_eligible": False,
+                            "order_creation_allowed": False,
+                        }
+                        self.audit.emit(
+                            "MULTI_ASSET_STRATEGY_RESEARCH_ERROR",
+                            cycle_id=cycle_id,
+                            exception_type=type(exc).__name__,
+                            no_order_created=True,
+                            release_gate_eligible=False,
+                        )
+                else:
                     multi_asset_research_summary = {
-                        "status": "RESEARCH_FAILED",
-                        "exception_type": type(exc).__name__,
+                        "status": "DISABLED_BY_CONFIGURATION",
                         "release_gate_eligible": False,
                         "order_creation_allowed": False,
                     }
+                failure_stage = "FINALIZE_TARGET_OPEN_BACKFILL"
+                try:
+                    target_open_backfill = backfill_target_open_outcomes(self.persistence)
+                    if target_open_backfill["updated"] > 0:
+                        backfill_payload = {"cycle_id": cycle_id, **target_open_backfill}
+                        self.persistence.record_event(
+                            "SHADOW_RESEARCH_TARGET_OPEN_BACKFILL", backfill_payload
+                        )
+                        self.audit.emit(
+                            "SHADOW_RESEARCH_TARGET_OPEN_BACKFILL", **backfill_payload
+                        )
+                except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError) as exc:
                     self.audit.emit(
-                        "MULTI_ASSET_STRATEGY_RESEARCH_ERROR",
+                        "SHADOW_RESEARCH_TARGET_OPEN_BACKFILL_ERROR",
                         cycle_id=cycle_id,
                         exception_type=type(exc).__name__,
-                        no_order_created=True,
-                        release_gate_eligible=False,
+                        reason=str(exc)[:120],
+                        primary_outcomes_unchanged=True,
                     )
+                failure_stage = "FINALIZE_TSM_RESEARCH_SUMMARY_READ"
+                research_observations = self.persistence.research_observations(limit=5000)
+                research_summary = summarize_shadow_research(
+                    research_observations,
+                    strategy_version=STRATEGY_VERSION,
+                )
+                recovered_transient_sqlite_cantopen_breaker = (
+                    _recover_transient_sqlite_cantopen_research_read_breaker(
+                        self.persistence,
+                        self.audit,
+                        cycle_id=cycle_id,
+                        research_observation_count=len(research_observations),
+                    )
+                )
+                failure_stage = "FINALIZE_TSM_RESEARCH_SUMMARY_WRITE"
+                self.persistence.record_event("SHADOW_RESEARCH_SUMMARY", research_summary)
+                self.audit.emit("SHADOW_RESEARCH_SUMMARY", **research_summary)
+                failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_READ"
+                strategy_candidate_rows = self.persistence.strategy_candidate_observations(limit=100000)
+                strategy_lab_summary = summarize_strategy_candidate_research(strategy_candidate_rows)
+                strategy_lab_summary["enabled"] = self.settings.shadow_strategy_lab_enabled
+                failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_WRITE"
+                self.persistence.record_event("SHADOW_STRATEGY_LAB_SUMMARY", strategy_lab_summary)
+                self.audit.emit("SHADOW_STRATEGY_LAB_SUMMARY", **strategy_lab_summary)
+                self.microstructure.flush_due()
+                microstructure_status = self.microstructure.status()
+                microstructure_quality = self.persistence.microstructure_quality_summary(now_epoch=int(time.time()))
+                microstructure_forward_tsm: dict[str, Any] = {"status": "NOT_AVAILABLE"}
+                microstructure_forward_candidates: dict[str, Any] = {"status": "NOT_AVAILABLE"}
+                microstructure_early_tsm: dict[str, Any] = {"status": "NOT_AVAILABLE", "horizons": {}}
+                microstructure_early_candidates: dict[str, Any] = {"status": "NOT_AVAILABLE", "horizons": {}}
+                joint_candidate_portfolio: dict[str, Any] = {"status": "NOT_AVAILABLE"}
+                try:
+                    pair_aliases: dict[str, str] = {
+                        str(instrument.pair_id): str(instrument.wsname)
+                        for instrument in portfolio_instruments.values()
+                    }
+                    persisted_microstructure_pairs = self.persistence.microstructure_pairs()
+                    microstructure_history: dict[str, list[dict[str, Any]]] = {
+                        symbol: self.persistence.microstructure_bars(symbol, limit=10000)
+                        for symbol in persisted_microstructure_pairs
+                    }
+                    microstructure_forward_tsm = match_microstructure_target_horizons(
+                        research_observations, microstructure_history, pair_aliases
+                    )
+                    microstructure_forward_candidates = match_microstructure_target_horizons(
+                        strategy_candidate_rows, microstructure_history, pair_aliases
+                    )
+                    microstructure_early_tsm = summarize_early_microstructure_horizons(
+                        research_observations, microstructure_history, pair_aliases
+                    )
+                    microstructure_early_candidates = summarize_early_microstructure_horizons(
+                        strategy_candidate_rows, microstructure_history, pair_aliases
+                    )
+                    early_horizon_payload = {
+                        "cycle_id": cycle_id,
+                        "tsm": microstructure_early_tsm,
+                        "strategy_candidates": microstructure_early_candidates,
+                        "actual_fills": False,
+                        "portfolio_pnl": False,
+                        "release_gate_eligible": False,
+                    }
+                    self.persistence.record_event("MICROSTRUCTURE_EARLY_HORIZON_SUMMARY", early_horizon_payload)
+                    self.audit.emit("MICROSTRUCTURE_EARLY_HORIZON_SUMMARY", **early_horizon_payload)
+                    candidate_match_rows = microstructure_forward_candidates.pop("matched_observations", [])
+                    microstructure_forward_tsm.pop("matched_observations", None)
+                    eligible_margin_shorts = {
+                        pair for pair, costs in portfolio_market_costs.items()
+                        if costs.get("margin_sell_supported") is True
+                    }
+                    filtered_rows = [
+                        item for item in candidate_match_rows
+                        if item["direction"] != "SHORT" or item["pair"] in eligible_margin_shorts
+                    ]
+                    joint_candidate_portfolio = simulate_shared_equity_candidate_portfolio(
+                        filtered_rows, initial_equity_usd=D("10000"),
+                        max_gross_pct=D("80"), max_net_pct=D("50"),
+                        max_position_pct=D("20"), max_open_positions=4,
+                    )
+                    joint_candidate_portfolio["margin_ineligible_short_rows_excluded"] = (
+                        len(candidate_match_rows)-len(filtered_rows)
+                    )
+                    horizon_payload = {"cycle_id":cycle_id,"tsm":microstructure_forward_tsm,
+                                       "strategy_candidates":microstructure_forward_candidates,
+                                       "actual_fills":False,"release_gate_eligible":False}
+                    self.persistence.record_event("MICROSTRUCTURE_FORWARD_HORIZON_SUMMARY",horizon_payload)
+                    self.audit.emit("MICROSTRUCTURE_FORWARD_HORIZON_SUMMARY",**horizon_payload)
+                    portfolio_payload={"cycle_id":cycle_id,**joint_candidate_portfolio}
+                    self.persistence.record_event("JOINT_STRATEGY_PORTFOLIO_BACKTEST",portfolio_payload)
+                    self.audit.emit("JOINT_STRATEGY_PORTFOLIO_BACKTEST",**portfolio_payload)
+                except Exception as exc:
+                    self.audit.emit("MICROSTRUCTURE_RESEARCH_DIAGNOSTIC_ERROR",cycle_id=cycle_id,
+                                    exception_type=type(exc).__name__,reason=str(exc)[:120],
+                                    primary_shadow_outcomes_unchanged=True,release_gate_eligible=False)
+                quality_payload={"cycle_id":cycle_id,**microstructure_quality}
+                self.persistence.record_event("MICROSTRUCTURE_DATA_QUALITY_SUMMARY",quality_payload)
+                self.audit.emit("MICROSTRUCTURE_DATA_QUALITY_SUMMARY",**quality_payload)
+                candidate_cohort = (
+                    microstructure_forward_candidates.get("cohort_coverage", {}).get("overall", {})
+                    if isinstance(microstructure_forward_candidates.get("cohort_coverage"), dict)
+                    else {}
+                )
+                candidate_cost_breakdown = microstructure_forward_candidates.get("cost_breakdown_bps", {})
+                strategy_candidate_compact: list[dict[str, Any]] = []
+                for candidate in strategy_lab_summary.get("candidates", []):
+                    splits = candidate.get("chronological_costed_splits_with_target_horizon_purge", {})
+                    test_metrics = splits.get("test_last_20_percent", {}) if isinstance(splits, dict) else {}
+                    non_overlapping = candidate.get("non_overlapping_costed_diagnostic", {})
+                    non_overlapping_metrics = (
+                        non_overlapping.get("metrics", {}) if isinstance(non_overlapping, dict) else {}
+                    )
+                    overall_metrics = candidate.get("spot_net_cost_proxy", {})
+                    strategy_candidate_compact.append({
+                        "candidate": (
+                            str(candidate.get("candidate_name", "unknown")) + ":"
+                            + str(candidate.get("candidate_version", "unknown"))
+                        ),
+                        "costed_n": overall_metrics.get("sample_count", 0),
+                        "mean_net_bps": overall_metrics.get("mean_net_return_bps"),
+                        "profit_factor": overall_metrics.get("profit_factor"),
+                        "win_rate_pct": overall_metrics.get("win_rate_pct"),
+                        "test_n": test_metrics.get("sample_count", 0),
+                        "test_mean_net_bps": test_metrics.get("mean_net_return_bps"),
+                        "non_overlapping_n": non_overlapping_metrics.get("sample_count", 0),
+                        "non_overlapping_mean_net_bps": non_overlapping_metrics.get("mean_net_return_bps"),
+                        "actual_fills": False,
+                        "release_gate_eligible": False,
+                    })
+                def _mean_cost(component: str) -> Any:
+                    value = candidate_cost_breakdown.get(component, {})
+                    return value.get("mean_bps") if isinstance(value, dict) else None
+                compact_candidate_cohort = {
+                    "directional_observations": candidate_cohort.get("directional_observation_count", 0),
+                    "pre_history": candidate_cohort.get("decision_before_first_qualified_mark", 0),
+                    "in_feed": candidate_cohort.get("decision_in_feed_count", 0),
+                    "matured": candidate_cohort.get("matured_in_feed_count", 0),
+                    "matched": candidate_cohort.get("matured_matched_count", 0),
+                    "unmatched": candidate_cohort.get("matured_unmatched_count", 0),
+                    "not_yet_matured": candidate_cohort.get("target_not_yet_matured_count", 0),
+                    "matured_match_coverage_pct": candidate_cohort.get("matured_match_coverage_pct"),
+                    "costed_matches": microstructure_forward_candidates.get("costed_match_count", 0),
+                    "mean_round_trip_taker_fee_bps": _mean_cost("round_trip_taker_fee_bps"),
+                    "mean_round_trip_spread_bps": _mean_cost("entry_exit_spread_bps"),
+                    "mean_round_trip_slippage_bps": _mean_cost("round_trip_slippage_bps"),
+                }
+    
             else:
                 multi_asset_research_summary = {
-                    "status": "DISABLED_BY_CONFIGURATION",
+                    "status": "DISABLED_BY_ARCHITECTURE",
                     "release_gate_eligible": False,
                     "order_creation_allowed": False,
                 }
-            failure_stage = "FINALIZE_TARGET_OPEN_BACKFILL"
-            try:
-                target_open_backfill = backfill_target_open_outcomes(self.persistence)
-                if target_open_backfill["updated"] > 0:
-                    backfill_payload = {"cycle_id": cycle_id, **target_open_backfill}
-                    self.persistence.record_event(
-                        "SHADOW_RESEARCH_TARGET_OPEN_BACKFILL", backfill_payload
-                    )
-                    self.audit.emit(
-                        "SHADOW_RESEARCH_TARGET_OPEN_BACKFILL", **backfill_payload
-                    )
-            except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError) as exc:
+                research_summary = {
+                    "validation_status": "BACKGROUND_RESEARCH_DISABLED",
+                    "costed_spot_proxy_observations": 0,
+                    "holdout_sample_available_for_review": False,
+                    "release_gate_eligible": False,
+                }
+                strategy_lab_summary = {
+                    "candidate_count": 0,
+                    "status": "BACKGROUND_RESEARCH_DISABLED",
+                    "release_gate_eligible": False,
+                    "candidates": [],
+                }
+                strategy_candidate_compact = []
+                compact_candidate_cohort = {}
+                microstructure_status = self.microstructure.status()
+                microstructure_quality = {
+                    "status_counts": {"VALID": 0, "PARTIAL": 0},
+                    "recent_usable_valid_bar_count": 0,
+                    "recent_usable_book_mark_count": 0,
+                    "recent_legacy_or_unqualified_valid_bar_count": 0,
+                    "recent_status_counts": {"VALID": 0, "PARTIAL": 0},
+                }
+                microstructure_history: dict[str, list[dict[str, Any]]] = {}
+                microstructure_forward_tsm = {
+                    "status": "BACKGROUND_RESEARCH_DISABLED",
+                    "matched_observation_count": 0,
+                }
+                microstructure_forward_candidates = {
+                    "status": "BACKGROUND_RESEARCH_DISABLED",
+                    "matched_observation_count": 0,
+                }
+                microstructure_early_tsm = {
+                    "status": "BACKGROUND_RESEARCH_DISABLED",
+                    "horizons": {},
+                }
+                microstructure_early_candidates = {
+                    "status": "BACKGROUND_RESEARCH_DISABLED",
+                    "horizons": {},
+                }
+                joint_candidate_portfolio = {"status": "BACKGROUND_RESEARCH_DISABLED", "scenarios": []}
                 self.audit.emit(
-                    "SHADOW_RESEARCH_TARGET_OPEN_BACKFILL_ERROR",
+                    "BACKGROUND_RESEARCH_DISABLED",
                     cycle_id=cycle_id,
-                    exception_type=type(exc).__name__,
-                    reason=str(exc)[:120],
-                    primary_outcomes_unchanged=True,
+                    microstructure_collector_running=False,
+                    database_history_retained=True,
                 )
-            failure_stage = "FINALIZE_TSM_RESEARCH_SUMMARY_READ"
-            research_observations = self.persistence.research_observations(limit=5000)
-            research_summary = summarize_shadow_research(
-                research_observations,
-                strategy_version=STRATEGY_VERSION,
-            )
-            recovered_transient_sqlite_cantopen_breaker = (
-                _recover_transient_sqlite_cantopen_research_read_breaker(
-                    self.persistence,
-                    self.audit,
-                    cycle_id=cycle_id,
-                    research_observation_count=len(research_observations),
-                )
-            )
-            failure_stage = "FINALIZE_TSM_RESEARCH_SUMMARY_WRITE"
-            self.persistence.record_event("SHADOW_RESEARCH_SUMMARY", research_summary)
-            self.audit.emit("SHADOW_RESEARCH_SUMMARY", **research_summary)
-            failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_READ"
-            strategy_candidate_rows = self.persistence.strategy_candidate_observations(limit=100000)
-            strategy_lab_summary = summarize_strategy_candidate_research(strategy_candidate_rows)
-            strategy_lab_summary["enabled"] = self.settings.shadow_strategy_lab_enabled
-            failure_stage = "FINALIZE_STRATEGY_LAB_SUMMARY_WRITE"
-            self.persistence.record_event("SHADOW_STRATEGY_LAB_SUMMARY", strategy_lab_summary)
-            self.audit.emit("SHADOW_STRATEGY_LAB_SUMMARY", **strategy_lab_summary)
-            self.microstructure.flush_due()
-            microstructure_status = self.microstructure.status()
-            microstructure_quality = self.persistence.microstructure_quality_summary(now_epoch=int(time.time()))
-            microstructure_forward_tsm: dict[str, Any] = {"status": "NOT_AVAILABLE"}
-            microstructure_forward_candidates: dict[str, Any] = {"status": "NOT_AVAILABLE"}
-            microstructure_early_tsm: dict[str, Any] = {"status": "NOT_AVAILABLE", "horizons": {}}
-            microstructure_early_candidates: dict[str, Any] = {"status": "NOT_AVAILABLE", "horizons": {}}
-            joint_candidate_portfolio: dict[str, Any] = {"status": "NOT_AVAILABLE"}
-            try:
-                pair_aliases: dict[str, str] = {
-                    str(instrument.pair_id): str(instrument.wsname)
-                    for instrument in portfolio_instruments.values()
-                }
-                persisted_microstructure_pairs = self.persistence.microstructure_pairs()
-                microstructure_history: dict[str, list[dict[str, Any]]] = {
-                    symbol: self.persistence.microstructure_bars(symbol, limit=10000)
-                    for symbol in persisted_microstructure_pairs
-                }
-                microstructure_forward_tsm = match_microstructure_target_horizons(
-                    research_observations, microstructure_history, pair_aliases
-                )
-                microstructure_forward_candidates = match_microstructure_target_horizons(
-                    strategy_candidate_rows, microstructure_history, pair_aliases
-                )
-                microstructure_early_tsm = summarize_early_microstructure_horizons(
-                    research_observations, microstructure_history, pair_aliases
-                )
-                microstructure_early_candidates = summarize_early_microstructure_horizons(
-                    strategy_candidate_rows, microstructure_history, pair_aliases
-                )
-                early_horizon_payload = {
-                    "cycle_id": cycle_id,
-                    "tsm": microstructure_early_tsm,
-                    "strategy_candidates": microstructure_early_candidates,
-                    "actual_fills": False,
-                    "portfolio_pnl": False,
-                    "release_gate_eligible": False,
-                }
-                self.persistence.record_event("MICROSTRUCTURE_EARLY_HORIZON_SUMMARY", early_horizon_payload)
-                self.audit.emit("MICROSTRUCTURE_EARLY_HORIZON_SUMMARY", **early_horizon_payload)
-                candidate_match_rows = microstructure_forward_candidates.pop("matched_observations", [])
-                microstructure_forward_tsm.pop("matched_observations", None)
-                eligible_margin_shorts = {
-                    pair for pair, costs in portfolio_market_costs.items()
-                    if costs.get("margin_sell_supported") is True
-                }
-                filtered_rows = [
-                    item for item in candidate_match_rows
-                    if item["direction"] != "SHORT" or item["pair"] in eligible_margin_shorts
-                ]
-                joint_candidate_portfolio = simulate_shared_equity_candidate_portfolio(
-                    filtered_rows, initial_equity_usd=D("10000"),
-                    max_gross_pct=D("80"), max_net_pct=D("50"),
-                    max_position_pct=D("20"), max_open_positions=4,
-                )
-                joint_candidate_portfolio["margin_ineligible_short_rows_excluded"] = (
-                    len(candidate_match_rows)-len(filtered_rows)
-                )
-                horizon_payload = {"cycle_id":cycle_id,"tsm":microstructure_forward_tsm,
-                                   "strategy_candidates":microstructure_forward_candidates,
-                                   "actual_fills":False,"release_gate_eligible":False}
-                self.persistence.record_event("MICROSTRUCTURE_FORWARD_HORIZON_SUMMARY",horizon_payload)
-                self.audit.emit("MICROSTRUCTURE_FORWARD_HORIZON_SUMMARY",**horizon_payload)
-                portfolio_payload={"cycle_id":cycle_id,**joint_candidate_portfolio}
-                self.persistence.record_event("JOINT_STRATEGY_PORTFOLIO_BACKTEST",portfolio_payload)
-                self.audit.emit("JOINT_STRATEGY_PORTFOLIO_BACKTEST",**portfolio_payload)
-            except Exception as exc:
-                self.audit.emit("MICROSTRUCTURE_RESEARCH_DIAGNOSTIC_ERROR",cycle_id=cycle_id,
-                                exception_type=type(exc).__name__,reason=str(exc)[:120],
-                                primary_shadow_outcomes_unchanged=True,release_gate_eligible=False)
-            quality_payload={"cycle_id":cycle_id,**microstructure_quality}
-            self.persistence.record_event("MICROSTRUCTURE_DATA_QUALITY_SUMMARY",quality_payload)
-            self.audit.emit("MICROSTRUCTURE_DATA_QUALITY_SUMMARY",**quality_payload)
-            candidate_cohort = (
-                microstructure_forward_candidates.get("cohort_coverage", {}).get("overall", {})
-                if isinstance(microstructure_forward_candidates.get("cohort_coverage"), dict)
-                else {}
-            )
-            candidate_cost_breakdown = microstructure_forward_candidates.get("cost_breakdown_bps", {})
-            strategy_candidate_compact: list[dict[str, Any]] = []
-            for candidate in strategy_lab_summary.get("candidates", []):
-                splits = candidate.get("chronological_costed_splits_with_target_horizon_purge", {})
-                test_metrics = splits.get("test_last_20_percent", {}) if isinstance(splits, dict) else {}
-                non_overlapping = candidate.get("non_overlapping_costed_diagnostic", {})
-                non_overlapping_metrics = (
-                    non_overlapping.get("metrics", {}) if isinstance(non_overlapping, dict) else {}
-                )
-                overall_metrics = candidate.get("spot_net_cost_proxy", {})
-                strategy_candidate_compact.append({
-                    "candidate": (
-                        str(candidate.get("candidate_name", "unknown")) + ":"
-                        + str(candidate.get("candidate_version", "unknown"))
-                    ),
-                    "costed_n": overall_metrics.get("sample_count", 0),
-                    "mean_net_bps": overall_metrics.get("mean_net_return_bps"),
-                    "profit_factor": overall_metrics.get("profit_factor"),
-                    "win_rate_pct": overall_metrics.get("win_rate_pct"),
-                    "test_n": test_metrics.get("sample_count", 0),
-                    "test_mean_net_bps": test_metrics.get("mean_net_return_bps"),
-                    "non_overlapping_n": non_overlapping_metrics.get("sample_count", 0),
-                    "non_overlapping_mean_net_bps": non_overlapping_metrics.get("mean_net_return_bps"),
-                    "actual_fills": False,
-                    "release_gate_eligible": False,
-                })
-            def _mean_cost(component: str) -> Any:
-                value = candidate_cost_breakdown.get(component, {})
-                return value.get("mean_bps") if isinstance(value, dict) else None
-            compact_candidate_cohort = {
-                "directional_observations": candidate_cohort.get("directional_observation_count", 0),
-                "pre_history": candidate_cohort.get("decision_before_first_qualified_mark", 0),
-                "in_feed": candidate_cohort.get("decision_in_feed_count", 0),
-                "matured": candidate_cohort.get("matured_in_feed_count", 0),
-                "matched": candidate_cohort.get("matured_matched_count", 0),
-                "unmatched": candidate_cohort.get("matured_unmatched_count", 0),
-                "not_yet_matured": candidate_cohort.get("target_not_yet_matured_count", 0),
-                "matured_match_coverage_pct": candidate_cohort.get("matured_match_coverage_pct"),
-                "costed_matches": microstructure_forward_candidates.get("costed_match_count", 0),
-                "mean_round_trip_taker_fee_bps": _mean_cost("round_trip_taker_fee_bps"),
-                "mean_round_trip_spread_bps": _mean_cost("entry_exit_spread_bps"),
-                "mean_round_trip_slippage_bps": _mean_cost("round_trip_slippage_bps"),
-            }
             final_breaker_rows = self.persistence.circuit_breakers()
             final_breaker_diagnostics = _circuit_breaker_diagnostics(final_breaker_rows, persistence=self.persistence)
             result = {
@@ -3009,8 +3069,8 @@ class TraderRuntime:
                 "status": "OK",
                 "duration_seconds": round(time.time() - started, 3),
                 **counts,
-                "mode": self.settings.mode,
-                "live_requested": self.settings.live_requested,
+                "real_orders_enabled": self.settings.real_orders_enabled,
+                "background_research_enabled": BACKGROUND_RESEARCH_ENABLED,
                 "internal_live_release": INTERNAL_LIVE_EXECUTION_RELEASED,
                 "futures_readonly_status": futures_readonly_summary.get("status"),
                 "futures_readonly_snapshot_id": futures_readonly_summary.get("snapshot_id"),
@@ -3026,7 +3086,7 @@ class TraderRuntime:
                 "shadow_research_costed_sample_count": research_summary["costed_spot_proxy_observations"],
                 "shadow_research_holdout_available": research_summary["holdout_sample_available_for_review"],
                 "shadow_research_release_gate_eligible": research_summary["release_gate_eligible"],
-                "shadow_strategy_lab_enabled": self.settings.shadow_strategy_lab_enabled,
+                "shadow_strategy_lab_enabled": BACKGROUND_RESEARCH_ENABLED,
                 "shadow_strategy_lab_candidate_count": strategy_lab_summary["candidate_count"],
                 "shadow_strategy_lab_status": strategy_lab_summary["status"],
                 "shadow_strategy_lab_release_gate_eligible": strategy_lab_summary["release_gate_eligible"],
