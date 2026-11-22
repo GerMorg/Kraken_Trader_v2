@@ -1,7 +1,10 @@
 import io
+import json
 import sqlite3
 import time
 from decimal import Decimal
+
+from app.models import Instrument
 
 from app.audit import AuditLogger
 from app.config import Settings
@@ -1661,3 +1664,99 @@ def test_futures_account_summary_reports_missing_flex_wallet_without_claiming_ze
     assert summary["multi_collateral_wallet_present"] is False
     assert summary["collateral_currency_count"] is None
     assert summary["funded_collateral_currency_count"] is None
+
+
+def test_futures_demo_signal_evaluation_uses_spot_crypto_intersection_and_never_orders(monkeypatch):
+    runtime, db, audit = make_runtime()
+    runtime.settings = Settings.from_mapping({
+        "kraken_futures_demo_api_key": "demo-public-key",
+        "kraken_futures_demo_api_secret": "demo-private-secret",
+        "futures_demo_enabled": True,
+    })
+    now = int(time.time())
+    last_open = (now // 3600) * 3600 - 3600
+    candles = []
+    for index in range(80):
+        close = Decimal("100") * (Decimal("1.003") ** index)
+        candles.append({
+            "time": (last_open - (79 - index) * 3600) * 1000,
+            "open": str(close),
+            "high": str(close * Decimal("1.001")),
+            "low": str(close * Decimal("0.999")),
+            "close": str(close),
+            "volume": "100",
+        })
+
+    db.record_futures_readonly_snapshot({
+        "snapshot_id": "demo-market-snapshot",
+        "captured_at": "2026-11-22T14:00:00+00:00",
+        "environment": "demo_read_only",
+        "general_permission": "UNVERIFIED",
+        "transfer_permission": "UNVERIFIED",
+        "result_status": "COMPLETE",
+        "counts": {},
+        "data": {
+            "instruments": {"instruments": [
+                {"symbol": "PF_XBTUSD", "tradeable": True},
+                {"symbol": "PF_ETHUSD", "tradeable": True},
+                {"symbol": "PF_AAPLXUSD", "tradeable": True},
+                {"symbol": "PI_XBTUSD", "tradeable": True},
+                {"symbol": "PF_XRPUSD", "tradeable": False},
+            ]},
+            "tickers": {"tickers": [
+                {"symbol": "PF_XBTUSD", "volumeQuote": 900000, "bid": 999, "ask": 1001, "suspended": False},
+                {"symbol": "PF_ETHUSD", "volumeQuote": 800000, "bid": 999, "ask": 1001, "suspended": False},
+                {"symbol": "PF_AAPLXUSD", "volumeQuote": 700000, "bid": 999, "ask": 1001, "suspended": False},
+                {"symbol": "PF_XRPUSD", "volumeQuote": 600000, "bid": 999, "ask": 1001, "suspended": False},
+            ]},
+        },
+    })
+
+    class FakeChartClient:
+        def __init__(self, **kwargs):
+            assert kwargs["api_key"] == "demo-public-key"
+            assert kwargs["api_secret"] == "demo-private-secret"
+            assert kwargs["environment"] == "demo"
+            self.calls = []
+
+        def get_ohlc_candles(self, symbol, **kwargs):
+            self.calls.append((symbol, kwargs))
+            return {"candles": candles, "more_candles": False}
+
+    fake_client = FakeChartClient()
+
+    def factory(**kwargs):
+        return fake_client
+
+    monkeypatch.setattr("app.runtime.FuturesAPIClient", factory)
+    spot_instruments = [
+        Instrument("XBTUSD", "XBTUSD", "XBT/USD", "XBT", "USD", "online", D("0.0001"), 8, 1, (2,), (2,)),
+        Instrument("ETHUSD", "ETHUSD", "ETH/USD", "ETH", "USD", "online", D("0.001"), 8, 1, (2,), (2,)),
+    ]
+
+    result = runtime._evaluate_futures_demo_signals(
+        "cycle-futures-demo-signals",
+        spot_instruments,
+        snapshot_id="demo-market-snapshot",
+    )
+
+    assert result["status"] == "COMPLETE"
+    assert result["candidate_count"] == 2
+    assert result["directional_signal_count"] == 2
+    assert result["orders_created"] is False
+    assert {call[0] for call in fake_client.calls} == {"PF_XBTUSD", "PF_ETHUSD"}
+    assert all(call[1] == {"tick_type": "trade", "resolution": "1h", "count": 90} for call in fake_client.calls)
+    events = [
+        json.loads(line) for line in audit.stream.getvalue().splitlines()
+        if line.strip() and '"event":"FUTURES_DEMO_SIGNAL_EVALUATED"' in line
+    ]
+    assert len(events) == 2
+    for event in events:
+        assert event["payload"]["direction"] == "LONG"
+        assert event["payload"]["execution_allowed"] is False
+        assert event["payload"]["order_created"] is False
+        assert "FUTURES_EDGE_NOT_VALIDATED" in event["payload"]["execution_blockers"]
+        assert "FUTURES_EXCHANGE_INITIAL_MARGIN_TIER_NOT_RECONCILED" in event["payload"]["execution_blockers"]
+    assert "demo-private-secret" not in audit.stream.getvalue()
+    audit.close()
+    db.close()

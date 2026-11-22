@@ -17,6 +17,7 @@ from app.futures_trading import (
     derive_crypto_linear_usd_perpetual_symbols,
     evaluate_futures_entry,
     generate_futures_signal,
+    parse_closed_hourly_closes,
 )
 from app.persistence import Persistence
 
@@ -282,3 +283,67 @@ def test_futures_risk_blocks_when_exchange_margin_tier_exceeds_available_collate
     )
     assert blocked.allowed is False
     assert "FUTURES_FREE_MARGIN_INSUFFICIENT" in blocked.reasons
+
+
+def test_futures_hourly_parser_uses_only_closed_contiguous_recent_candles():
+    now = D(str(int(__import__("time").time())))
+    last_open = (int(now) // 3600) * 3600 - 3600
+    candles = []
+    for index in range(80):
+        close = D("100") * (D("1.003") ** index)
+        candles.append({
+            "time": (last_open - (79 - index) * 3600) * 1000,
+            "open": str(close),
+            "high": str(close * D("1.001")),
+            "low": str(close * D("0.999")),
+            "close": str(close),
+        })
+    # The currently forming H1 candle must not enter the signal window.
+    candles.append({
+        "time": (last_open + 3600) * 1000,
+        "open": "999",
+        "high": "1000",
+        "low": "998",
+        "close": "999",
+    })
+
+    closes, last_bar_epoch, status = parse_closed_hourly_closes(
+        candles,
+        now_epoch_seconds=now,
+    )
+
+    assert status == "READY"
+    assert len(closes) == 80
+    assert last_bar_epoch == last_open
+    assert generate_futures_signal("PF_XBTUSD", closes).direction == "LONG"
+
+
+def test_futures_hourly_parser_fails_closed_on_gap_and_stale_history():
+    now = D(str(int(__import__("time").time())))
+    last_open = (int(now) // 3600) * 3600 - 3600
+    candles = []
+    for index in range(80):
+        close = D("100") * (D("1.002") ** index)
+        candles.append({
+            "time": (last_open - (79 - index) * 3600) * 1000,
+            "open": str(close),
+            "high": str(close * D("1.001")),
+            "low": str(close * D("0.999")),
+            "close": str(close),
+        })
+    gap_candles = [row for i, row in enumerate(candles) if i != 30]
+    _closes, _last, gap_status = parse_closed_hourly_closes(
+        gap_candles,
+        now_epoch_seconds=now,
+    )
+    stale_candles = [
+        {**row, "time": int(row["time"]) - 3 * 3600 * 1000}
+        for row in candles
+    ]
+    _closes, _last, stale_status = parse_closed_hourly_closes(
+        stale_candles,
+        now_epoch_seconds=now,
+    )
+
+    assert gap_status == "FUTURES_HOURLY_HISTORY_GAP_OR_INSUFFICIENT"
+    assert stale_status == "FUTURES_CLOSED_CANDLES_STALE"

@@ -119,3 +119,28 @@ def test_portfolio_risk_status_blocks_unknown_baselines():
         "DAILY_PNL_BASELINE_UNKNOWN",
         "DRAWDOWN_BASELINE_UNKNOWN",
     )
+
+
+def test_portfolio_risk_status_uses_operator_defined_limits_above_legacy_caps():
+    settings = Settings.from_mapping({
+        "risk_daily_loss_pct": "12.5",
+        "risk_max_drawdown_pct": "27.5",
+    })
+    within = portfolio_entry_risk_status(
+        daily_pnl_pct=D("-10"),
+        drawdown_pct=D("25"),
+        settings=settings,
+    )
+    at_daily_limit = portfolio_entry_risk_status(
+        daily_pnl_pct=D("-12.5"),
+        drawdown_pct=D("25"),
+        settings=settings,
+    )
+    at_drawdown_limit = portfolio_entry_risk_status(
+        daily_pnl_pct=D("-10"),
+        drawdown_pct=D("27.5"),
+        settings=settings,
+    )
+    assert within.allowed is True
+    assert at_daily_limit.reasons == ("DAILY_LOSS_LIMIT",)
+    assert at_drawdown_limit.reasons == ("DRAWDOWN_LIMIT",)

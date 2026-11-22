@@ -32,10 +32,12 @@ def test_operator_switch_cannot_raise_code_owned_risk_caps():
         "risk_max_leverage": 25,
         "risk_max_position_pct": 100,
         "risk_max_drawdown_pct": 40,
+        "risk_daily_loss_pct": 15,
     })
     assert config.risk_max_leverage == 3
     assert config.risk_max_position_pct == HARD_LIMITS["risk_max_position_pct"]
-    assert config.risk_max_drawdown_pct == HARD_LIMITS["risk_max_drawdown_pct"]
+    assert config.risk_max_drawdown_pct == Decimal("40")
+    assert config.risk_daily_loss_pct == Decimal("15")
 
 
 def test_secret_values_are_not_in_safe_summary():
@@ -122,3 +124,23 @@ def test_futures_readonly_is_disabled_without_explicit_configuration():
     assert config.futures_api_key == ""
     assert config.futures_api_secret == ""
 
+
+
+def test_daily_loss_and_drawdown_limits_are_operator_controlled_without_upper_code_caps():
+    config = Settings.from_mapping({
+        "risk_daily_loss_pct": "12.5",
+        "risk_max_drawdown_pct": "27.5",
+    })
+    assert config.risk_daily_loss_pct == Decimal("12.5")
+    assert config.risk_max_drawdown_pct == Decimal("27.5")
+    assert config.safe_summary()["risk_daily_loss_pct"] == "12.5"
+    assert config.safe_summary()["risk_max_drawdown_pct"] == "27.5"
+
+
+def test_invalid_daily_loss_and_drawdown_limits_fall_back_to_safe_defaults():
+    config = Settings.from_mapping({
+        "risk_daily_loss_pct": "-1",
+        "risk_max_drawdown_pct": "NaN",
+    })
+    assert config.risk_daily_loss_pct == Decimal("3")
+    assert config.risk_max_drawdown_pct == Decimal("8")

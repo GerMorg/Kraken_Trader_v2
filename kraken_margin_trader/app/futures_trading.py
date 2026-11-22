@@ -86,6 +86,79 @@ class FuturesRiskLimits:
     max_drawdown_pct: Decimal = D("8")
 
 
+
+def parse_closed_hourly_closes(
+    candles: Iterable[dict[str, Any]],
+    *,
+    now_epoch_seconds: Decimal,
+    minimum_bars: int = 73,
+    maximum_last_bar_age_seconds: int = 4500,
+) -> tuple[list[Decimal], int | None, str]:
+    """Return a contiguous sequence of closed H1 prices or an explicit fail-closed reason."""
+    if (
+        not isinstance(now_epoch_seconds, Decimal)
+        or not now_epoch_seconds.is_finite()
+        or now_epoch_seconds <= 0
+        or isinstance(minimum_bars, bool)
+        or minimum_bars < 1
+        or maximum_last_bar_age_seconds < 0
+    ):
+        return [], None, "FUTURES_CANDLE_TIME_INPUT_INVALID"
+
+    rows: dict[int, Decimal] = {}
+    try:
+        for candle in candles:
+            if not isinstance(candle, dict):
+                return [], None, "FUTURES_CANDLE_ROW_INVALID"
+            timestamp_raw = candle.get("time")
+            close_raw = candle.get("close")
+            timestamp = int(str(timestamp_raw))
+            close = D(str(close_raw))
+            if timestamp < 0 or timestamp % 3_600_000 != 0:
+                return [], None, "FUTURES_CANDLE_TIMESTAMP_INVALID"
+            if not close.is_finite() or close <= 0:
+                return [], None, "FUTURES_CANDLE_CLOSE_INVALID"
+            if timestamp in rows:
+                return [], None, "FUTURES_CANDLE_DUPLICATE_TIMESTAMP"
+            rows[timestamp] = close
+    except (ArithmeticError, KeyError, TypeError, ValueError, OverflowError):
+        return [], None, "FUTURES_CANDLE_ROW_INVALID"
+
+    now_ms = int(now_epoch_seconds * D(1000))
+    closed = [
+        (timestamp, close)
+        for timestamp, close in sorted(rows.items())
+        if timestamp + 3_600_000 <= now_ms
+    ]
+    if not closed:
+        return [], None, "FUTURES_CLOSED_CANDLES_UNAVAILABLE"
+
+    latest_timestamp, _latest_close = closed[-1]
+    latest_bar_age = now_epoch_seconds - (
+        D(latest_timestamp) / D(1000) + D(3600)
+    )
+    if (
+        not latest_bar_age.is_finite()
+        or latest_bar_age < D("-60")
+        or latest_bar_age > D(maximum_last_bar_age_seconds)
+    ):
+        return [], None, "FUTURES_CLOSED_CANDLES_STALE"
+
+    contiguous: list[tuple[int, Decimal]] = [closed[-1]]
+    for timestamp, close in reversed(closed[:-1]):
+        if contiguous[-1][0] - timestamp != 3_600_000:
+            break
+        contiguous.append((timestamp, close))
+    contiguous.reverse()
+    if len(contiguous) < minimum_bars:
+        return [], latest_timestamp // 1000, "FUTURES_HOURLY_HISTORY_GAP_OR_INSUFFICIENT"
+
+    return (
+        [close for _timestamp, close in contiguous],
+        latest_timestamp // 1000,
+        "READY",
+    )
+
 def generate_futures_signal(
     symbol: str,
     hourly_closes: Iterable[Decimal],

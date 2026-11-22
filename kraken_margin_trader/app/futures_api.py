@@ -207,6 +207,62 @@ class FuturesAPIClient:
     def get_historical_funding_rates(self, symbol: str) -> dict[str, Any]:
         return self._read("historical_funding_rates", symbol=symbol)
 
+    def get_ohlc_candles(
+        self,
+        symbol: str,
+        *,
+        tick_type: str = "trade",
+        resolution: str = "1h",
+        count: int = 90,
+    ) -> dict[str, Any]:
+        """Read public Futures chart candles through the separate Charts API."""
+        normalized_symbol = str(symbol).strip().upper()
+        normalized_tick_type = str(tick_type).strip().lower()
+        normalized_resolution = str(resolution).strip().lower()
+        if not re.fullmatch(r"PF_[A-Z0-9]{2,16}USD", normalized_symbol):
+            raise ValueError("FUTURES_CHART_SYMBOL_INVALID")
+        if normalized_tick_type not in {"trade", "mark", "spot"}:
+            raise ValueError("FUTURES_CHART_TICK_TYPE_INVALID")
+        if normalized_resolution not in {"1m", "5m", "15m", "30m", "1h", "4h", "12h", "1d", "1w"}:
+            raise ValueError("FUTURES_CHART_RESOLUTION_INVALID")
+        if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 500:
+            raise ValueError("FUTURES_CHART_COUNT_OUT_OF_RANGE")
+        path = (
+            "/api/charts/v1/"
+            + normalized_tick_type + "/"
+            + normalized_symbol + "/"
+            + normalized_resolution
+        )
+        payload = self._request_get(
+            path,
+            query_string=urlencode({"count": count}),
+            authenticated=False,
+        )
+        candles = payload.get("candles")
+        if not isinstance(candles, list) or not isinstance(payload.get("more_candles"), bool):
+            raise FuturesAPIError("FUTURES_CHART_RESPONSE_SCHEMA_INVALID")
+        for candle in candles:
+            if not isinstance(candle, dict):
+                raise FuturesAPIError("FUTURES_CHART_RESPONSE_SCHEMA_INVALID")
+            try:
+                timestamp = int(candle["time"])
+                close = float(candle["close"])
+                high = float(candle["high"])
+                low = float(candle["low"])
+                open_price = float(candle["open"])
+            except (KeyError, TypeError, ValueError, OverflowError):
+                raise FuturesAPIError("FUTURES_CHART_RESPONSE_SCHEMA_INVALID") from None
+            if (
+                timestamp < 0
+                or not all(math.isfinite(value) and value > 0 for value in (
+                    close, high, low, open_price
+                ))
+                or high < max(open_price, close, low)
+                or low > min(open_price, close, high)
+            ):
+                raise FuturesAPIError("FUTURES_CHART_RESPONSE_SCHEMA_INVALID")
+        return payload
+
     def _read(self, name: str, *, symbol: str | None = None) -> dict[str, Any]:
         endpoint = _READ_ENDPOINTS.get(name)
         if endpoint is None:
