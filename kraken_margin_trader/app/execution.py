@@ -159,7 +159,7 @@ def build_add_order_params(
     if leverage is not None:
         params["leverage"] = leverage
     # Kraken attaches a conditional close to the entry. The exchange creates the
-    # opposite-side trailing stop in the executed quantity, including partial fills.
+    # opposite-side trailing stop; Kraken defines its volume as the primary order volume.
     protective_entry = intent.action == Action.OPEN_SPOT_LONG or intent.action in opens
     if protective_entry:
         if (
@@ -330,7 +330,8 @@ class OrderAuthority:
                 primary_order_id=txids[0],
                 order_type="trailing-stop",
                 trailing_stop_offset_pct=str(self.settings.trailing_stop_offset_pct),
-                attached_order_quantity_follows_fills=True,
+                conditional_close_volume_equals_primary_order=True,
+                partial_fill_protection_requires_reconciliation=True,
                 separate_child_order_id_returned=False,
             )
         return {
