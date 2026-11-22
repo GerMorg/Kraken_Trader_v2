@@ -1,6 +1,6 @@
 ## Börsenseitige Trailing-Stop-Gegenorder — 0.1.75
 
-Spot-/Spot-Margin-Einstiegsorders und Erhöhungen verwenden einen Kraken-`AddOrder`-Conditional-Close-Auftrag mit `close[ordertype]=trailing-stop` und einem relativen `close[price]=+N%`-Offset. Der HA-Standard beträgt 3.0%; er kann mit `trailing_stop_offset_pct` im Bereich 0.5–20% angepasst werden. Der relative Offset beschreibt den Rücklauf vom günstigsten Kurs nach Aktivierung, nicht einen fixierten Stoppreis.
+Spot-/Spot-Margin-Einstiegsorders und Erhöhungen verwenden einen Kraken-`AddOrder`-Conditional-Close-Auftrag mit `close[ordertype]=trailing-stop` und einem relativen `close[price]=+N%`-Offset. Die Standard-Rückfallkonfiguration beträgt 3.0%; bei Strategieorders wird stattdessen die berechnete Stopdistanz des konkreten Signals (derzeit 1.5–5.0%) verwendet. Der Rückfallwert `trailing_stop_offset_pct` ist auf 0.5–20% begrenzt. Der relative Offset beschreibt den Rücklauf vom günstigsten Kurs nach Aktivierung, nicht einen fixierten Stoppreis.
 
 Die Conditional-Close-Definition wird direkt zusammen mit der Primärorder an Kraken übermittelt. Die Anwendung akzeptiert die Orderantwort nur dann als mit Schutz bestätigt, wenn `descr.close` eine nichtleere Beschreibung enthält. Ist die Hauptorder bereits bestätigt, fehlt aber die Close-Bestätigung, bleibt die Hauptorder als `ACKNOWLEDGED` erhalten und ein persistenter `PROTECTIVE_ORDER`-Breaker verhindert weitere Risikoerhöhungen.
 
