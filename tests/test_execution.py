@@ -94,7 +94,7 @@ def test_live_submission_after_internal_release_uses_operator_switches(monkeypat
     authority = OrderAuthority(
         client,
         db,
-        Settings.from_mapping({"mode": "LIVE", "live_enabled": True, "kill_switch": False}),
+        Settings.from_mapping({"real_orders_enabled": True}),
         audit,
     )
 
