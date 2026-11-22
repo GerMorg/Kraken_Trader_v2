@@ -347,3 +347,25 @@ def test_futures_hourly_parser_fails_closed_on_gap_and_stale_history():
 
     assert gap_status == "FUTURES_HOURLY_HISTORY_GAP_OR_INSUFFICIENT"
     assert stale_status == "FUTURES_CLOSED_CANDLES_STALE"
+
+
+def test_futures_momentum_thresholds_are_configurable():
+    rising = [D("100") * (D("1.003") ** index) for index in range(90)]
+    signal = generate_futures_signal(
+        "PF_XBTUSD",
+        rising,
+        fast_threshold_bps=D("20"),
+        slow_threshold_bps=D("40"),
+    )
+    assert signal.direction == "LONG"
+
+
+def test_invalid_futures_momentum_thresholds_fail_closed():
+    rising = [D("100") * (D("1.003") ** index) for index in range(90)]
+    signal = generate_futures_signal(
+        "PF_XBTUSD",
+        rising,
+        fast_threshold_bps=D("NaN"),
+    )
+    assert signal.direction == "NONE"
+    assert signal.reason == "INVALID_FUTURES_STRATEGY_THRESHOLDS"
