@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.79 — Operator-Risikogrenzen und Futures-Marktdaten ohne Demo
+
+- Entfernt code-owned Obergrenzen für Trade-Risikobudget, Positionsgröße, Gross-/Net-Exposure, Margin-Auslastung, Hebel und maximale offene Spot-/Margin-Positionen. Diese Werte werden vom Betreiber vorgegeben; negative oder nicht-endliche Eingaben fallen auf Standardwerte zurück.
+- Die Cash-Reserve ist von 0 bis 100 % einstellbar. Die bisher fest codierte Margin-Level-Einstiegsschwelle von 300 % ist jetzt als `risk_min_margin_level_pct` konfigurierbar; unbekannte Margin-Daten blockieren bei Hebelpositionen weiterhin.
+- Trendstärke-Schwellen, Mindest-Effizienzfilter, volatilitätsabhängige Stopdistanz und Haltehorizont sind über HA einstellbar. Die Effizienzwerte bleiben im mathematischen Bereich 0 bis 1; der Stopbereich muss positiv und geordnet sein.
+- Entfernt willkürliche obere App-Grenzen für Strategieparameter, Haltehorizont, Zyklusintervall, Anzahl geprüfter Märkte und Datenalter. Mindest-Zyklusintervall 60 Sekunden, Mindestalter 15 Sekunden und mindestens ein Kandidat bleiben als Ressourcen-/Qualitätsgrenzen.
+- Entfernt den Futures-Demo-Snapshot aus der normalen Runtime und die Demo-Optionen aus der HA-Konfiguration. Futures-Marktsignale verwenden den Produktions-Read-only-Snapshot und die öffentliche Charts-API auf `futures.kraken.com`.
+- Die Signalstrecke bleibt strikt signal-only: keine Futures-Order-Intents, keine Orderübermittlung, keine Account-Mutationen und keine Änderung am internen Spot-Live-Release-Gate.
+- Bestehende persistierte Demo-Snapshots werden nicht gelöscht; die Runtime verwendet sie nicht mehr.
+
 ## 0.1.78 — Konfigurierbare Verlustlimits und Futures-H1-Signalstrecke
 
 - Entfernt die code-owned Obergrenzen 3 % Tagesverlust und 8 % Drawdown. Die Werte werden aus HA übernommen, müssen endlich und positiv sein und werden im Portfolio-Risk-Status unverändert ausgewiesen.
