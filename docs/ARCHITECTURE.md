@@ -9,6 +9,7 @@ Die operative Runtime wird auf wenige klar abgegrenzte Aufgaben reduziert. Die h
 - **Eine Operator-Einstellung:** `real_orders_enabled`. Fehlende oder alte Optionen bedeuten Simulation. Die interne Code-Freigabe bleibt ein separater, nicht per HA überschreibbarer Release-Gate.
 - **Börsenseitiger Schutz:** Spot-/Margin-Einstiegsorders erhalten eine Kraken Conditional-Close-Trailing-Stop-Order. Futures benötigt eine separate Reduce-only-Schutzorder über den eigenen Futures-Adapter.
 - **Kein Research im Regelzyklus:** WebSocket-Microstructure, Strategy-Lab, Forward-Matching und gemeinsame Research-Backtests laufen in 0.1.75 nicht im normalen HA-Zyklus. Die Daten und Module bleiben für spätere, getrennte Offline-Auswertung erhalten.
+- **Kein lokaler Shadow-Exit-Watcher:** lokale Take-Profit-/Stop-Empfehlungen ohne Orderausführung wurden aus dem aktiven Runtime-Zyklus entfernt. Exit-Schutz wird über Kraken-Orders verwaltet und bei Reconciliation überprüft.
 
 ### Betriebsgrenzen in 0.1.75
 
