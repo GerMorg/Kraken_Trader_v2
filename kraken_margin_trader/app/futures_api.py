@@ -126,10 +126,11 @@ def _default_transport(request: Request, timeout_seconds: float) -> tuple[int, b
 
 
 class FuturesAPIClient:
-    """Read-only Kraken Futures REST client pinned to the isolated demo environment.
+    """Read-only Kraken Futures REST client.
 
-    This first integration stage deliberately has no order, cancel, transfer, or
-    account-setting mutation method. The production host is not selectable here.
+    The default host is production and all ordinary calls are GET-only. The legacy
+    demo host remains isolated for retired adapter tests; runtime code must not
+    depend on that environment.
     """
 
     def __init__(
@@ -137,7 +138,7 @@ class FuturesAPIClient:
         *,
         api_key: str = "",
         api_secret: str = "",
-        environment: str = "demo",
+        environment: str = "production_read_only",
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         transport: Transport | None = None,
     ) -> None:
