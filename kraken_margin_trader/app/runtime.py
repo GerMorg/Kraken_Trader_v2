@@ -54,7 +54,12 @@ from app.portfolio_reconciliation import (
     reconcile_wallet_balance_deltas,
 )
 from app.reconciliation import reconcile_order_intents
-from app.risk import choose_trade_leverage, evaluate_entry, size_position_usd
+from app.risk import (
+    choose_trade_leverage,
+    evaluate_entry,
+    portfolio_entry_risk_status,
+    size_position_usd,
+)
 from app.strategy import generate_trend_signal
 from app.tax import AustrianTaxReports
 
@@ -1768,6 +1773,30 @@ class TraderRuntime:
                             external_flow_unvalued_count=flow_diagnostics["unvalued_count"],
                             external_flow_unvalued_assets=flow_diagnostics["unvalued_assets"],
                         )
+                risk_status = portfolio_entry_risk_status(
+                    daily_pnl_pct=(
+                        equity_risk_state.get("daily_pnl_pct")
+                        if equity_risk_state is not None else None
+                    ),
+                    drawdown_pct=(
+                        equity_risk_state.get("drawdown_pct")
+                        if equity_risk_state is not None else None
+                    ),
+                    settings=self.settings,
+                )
+                self.audit.emit(
+                    "PORTFOLIO_ENTRY_RISK_STATUS",
+                    cycle_id=cycle_id,
+                    status=(
+                        "ENTRY_RISK_WITHIN_LIMITS"
+                        if risk_status.allowed else "NEW_ENTRIES_BLOCKED"
+                    ),
+                    new_entries_allowed=risk_status.allowed,
+                    reasons=list(risk_status.reasons),
+                    daily_loss_limit_pct=str(self.settings.risk_daily_loss_pct),
+                    max_drawdown_pct=str(self.settings.risk_max_drawdown_pct),
+                    independent_of_directional_signal=True,
+                )
                 _resolve_clean_reconciliation_breaker(
                     self.persistence, self.audit,
                     name="WALLET_BALANCE_RECONCILIATION", cycle_id=cycle_id,

@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from app.config import Settings
 from app.models import Instrument,RiskSnapshot,TrendSignal
-from app.risk import evaluate_entry,size_position_usd
+from app.risk import evaluate_entry, portfolio_entry_risk_status, size_position_usd
 
 D=Decimal
 
@@ -95,3 +95,27 @@ def test_unknown_daily_pnl_and_drawdown_baselines_fail_closed():
     assert not result.allowed
     assert "DAILY_PNL_BASELINE_UNKNOWN" in result.reasons
     assert "DRAWDOWN_BASELINE_UNKNOWN" in result.reasons
+
+
+
+def test_portfolio_risk_status_reports_limits_without_directional_signal():
+    status = portfolio_entry_risk_status(
+        daily_pnl_pct=D("-3.1"),
+        drawdown_pct=D("8.2"),
+        settings=Settings(),
+    )
+    assert status.allowed is False
+    assert status.reasons == ("DAILY_LOSS_LIMIT", "DRAWDOWN_LIMIT")
+
+
+def test_portfolio_risk_status_blocks_unknown_baselines():
+    status = portfolio_entry_risk_status(
+        daily_pnl_pct=None,
+        drawdown_pct=None,
+        settings=Settings(),
+    )
+    assert status.allowed is False
+    assert status.reasons == (
+        "DAILY_PNL_BASELINE_UNKNOWN",
+        "DRAWDOWN_BASELINE_UNKNOWN",
+    )

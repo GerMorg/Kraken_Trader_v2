@@ -1,10 +1,10 @@
-## Architekturstatus nach 0.1.75
+## Architekturstatus nach 0.1.76
 
 Die Produkttrennung bleibt verbindlich: Der vorhandene Kraken-Spot-/Spot-Margin-Client und die Spot-Order-Authority werden nicht für Futures wiederverwendet. Der Futures-Produktbereich besitzt weiterhin eigene API-Credentials, Account-/Wallet-/Position-/Order-/Fill-/Funding-Modelle und muss eine eigene Entscheidungs- und Order-Authority erhalten.
 
-Stand 0.1.75 ist der Produktions-Futures-Client weiterhin **Read-only**. Er besitzt keine SendOrder-, AmendOrder- oder CancelOrder-Funktion. Der vorhandene Produktions-Key wurde als `READ_ONLY` erkannt und reicht nicht zur Orderausführung. Dieser Zustand darf nicht als fertig integrierter Futures-Adapter bezeichnet werden.
+Stand 0.1.76 bleibt der Produktions-Futures-Client weiterhin **Read-only**. Zusätzlich existiert ein separater FuturesDemoTradingClient für Send/Edit/Cancel, der den Host fest auf demo-futures.kraken.com begrenzt und eigene Demo-Credentials verlangt. Eine additive Persistenz hält Decision-ID, Client-Order-ID, Exchange-ID und Orderzustand fest. Submit-Timeouts werden zu UNKNOWN_RECONCILING; es erfolgt kein automatischer Wiederholungsauftrag. Der Adapter wird noch nicht vom normalen Strategiezyklus automatisch aufgerufen und ist noch nicht durch Kraken-Demo-E2E-Tests bestätigt.
 
-Der nächste Futures-Schritt ist ein eigener, demo-first Trading-Adapter mit exakter POST-Signaturvalidierung, dedizierten Order-IDs, Fill-Bestätigung und separater Reduce-only-Trailing-Stop-Order. Erst nach Demo-Tests für Partial Fills, Stop-Amend/Cancel, Restart-Recovery, Position-/Order-Reconciliation, Gebühren/Funding und Schutzorder-Ausfall darf ein Produktionsadapter mit einem separaten Trading-Key ohne Transfer-/Withdraw-Rechte geprüft werden. Der allgemeine Operator-Schalter `real_orders_enabled` genügt nicht, um diese Produkt- und Release-Gates zu umgehen.
+Der nächste Schritt ist die Demo-End-to-End-Validierung des vorhandenen Adapters: Partial Fills, Stop-Amend/Cancel, Restart-Recovery, Position-/Order-Reconciliation, Gebühren/Funding, Collateral-Konversion und Schutzorder-Ausfall. Erst danach darf ein separater Produktionsadapter mit eigenem Trading-Key ohne Transfer-/Withdraw-Rechte entworfen werden. Der allgemeine Operator-Schalter `real_orders_enabled` genügt nicht, um diese Produkt- und Release-Gates zu umgehen.
 
 # Kraken Derivatives EEA – Research- und Integrationsspezifikation
 
@@ -259,3 +259,8 @@ Cash-/Holding-Salden und Single-Collateral-Konten werden nicht in die Flex-Kolla
 Die Originalantwort bleibt im isolierten Futures-Snapshot gespeichert. Das AppLog zeigt nur die strukturierten Wallet-/Margin-Diagnosen und keine API-Keys, Account-UIDs oder IIBAN-Daten.
 
 Referenz für die REST-Walletbeispiele: https://python-kraken-sdk.readthedocs.io/en/stable/05_futures/rest.html
+
+
+## Futures Initial Margin — Fail-Closed Änderung in 0.1.76
+
+Die Demo-Risikoprüfung akzeptiert keine aus der effektiven Hebelstufe abgeleitete Schätzung nach dem Muster Notional / Leverage. Der Aufrufer muss den konkreten Initial-Margin-Betrag aus der aktuellen Kraken-Instrument- und Positionsgrößenstaffel übergeben. Fehlt dieser Wert, wird mit `FUTURES_EXCHANGE_INITIAL_MARGIN_UNKNOWN` blockiert. Die tatsächlich verwendete EEA-Margin-Stufe und Kollateralbewertung bleiben vor einem Demo-/Produktionsversuch separat zu verifizieren.

@@ -88,6 +88,7 @@ class Settings:
         return bool(self.api_key.strip() and self.api_secret.strip())
 
     @property
+    def live_requested(self) -> bool:    @property
     def live_requested(self) -> bool:
         """Compatibility alias; there is no separate PAPER/SHADOW/LIVE mode."""
         return self.real_orders_enabled

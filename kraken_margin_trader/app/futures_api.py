@@ -234,6 +234,60 @@ class FuturesAPIClient:
             raise FuturesAPIError("FUTURES_RESPONSE_SCHEMA_INVALID")
         return payload
 
+    def _request_post(self, endpoint_path: str, *, post_data: str) -> dict[str, Any]:
+        """Signed mutation primitive restricted to the demo host and fixed order routes."""
+        allowed = {
+            "/derivatives/api/v3/sendorder",
+            "/derivatives/api/v3/editorder",
+            "/derivatives/api/v3/cancelorder",
+        }
+        if self.environment != "demo" or endpoint_path not in allowed:
+            raise FuturesAPIError("FUTURES_MUTATION_DEMO_ONLY")
+        if not self.credentials_present:
+            raise FuturesAPIError("FUTURES_API_CREDENTIALS_MISSING")
+        try:
+            authent = build_futures_authent(
+                self._api_secret, endpoint_path, post_data=post_data
+            )
+        except ValueError:
+            raise FuturesAPIError("FUTURES_AUTH_CONFIGURATION_INVALID") from None
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "APIKey": self._api_key,
+            "Authent": authent,
+            "User-Agent": "KrakenTraderV2-FuturesDemo/0.1.76",
+        }
+        request = Request(
+            self._base_url + endpoint_path,
+            data=post_data.encode("ascii"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            status_code, raw = self._transport(request, self._timeout_seconds)
+        except (TimeoutError, URLError, OSError):
+            raise FuturesAPIError("FUTURES_NETWORK_ERROR") from None
+        except Exception:
+            raise FuturesAPIError("FUTURES_TRANSPORT_ERROR") from None
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise FuturesAPIError("FUTURES_RESPONSE_TOO_LARGE")
+        if status_code < 200 or status_code >= 300:
+            raise FuturesAPIError(f"FUTURES_HTTP_STATUS_{status_code}")
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise FuturesAPIError("FUTURES_RESPONSE_INVALID_JSON") from None
+        if not isinstance(payload, dict):
+            raise FuturesAPIError("FUTURES_RESPONSE_SCHEMA_INVALID")
+        result = payload.get("result")
+        errors = payload.get("errors")
+        if result is not None and result != "success":
+            raise FuturesAPIError(self._api_rejection_code(payload))
+        if isinstance(errors, list) and errors:
+            raise FuturesAPIError(self._api_rejection_code(payload))
+        return payload
+
     def _request_get(
         self,
         endpoint_path: str,

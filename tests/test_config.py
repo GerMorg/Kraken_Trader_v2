@@ -92,3 +92,22 @@ def test_futures_readonly_is_disabled_without_explicit_configuration():
     assert config.futures_readonly_enabled is False
     assert config.futures_api_key == ""
     assert config.futures_api_secret == ""
+
+    config = Settings.from_mapping({
+        "kraken_futures_demo_api_key": "demo-key-do-not-log",
+        "kraken_futures_demo_api_secret": "demo-secret-do-not-log",
+        "futures_demo_trading_enabled": True,
+    })
+    summary = config.safe_summary()
+    assert config.futures_demo_credentials_present is True
+    assert config.futures_demo_trading_enabled is True
+    assert summary["futures_demo_credentials_present"] is True
+    assert "demo-key-do-not-log" not in str(summary)
+    assert "demo-secret-do-not-log" not in str(summary)
+
+
+def test_futures_demo_trading_defaults_to_disabled():
+    config = Settings()
+    assert config.futures_demo_trading_enabled is False
+    assert config.futures_demo_api_key == ""
+    assert config.futures_demo_api_secret == ""

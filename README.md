@@ -1,4 +1,10 @@
-## Aktueller Status — 0.1.75
+## Aktueller Status — 0.1.76
+
+Version 0.1.76 reduziert die aktiven Strategy-Lab-Kandidaten auf TSM als Baseline und einen separaten Fourier-Zyklus-Kandidaten. Mean Reversion, das unkalibrierte logistische Modell und Volatility Breakout werden nicht mehr neu erzeugt. Historische Research-Beobachtungen werden nicht gelöscht.
+
+Der Fourier-Kandidat analysiert zwei aufeinanderfolgende Fenster aus H1-Logrenditen mit Hann-gefensterter DFT, spektraler Konzentration und Entropie sowie einer Stabilitätsprüfung der dominanten Periode. Er ist Research-only; weder Phasenprojektion noch Spektralscore sind eine kalibrierte Wahrscheinlichkeit oder ein erwarteter Nettoreturn.
+
+Zusätzlich gibt es eine getrennte Futures-Signal-/Risikostruktur und einen Kraken-Futures-Demo-Order-Adapter. Der Adapter verlangt eigene Demo-Credentials, nutzt einen fest gepinnten Demo-Host und persistiert idempotente Intents. Mehrdeutige Submit-Timeouts bleiben UNKNOWN_RECONCILING. Er wird in 0.1.76 noch nicht vom normalen Home-Assistant-Zyklus instanziiert; es gibt bewusst keinen wirkungslosen UI-Schalter. Futures-Produktion bleibt Read-only, und der interne Spot-Live-Release-Gate bleibt geschlossen.
 
 **Version 0.1.75 vereinfacht den Regelbetrieb.** Es gibt nur noch den Operator-Schalter `real_orders_enabled`; fehlende/alte Optionen bedeuten weiterhin Simulation. Die bisherige Unterscheidung PAPER/SHADOW/LIVE sowie die separaten Live-/Kill-Switches und die Validate-only-Option entfallen. Ein zusätzlicher interner, code-kontrollierter Release-Gate bleibt geschlossen.
 

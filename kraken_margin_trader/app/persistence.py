@@ -32,7 +32,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 class Persistence:
-    SCHEMA_VERSION = 14
+    SCHEMA_VERSION = 15
 
     def __init__(self, path: str = "/data/state/kraken_trader.sqlite3") -> None:
         self.path = path
@@ -103,6 +103,23 @@ class Persistence:
                 );
                 CREATE INDEX IF NOT EXISTS futures_readonly_snapshots_captured_idx
                     ON futures_readonly_snapshots(captured_at);
+                CREATE TABLE IF NOT EXISTS futures_order_intents(
+                    intent_id TEXT PRIMARY KEY,
+                    decision_id TEXT NOT NULL UNIQUE,
+                    client_order_id TEXT NOT NULL UNIQUE,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    size TEXT NOT NULL,
+                    order_type TEXT NOT NULL,
+                    reduce_only INTEGER NOT NULL,
+                    state TEXT NOT NULL,
+                    exchange_order_id TEXT,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS futures_order_intents_state_idx
+                    ON futures_order_intents(state);
                 CREATE TABLE IF NOT EXISTS exchange_position_snapshots(
                     snapshot_id TEXT NOT NULL,
                     position_txid TEXT NOT NULL,
@@ -1403,6 +1420,114 @@ class Persistence:
         with self.lock:
             rows = self.connection.execute("SELECT * FROM intents WHERE state IN (?,?,?,?,?,?,?,?) ORDER BY created_at", states).fetchall()
         return [dict(row) for row in rows]
+
+    def create_futures_order_intent(self, intent: dict[str, Any]) -> bool:
+        required = (
+            "intent_id", "decision_id", "client_order_id", "symbol", "side",
+            "size", "order_type", "reduce_only",
+        )
+        if any(key not in intent for key in required):
+            raise ValueError("FUTURES_INTENT_REQUIRED_FIELD_MISSING")
+        if str(intent["side"]).lower() not in {"buy", "sell"}:
+            raise ValueError("FUTURES_INTENT_SIDE_INVALID")
+        try:
+            size = Decimal(str(intent["size"]))
+        except (ArithmeticError, TypeError, ValueError):
+            raise ValueError("FUTURES_INTENT_SIZE_INVALID") from None
+        if not size.is_finite() or size <= 0:
+            raise ValueError("FUTURES_INTENT_SIZE_INVALID")
+        if not isinstance(intent["reduce_only"], bool):
+            raise ValueError("FUTURES_INTENT_REDUCE_ONLY_INVALID")
+        now = _now()
+        with self.lock:
+            try:
+                self.connection.execute(
+                    "INSERT INTO futures_order_intents("
+                    "intent_id,decision_id,client_order_id,symbol,side,size,order_type,"
+                    "reduce_only,state,payload_json,created_at,updated_at"
+                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        str(intent["intent_id"]), str(intent["decision_id"]),
+                        str(intent["client_order_id"]), str(intent["symbol"]).upper(),
+                        str(intent["side"]).lower(), str(size), str(intent["order_type"]),
+                        int(intent["reduce_only"]), "INTENT_CREATED",
+                        _json(intent.get("request", intent)), now, now,
+                    ),
+                )
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def futures_order_intent(self, intent_id: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT * FROM futures_order_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["payload"] = json.loads(result.pop("payload_json"))
+        result["reduce_only"] = bool(result["reduce_only"])
+        return result
+
+    def transition_futures_order_intent(
+        self,
+        intent_id: str,
+        new_state: str,
+        detail: dict[str, Any] | None = None,
+        *,
+        exchange_order_id: str | None = None,
+    ) -> None:
+        allowed = {
+            "INTENT_CREATED": {"PRECHECK_PASSED", "BLOCKED", "REJECTED"},
+            "PRECHECK_PASSED": {"SUBMITTING", "BLOCKED", "REJECTED"},
+            "SUBMITTING": {"ACKNOWLEDGED", "REJECTED", "UNKNOWN_RECONCILING"},
+            "ACKNOWLEDGED": {"OPEN", "PARTIALLY_FILLED", "FILLED", "CANCELED", "EXPIRED", "UNKNOWN_RECONCILING"},
+            "OPEN": {"PARTIALLY_FILLED", "FILLED", "CANCELED", "EXPIRED", "UNKNOWN_RECONCILING"},
+            "PARTIALLY_FILLED": {"PARTIALLY_FILLED", "FILLED", "CANCELED", "UNKNOWN_RECONCILING"},
+            "UNKNOWN_RECONCILING": {"ACKNOWLEDGED", "OPEN", "PARTIALLY_FILLED", "FILLED", "CANCELED", "REJECTED", "EXPIRED"},
+            "FILLED": set(), "CANCELED": set(), "EXPIRED": set(),
+            "REJECTED": set(), "BLOCKED": set(),
+        }
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT state,exchange_order_id,payload_json FROM futures_order_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("FUTURES_INTENT_NOT_FOUND")
+            current = str(row["state"])
+            if new_state not in allowed.get(current, set()):
+                raise ValueError("INVALID_FUTURES_ORDER_STATE_TRANSITION")
+            payload = json.loads(str(row["payload_json"]))
+            if detail:
+                payload.setdefault("events", []).append({
+                    "ts": _now(), "state": new_state, "detail": detail,
+                })
+            self.connection.execute(
+                "UPDATE futures_order_intents SET state=?,exchange_order_id=?,payload_json=?,updated_at=? "
+                "WHERE intent_id=?",
+                (
+                    new_state,
+                    exchange_order_id if exchange_order_id is not None else row["exchange_order_id"],
+                    _json(payload),
+                    _now(),
+                    intent_id,
+                ),
+            )
+
+    def unresolved_futures_order_intents(self) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT intent_id FROM futures_order_intents "
+                "WHERE state NOT IN ('FILLED','CANCELED','EXPIRED','REJECTED','BLOCKED') "
+                "ORDER BY created_at,intent_id"
+            ).fetchall()
+        return [
+            item for row in rows
+            if (item := self.futures_order_intent(str(row["intent_id"]))) is not None
+        ]
 
     def record_exchange_order(
         self, order_id: str, order: dict[str, Any], *, source: str
